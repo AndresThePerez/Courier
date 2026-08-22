@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Courier</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <span id="brand">Courier</span>
+    <span id="target-label"></span>
+    <span id="run-state"></span>
+  </header>
+
+  <main id="panes">
+    <aside id="panel-sidebar">
+      <nav id="collections-tree"></nav>
+      <section id="workspace-list"></section>
+      <section id="history-list"></section>
+    </aside>
+
+    <section id="panel-editor">
+      <div id="request-editor"></div>
+    </section>
+
+    <section id="panel-runner">
+      <div id="sequence-list"></div>
+      <div id="run-config"></div>
+      <div id="run-controls"></div>
+    </section>
+
+    <section id="panel-results">
+      <div id="results-view"></div>
+    </section>
+  </main>
+</div>
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+:root {
+  --bg: #12141a;
+  --panel: #1a1d26;
+  --line: #2a2f3d;
+  --text: #e6e8ef;
+  --muted: #9aa1b4;
+  --accent: #ff7a45;
+  --pass: #3ecf8e;
+  --fail: #ff5c5c;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+#brand {
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+#target-label, #run-state { color: var(--muted); }
+
+#panes {
+  display: grid;
+  grid-template-columns: 260px 1fr 320px;
+  flex: 1;
+  min-height: 0;
+}
+
+#panel-sidebar, #panel-editor, #panel-runner, #panel-results {
+  overflow: auto;
+  padding: 0.75rem;
+  border-right: 1px solid var(--line);
+}
+
+#panel-results {
+  grid-column: 1 / -1;
+  border-right: 0;
+  border-top: 1px solid var(--line);
+}
+
+.pass { color: var(--pass); }
+.fail { color: var(--fail); }

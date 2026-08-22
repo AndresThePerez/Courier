@@ -1,0 +1,5 @@
+/courier
+/server
+*.pdf
+.DS_Store
+/.superpowers/
