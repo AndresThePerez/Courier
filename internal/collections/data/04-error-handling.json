@@ -1,0 +1,150 @@
+{
+  "id": "error-handling",
+  "name": "04 - Error Handling & Edge Cases",
+  "description": "Pokesearch's error contract, asserted both ways: strict params (sort, order, supertype, and non-integer hp_min/hp_max/page/page_size) are rejected before Elasticsearch is called, with 400 {\"error\":{\"code\":\"invalid_param\",\"field\":...},\"request_id\":...}; out-of-range integers clamp and comma-list members stay lenient, so those still answer 200.",
+  "requests": [
+    {
+      "id": "strict-sort",
+      "name": "01 - Invalid Sort Is Rejected",
+      "endpoint": "search",
+      "params": {
+        "q": "pikachu",
+        "sort": "bogus"
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "op": "eq",
+          "value": 400
+        },
+        {
+          "type": "json",
+          "path": "$.error.code",
+          "op": "eq",
+          "value": "invalid_param"
+        },
+        {
+          "type": "json",
+          "path": "$.error.field",
+          "op": "eq",
+          "value": "sort"
+        },
+        {
+          "type": "json",
+          "path": "$.request_id",
+          "op": "exists"
+        }
+      ]
+    },
+    {
+      "id": "strict-supertype",
+      "name": "02 - Invalid Supertype Is Rejected",
+      "endpoint": "search",
+      "params": {
+        "supertype": "wizard"
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "op": "eq",
+          "value": 400
+        },
+        {
+          "type": "json",
+          "path": "$.error.code",
+          "op": "eq",
+          "value": "invalid_param"
+        },
+        {
+          "type": "json",
+          "path": "$.error.field",
+          "op": "eq",
+          "value": "supertype"
+        }
+      ]
+    },
+    {
+      "id": "strict-page-size",
+      "name": "03 - Non-Integer page_size Is Rejected",
+      "endpoint": "search",
+      "params": {
+        "q": "pikachu",
+        "page_size": "lots"
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "op": "eq",
+          "value": 400
+        },
+        {
+          "type": "json",
+          "path": "$.error.code",
+          "op": "eq",
+          "value": "invalid_param"
+        },
+        {
+          "type": "json",
+          "path": "$.error.field",
+          "op": "eq",
+          "value": "page_size"
+        }
+      ]
+    },
+    {
+      "id": "page-overflow-clamps",
+      "name": "04 - Page Overflow Clamps, It Does Not Fail",
+      "endpoint": "search",
+      "params": {
+        "q": "pikachu",
+        "page": "99999"
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "op": "eq",
+          "value": 200
+        },
+        {
+          "type": "json",
+          "path": "$.page",
+          "op": "eq",
+          "value": 400
+        },
+        {
+          "type": "json",
+          "path": "$.results",
+          "op": "count",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "id": "lenient-list-member",
+      "name": "05 - Unknown Type Member Stays Lenient",
+      "endpoint": "search",
+      "params": {
+        "types": "Lightning,Wizard"
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "op": "eq",
+          "value": 200
+        },
+        {
+          "type": "json",
+          "path": "$.total",
+          "op": "gt",
+          "value": 1500
+        },
+        {
+          "type": "json",
+          "path": "$.total",
+          "op": "lt",
+          "value": 5000
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "id": "search-filters",
+  "name": "02 - Filtering & Sorting",
+  "description": "Scalar filters, an OR'd comma list, a numeric range, and a sort. Facet cardinalities are query-scoped, so these requests assert totals and the first result rather than facet lengths.",
+  "requests": [
+    {
+      "id": "filter-rarity",
+      "name": "01 - Filter By Rarity",
+      "endpoint": "search",
+      "params": { "rarity": "Rare Holo" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 1617 },
+        { "type": "json", "path": "$.results[0].rarity", "op": "eq", "value": "Rare Holo" }
+      ]
+    },
+    {
+      "id": "filter-two-types",
+      "name": "02 - Filter By Two Types (OR)",
+      "endpoint": "search",
+      "params": { "types": "Fire,Water" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "latency", "op": "lt", "value": 150 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 3992 },
+        { "type": "json", "path": "$.facets.sets", "op": "count", "value": 173 }
+      ]
+    },
+    {
+      "id": "filter-hp-range",
+      "name": "03 - HP Range",
+      "endpoint": "search",
+      "params": { "hp_min": "300", "hp_max": "380" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 491 },
+        { "type": "json", "path": "$.results[0].hp", "op": "gt", "value": 299 }
+      ]
+    },
+    {
+      "id": "sort-hp-desc",
+      "name": "04 - Sort By HP Descending",
+      "endpoint": "search",
+      "params": { "sort": "hp", "order": "desc" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.results[0].hp", "op": "eq", "value": 380 },
+        { "type": "json", "path": "$.results[0].name", "op": "eq", "value": "Mega Venusaur ex" }
+      ]
+    }
+  ]
+}

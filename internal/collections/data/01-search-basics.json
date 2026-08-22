@@ -1,0 +1,66 @@
+{
+  "id": "search-basics",
+  "name": "01 - Search Basics",
+  "description": "Text search, exact lookup, fuzzy matching, the browse path, and how facets scope to a query. Every asserted number is measured against the seeded 20,324-card index, not estimated.",
+  "requests": [
+    {
+      "id": "basic-text",
+      "name": "01 - Basic Text Search",
+      "endpoint": "search",
+      "params": { "q": "charizard" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "latency", "op": "lt", "value": 150 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 107 },
+        { "type": "json", "path": "$.results[0].name", "op": "contains", "value": "Charizard" }
+      ]
+    },
+    {
+      "id": "exact-id",
+      "name": "02 - Exact Card By ID",
+      "endpoint": "search",
+      "params": { "id": "base1-1" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 1 },
+        { "type": "json", "path": "$.results[0].name", "op": "eq", "value": "Alakazam" },
+        { "type": "json", "path": "$.results[0].set_id", "op": "eq", "value": "base1" }
+      ]
+    },
+    {
+      "id": "browse-all",
+      "name": "03 - Browse (No Query)",
+      "endpoint": "search",
+      "params": {},
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 20324 },
+        { "type": "json", "path": "$.results", "op": "count", "value": 24 },
+        { "type": "json", "path": "$.facets.types", "op": "count", "value": 11 }
+      ]
+    },
+    {
+      "id": "fuzzy-typo",
+      "name": "04 - Fuzzy Match On A Typo",
+      "endpoint": "search",
+      "params": { "q": "charzard" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 128 },
+        { "type": "json", "path": "$.results[0].name", "op": "contains", "value": "Charizard" }
+      ]
+    },
+    {
+      "id": "scoped-facets",
+      "name": "05 - Facets Scope To The Query",
+      "endpoint": "search",
+      "params": { "q": "pikachu" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.total", "op": "eq", "value": 221 },
+        { "type": "json", "path": "$.facets.types", "op": "count", "value": 9 },
+        { "type": "json", "path": "$.facets.sets", "op": "count", "value": 173 }
+      ]
+    }
+  ]
+}

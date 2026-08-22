@@ -1,0 +1,51 @@
+{
+  "id": "suggest-health",
+  "name": "03 - Autocomplete & Health",
+  "description": "The completion suggester and the liveness endpoint. Suggest caps its output at 8 - that is the suggester's size cap, not a corpus count, which is why q=alak and q=p both return exactly 8.",
+  "requests": [
+    {
+      "id": "prefix-suggestions",
+      "name": "01 - Prefix Suggestions",
+      "endpoint": "suggest",
+      "params": { "q": "alak" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.suggestions", "op": "count", "value": 8 },
+        { "type": "json", "path": "$.suggestions[0]", "op": "eq", "value": "Alakazam" }
+      ]
+    },
+    {
+      "id": "single-letter-cap",
+      "name": "02 - Single Letter Hits The Cap",
+      "endpoint": "suggest",
+      "params": { "q": "p" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "latency", "op": "lt", "value": 100 },
+        { "type": "json", "path": "$.suggestions", "op": "count", "value": 8 }
+      ]
+    },
+    {
+      "id": "no-matches",
+      "name": "03 - No Matches",
+      "endpoint": "suggest",
+      "params": { "q": "zzzzzzzz" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "json", "path": "$.suggestions", "op": "count", "value": 0 }
+      ]
+    },
+    {
+      "id": "health-check",
+      "name": "04 - Health Check",
+      "endpoint": "healthz",
+      "params": {},
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "latency", "op": "lt", "value": 100 },
+        { "type": "json", "path": "$.status", "op": "eq", "value": "ok" },
+        { "type": "json", "path": "$.docs", "op": "eq", "value": 20324 }
+      ]
+    }
+  ]
+}

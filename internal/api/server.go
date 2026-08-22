@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AndresThePerez/courier/internal/collections"
 	"github.com/AndresThePerez/courier/internal/runner"
+	"github.com/AndresThePerez/courier/internal/sandbox"
 	"github.com/AndresThePerez/courier/internal/sse"
 )
 
@@ -103,6 +105,7 @@ func New(static fs.FS, opts Options) *Server {
 func (s *Server) routes(static fs.FS) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
+	s.mux.HandleFunc("GET /api/collections", s.handleCollections)
 
 	s.mux.HandleFunc("POST /api/runs", s.handleStartRun)
 	s.mux.HandleFunc("GET /api/runs", s.handleHistory)
@@ -206,4 +209,19 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // from one poll, so N idle tabs do not invent their own cadence.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.mgr.Status())
+}
+
+// handleCollections serves the curated content and the endpoint catalog
+// together.
+//
+// The catalog rides along deliberately: the editor's parameter dropdown is
+// built from it, so the sandbox is not merely enforced server-side, it is the
+// thing the UI offers. A visitor can see the allowlist rather than discover it
+// by getting a 400.
+func (s *Server) handleCollections(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"collections": collections.All(),
+		"endpoints":   sandbox.Endpoints(),
+		"target":      s.opts.TargetDisplay,
+	})
 }
