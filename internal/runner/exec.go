@@ -99,6 +99,14 @@ func NewExecutor(baseURL string) *Executor {
 // BaseURL is the fixed target this executor talks to.
 func (e *Executor) BaseURL() string { return e.baseURL }
 
+// CloseIdleConnections releases the pooled keep-alive connections a run leaves
+// behind. Each idle connection holds a transport read/write goroutine pair, so
+// after a 50-worker run the process carries ~100 goroutines that are doing
+// nothing but waiting out IdleConnTimeout. Graceful shutdown calls this, and so
+// does the goroutine-leak test — otherwise the pool's own bookkeeping reads as
+// a leak in the engine.
+func (e *Executor) CloseIdleConnections() { e.client.CloseIdleConnections() }
+
 // Query renders a request's allowlisted params as "?a=1&b=2", or "" when there
 // are none. Keys are sorted (url.Values.Encode), so the same request always
 // renders the same string in a report.
