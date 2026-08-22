@@ -1,0 +1,27 @@
+# Production shape: Courier joins the shared demo network and reaches the
+# target by its service name over that network.
+#
+# Two things here are load-bearing and look like style until they bite:
+#
+#   1. The service is `courier`, not `app`. Pokesearch's service is `app`, and
+#      two services with the same name on one shared network is a DNS collision.
+#   2. `networks: demo: {}` is the mapping form, not the list form `[demo]`.
+#      Compose cannot merge a list against a mapping across `-f` files, so the
+#      list form would make docker-compose.dev.yml fail to merge.
+services:
+  courier:
+    build: .
+    ports:
+      - "${APP_PORT:-8084}:8080"
+    environment:
+      - TARGET_URL=${TARGET_URL:-http://pokesearch:8080}
+      - TARGET_DISPLAY=${TARGET_DISPLAY:-pokesearch.andrestheperez.com}
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      demo: {}
+
+networks:
+  demo:
+    external: true
+    name: demo-net

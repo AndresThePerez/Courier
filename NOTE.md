@@ -660,3 +660,39 @@ it renders one, marked `running`, with the verdict withheld.
 **Only one Download PDF button, in the results header** (already wired in Task 18,
 pointing at this route). Per-history-row download is product chrome that Amendment
 A4 cuts: history is "list + reopen only", and reopening a run shows the button.
+
+---
+
+## N31 — The dev compose override renames `demo` rather than replacing it (Task 22)
+
+**Plan says:** Task 22 step 3 — `docker-compose.dev.yml` "overrides `networks:
+{default: {}}` (mapping form, matching the base) ... so the image can be exercised
+locally without `demo-net` existing".
+
+**What we do instead:** the dev file declares `default: {}` *and* redefines the
+top-level `demo` network as `{external: false, name: courier-dev}`.
+
+**Why:** compose deep-merges mappings across `-f` files, so a key the base declares
+cannot be removed by an override — only redefined. Declaring `default` alone leaves
+`services.courier.networks.demo` in place, still pointing at the external `demo-net`,
+and `up` fails with "network demo-net declared as external, but could not be found"
+on any machine where the shared network does not exist. Redefining `demo` as a
+project-local bridge under a different name is what actually delivers step 3's
+stated goal. The container ends up on both networks; that is the visible cost of the
+mapping-merge rule the base file's comment already warns about, and
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml config` shows it.
+
+The base file is byte-for-byte the plan's, including `demo: {}` in mapping form and
+the service named `courier` rather than `app`.
+
+**`TARGET_URL` in the dev file is `host.docker.internal:8081`, not the plan's 8085** —
+that is N1, not a new deviation, and it is a `${TARGET_URL:-...}` default either way.
+
+**Verification footnote for whoever runs this next on this workstation:** firewalld
+here rejects container-to-host connections to unpublished host ports, so a stub bound
+on the host is unreachable at `host.docker.internal` from inside the container
+(`connection refused`, from every bridge, including docker0 whose zone target is
+ACCEPT). The `host.docker.internal:host-gateway` mapping itself is correct — it
+resolves to 172.17.0.1 inside the container. The Task 22 container run was therefore
+driven against a stub container on the compose network instead. Nothing in the image
+or the compose files works around this; it is a host firewall fact.
