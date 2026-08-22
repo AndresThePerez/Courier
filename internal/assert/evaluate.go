@@ -60,7 +60,7 @@ func Evaluate(a Assertion, t Target) Outcome {
 		needle, _ := a.Value.(string)
 		out.Expected = "body contains " + formatString(needle)
 		out.Actual = fmt.Sprintf("<body %d bytes>", len(t.Body))
-		out.Passed = strings.Contains(strings.ToLower(string(t.Body)), strings.ToLower(needle))
+		out.Passed = strings.Contains(t.foldedBody(), strings.ToLower(needle))
 
 	case TypeJSON:
 		evaluateJSON(a, t, &out)

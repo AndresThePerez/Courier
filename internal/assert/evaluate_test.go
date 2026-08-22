@@ -109,6 +109,22 @@ func TestNewTargetDecodesOnce(t *testing.T) {
 	}
 }
 
+// body_contains reads a case-folded copy of the body that NewTarget derives
+// once. A Target built as a bare literal has no such copy and must still work.
+func TestBodyContainsWithoutNewTarget(t *testing.T) {
+	bare := Target{Status: 200, LatencyMs: 1, Body: []byte(`{"suggestions":["Alakazam"]}`)}
+	if got := Evaluate(Assertion{Type: "body_contains", Op: "contains", Value: "ALAKAZAM"}, bare); !got.Passed {
+		t.Errorf("bare Target: passed=%v actual=%q, want a match", got.Passed, got.Actual)
+	}
+	if got := Evaluate(Assertion{Type: "body_contains", Op: "contains", Value: "Snorlax"}, bare); got.Passed {
+		t.Error("bare Target matched a needle that is not in the body")
+	}
+	empty := Target{Status: 204, LatencyMs: 1}
+	if got := Evaluate(Assertion{Type: "body_contains", Op: "contains", Value: "anything"}, empty); got.Passed {
+		t.Error("an empty body contains nothing")
+	}
+}
+
 // count is defined over arrays, object keys, and string runes.
 func TestEvaluateCountKinds(t *testing.T) {
 	tg := NewTarget(200, 1, []byte(`{"arr":[1,2,3],"obj":{"a":1,"b":2},"str":"δδδ","num":7}`))

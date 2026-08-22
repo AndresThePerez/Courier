@@ -101,3 +101,71 @@ fails. `jsonpath.go` therefore parses the whole path into segments first (`parse
 pure syntax, no document) and walks second. Same grammar, same behaviour everywhere else,
 and it gives `ValidateAssertion` a document-free `ValidatePath` to call, which is cleaner
 than the plan's `Lookup(nil, path)` trick.
+
+---
+
+## N6 — `Percentiles` and `SLALadder` got snake_case JSON tags (Task 6)
+
+The plan's interface block declares `type Percentiles struct{ Min, Avg, P50, P90, P95,
+P99, Max float64 }` and `type SLALadder struct{ Under25, Under50, Under100 float64 }`
+with no struct tags, which would serialize as `"Min"`, `"P50"`, `"Under25"` — the only
+Go-cased keys in an otherwise entirely snake_case wire format. Read as an omission
+rather than a decision, so both types now carry tags (`min`, `p50`, `under_25`, ...).
+
+**Agent 4 (frontend) and agent 5 (PDF): read these keys as snake_case.** Nothing had been
+written against the untagged form when this changed.
+
+`Functional`'s `Total, Passed, Failed, Skipped` keep the plan's explicit `json:"-"` —
+that tag was typed deliberately, so it stands. The counts are derivable from `Results`,
+and server-side consumers read them off the struct. A frontend showing "12 passed /
+3 failed" counts the `results` array itself.
+
+---
+
+## N7 — `Verdict` fails a run with no dispatches (Task 6)
+
+The plan specifies `Verdict` as a pure PASS/FAIL function of p95 and error rate, and does
+not say what an empty run returns. Taken literally it would PASS: p95 of nothing is 0,
+which is under 50ms, and an error rate of 0/0 is 0. Returning a green verdict for a run
+that measured nothing is exactly the unfalsifiable-verdict failure mode the Revision 2
+SLO recalibration exists to kill, so `Verdict` returns FAIL with the reason "no dispatches
+completed — there is nothing to judge".
+
+This is unreachable in practice — a run that dispatched nothing is `cancelled` or
+`expired`, and the assembler overrides those to `N/A` before anyone sees a verdict. It is
+a guard, not a code path. `Verdict` still returns only PASS or FAIL; `N/A` remains the
+assembler's job, as specified.
+
+---
+
+## N8 — `body_contains` reads a body folded once by `NewTarget` (Tasks 3, 34)
+
+The Task 34 benchmarks showed `body_contains` case-folding the whole response on every
+evaluation: ~96 µs and ~82 KB allocated per assertion on a 36KB search response, twenty
+times over for a request at the assertion cap.
+
+`Target` now carries an unexported `lowerBody`, folded once by `NewTarget`, the same way
+`Doc` is decoded once. `body_contains` drops to 284 ns and 72 B; `NewTarget` rises by
+~89 µs.
+
+It is a trade, not a free win: a request with no `body_contains` assertion pays for a
+fold it never reads. It is worth it because it bounds the worst case (~1.9 ms and 1.6 MB
+becomes ~89 µs and ~82 KB), and because both numbers are noise beside the 1–30 ms the
+response took to arrive. Performance mode never touches this path.
+
+`foldedBody()` falls back to folding on the spot, so a `Target` built as a bare struct
+literal rather than through `NewTarget` still behaves correctly — covered by
+`TestBodyContainsWithoutNewTarget`.
+
+---
+
+## N9 — CI's docker-build job is a no-op until the Dockerfile exists (Task 32)
+
+Addendum Task 32 asks for `docker build` in CI, and its acceptance criterion is a green
+run on the scaffold commit. The Dockerfile does not arrive until Phase 7 (Task 22), so
+the `docker` job detects the file and skips the build with a GitHub notice when it is
+absent. It starts exercising the real multi-stage build the moment the file lands, with
+no workflow edit needed.
+
+The workflow cannot run at all yet: there is no remote, and pushing needs Andres's
+explicit approval. It is written to be correct on the day the repo is pushed.

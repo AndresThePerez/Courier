@@ -48,6 +48,36 @@ numeric knobs are **clamped**.
 | Param value length | ≤ 500 chars (truncated, not rejected) |
 | Concurrent single-request sends | 1 globally — `429` |
 
+## Engine overhead
+
+Courier measures a target, so its own cost has to be small enough not to be part of
+the measurement. These are `go test -bench` numbers from the pure cores, on a Ryzen
+5800X (`go test -bench . -benchmem ./internal/...`):
+
+| Operation | Cost | Allocations |
+|---|---|---|
+| JSON path lookup, shallow (`$.total`) | 132 ns | 1 |
+| JSON path lookup, deep (`$.results[23].attacks[0].cost[3]`) | 661 ns | 3 |
+| Assertion evaluation, `status` / `latency` | 131 / 143 ns | 2 / 4 |
+| Assertion evaluation, `json` ops | 245–511 ns | 4–7 |
+| Assertion evaluation, `body_contains` | 284 ns | 4 |
+| Decode + fold one 36KB search response (`NewTarget`) | 438 µs | 5,998 |
+| **Full functional request: decode + 20 assertions at the cap** | **452 µs** | 6,141 |
+| Percentile over 1k / 18k / 100k samples | 1.7 ns (O(1)) | 0 |
+| Histogram over 18k samples | 30 µs | 1 |
+| `ComputeStats` over 18k samples (sort + percentiles + ladder + Apdex + histogram) | 1.06 ms | 6 |
+| Record one response into a `Tally` | 31 ns | 0 |
+
+Reading them: a functional request costs ~452 µs of Courier against 1–30 ms of network
+and target time — the assertions themselves are ~103 µs of that, and the JSON decode is
+the rest. Percentile computation is a constant-time index into a sorted slice
+(nearest-rank, no interpolation), so report assembly does not grow with run length; only
+the one sort inside `ComputeStats` does.
+
+**Performance mode does none of this.** It evaluates no assertions and drains bodies to
+`io.Discard`, so the per-dispatch hot path never decodes JSON. The measured per-dispatch
+engine overhead lands here once the run engine exists.
+
 ## Closed-loop honesty note
 
 Courier is a **closed-loop** tester: workers wait for each response before issuing the
