@@ -169,3 +169,157 @@ no workflow edit needed.
 
 The workflow cannot run at all yet: there is no remote, and pushing needs Andres's
 explicit approval. It is written to be correct on the day the repo is pushed.
+
+---
+
+## N10 — The cooldown is the spec's load budget, not the plan's flat 10s (Tasks 9, 10, 28)
+
+**Plan says:** Task 10's interface block declares `const Cooldown = 10 * time.Second`
+and `Start` returns `ErrCoolingDown` when `time.Now().Before(m.cooldownUntil)`.
+
+**What we do instead:** `internal/budget` implements the Design Spec Revision 2.2 load
+budget — a token bucket in worker-seconds (refill `R` = 5/s, burst `B` = 1500, floor 5s) —
+and the cooldown falls out of it: `cooldown = max(5s, -min(balance, 0) / R)`. There is no
+`runner.Cooldown` constant; `budget.MinCooldown` is the floor and `Manager.Start` refuses
+with `*CooldownError{Until}` (which unwraps to `ErrCoolingDown`).
+
+**Why:** the spec is authoritative for design questions, and its Revision 2.2 replaced the
+flat cooldown outright. A flat cooldown bounds concurrent load but not sustained load — a
+script could hold the target at a ~75% duty cycle forever. Addendum Task 28 also asks for
+a simulator "against the real budget implementation (not a model of it)", which
+presupposes the budget exists. Agent 1's handoff note listing "Cooldown 10s" as a runner
+lifecycle constant predates that reading.
+
+**Affects:** anything that expected `runner.Cooldown`. The API layer should read
+`Manager.Status().CooldownUntil` and `errors.As` for `*runner.CooldownError`.
+
+### N10a — Refill is continuous, including while a run is in flight
+
+The spec's worked examples say a 50x30s run from an **empty** bucket "yields a 300s
+cooldown" and a stalled 2,000 worker-second run "cools ~400s". Those figures are
+`cost / R` with the refill accrued *during* the run ignored. Implemented as a real token
+bucket — refill accrues continuously — the same runs cool for **270s** and **360s**: the
+run itself earns `R x duration` back before the debit lands.
+
+The equation the spec writes down (`cooldown = max(5s, -min(balance,0)/R)`, `balance <= B`)
+is implemented exactly; it is only the two arithmetic examples that assumed no in-run
+refill. Continuous refill is also the reading that makes the spec's headline claim true:
+the third review pass says every adversarial shape "converges to exactly `R` = 5
+worker-seconds/second, with a 10.0% duty cycle". Under a no-in-run-refill model the
+maximum-run shape converges to 4.55, not 5.0. `budget_sim_test.go` measures 5.016 w-s/s
+and a 10.03% duty cycle, which matches the spec's claim to three figures.
+
+Both spec examples should be corrected to 270s and 360s when the spec is next touched.
+The behavioural difference is small and in the safe direction for the visitor (shorter
+waits), and the bound is unchanged.
+
+## N11 — The modes return a `Result`, not a bare payload (Tasks 8, 9, 10)
+
+**Plan says:** `func RunFunctional(...) *report.Functional` and
+`func RunPerformance(...) *report.Performance`.
+
+**What we do instead:** both return `runner.Result{Status, Functional, Performance}`.
+
+**Why:** only the mode knows whether it stopped because it was done, because it was
+cancelled, or because it ran out of wall clock, and `report.Status` is spec-level metadata
+that three consumers depend on (the polling loop's stop condition, the history label, the
+results header). Returning it out of band — inferring it in the manager from elapsed time,
+or smuggling it through an event payload — would make the manager guess at something the
+runner already knows. The single struct also gives `Manager.run` one signature to inject
+against, which is what the panic test needs.
+
+## N12 — `run_finished` is emitted by the manager, not by the modes (Tasks 8, 9, 10)
+
+**Plan says:** "Emit `run_started` before the walk and `run_finished` after."
+
+**What we do instead:** the modes emit `run_started`, `request_result`, and `progress`.
+The **manager** emits `run_finished`, after the report is stamped, stored, and charged to
+the budget.
+
+**Why:** a client that reacts to `run_finished` by fetching `GET /api/runs/{id}` would
+otherwise race finalization and could read `status: running` from a run it was just told
+had finished. `TestRunFinishedIsPublishedAfterTheReportIsStored` pins this. The payload
+(`runner.RunFinished`) also carries `cooldown_until`, which only the manager knows.
+
+## N13 — `NewManager` takes a `*slog.Logger`; `Event` carries a `RunID` (Tasks 10, 30)
+
+`NewManager(ex, targetDisplay, pub, log)` has a fourth parameter the plan's interface block
+does not list. Addendum Task 30 requires "one logger passed explicitly (no globals)", and
+the manager is where the run lifecycle lives, so that is where it has to arrive. A nil
+logger is accepted and discarded, so tests and Phase 4 can pass nothing.
+
+`runner.Event` likewise gains `RunID string \`json:"run_id,omitempty"\``. The modes do not
+know their run's identity; the manager's emitter stamps it. Carrying it on the envelope
+rather than inside each `Data` shape means a spectator attaching mid-run can attribute a
+replayed event without type-switching on the payload.
+
+**Note on task boundaries:** Task 30's *emission sites* landed in the Task 10 commit,
+because writing the manager without its log lines and then threading them back through
+every exit path would have been two edits to the same twenty lines. The Task 30 commit
+carries the JSON handler wiring in `cmd/server/main.go`, the assertions, and the guard
+test.
+
+## N14 — Abort classification checks the unwrapped error as well as `context.Cause` (Task 7)
+
+The spec prescribes `context.WithCancelCause` plus a sentinel, classified via
+`context.Cause`. In practice `net/http` unwraps the request context's cause into the
+returned `*url.Error`, so `errors.Is(err, context.Canceled)` is **false** on an aborted
+dispatch — the error is `ErrRunAborted` directly. `classify` therefore tests both shapes:
+`errors.Is(err, ErrRunAborted)` first, then the `context.Canceled` + `context.Cause` pair.
+
+Which shape surfaces is a net/http implementation detail; the accounting rule that rests
+on the discriminator is not, so both are covered.
+`TestDoDoesNotClaimForeignCancellationsAsAborts` pins the other direction — a bare
+`context.WithCancel` from somewhere else must never be laundered into an abort.
+
+## N15 — A panicking run finalizes as `cancelled`; an aborted functional entry is `skipped`
+
+The plan says a panicking run should "mark the report failed", but the status vocabulary is
+`running | completed | cancelled | expired` and there is no failed. A panicked run did not
+complete, so it finalizes as `cancelled` with a `Note` that says an internal error stopped
+it. Adding a fifth status for a should-never-happen path would have put a case into three
+frontend switches to describe a bug.
+
+Similarly, in functional mode a dispatch killed by Courier's own abort is recorded
+`Skipped: true`, not failed. Counting it as a failure would let a visitor pressing Cancel
+manufacture a red row the target never earned — the same reasoning as the `aborted`
+dispatch category in performance mode. `Passed + Failed + Skipped` still equals `Total`.
+
+Performance mode never produces `expired`: reaching `duration_secs` *is* completion there.
+`expired` is functional-mode-only, where the 120s deadline is a safety net rather than the
+point of the run.
+
+## N16 — Executor gained `DoResolved` and `CloseIdleConnections` (Tasks 7, 9)
+
+`sandbox.Lookup` returns a deep copy, so a run resolves its sequence once
+(`runner.resolve`) and dispatches through `DoResolved(ctx, ep, req, keepBody)`. `Do` still
+exists and resolves per call — it is the right shape for `/api/send`, and for the plan's
+own tests.
+
+`CloseIdleConnections` exists because the plan's goroutine-leak test cannot pass without
+it: a 50-worker run leaves ~50 pooled keep-alive connections, each holding a transport
+read/write goroutine pair, so `runtime.NumGoroutine()` reads ~100 above baseline for a full
+`IdleConnTimeout` afterwards. That is the connection pool doing exactly what it was tuned
+to do. The test releases the pool first and then polls for the count to settle, so it still
+catches a real leak in the worker pool or the aggregator. Graceful shutdown should call it
+too.
+
+## N17 — Measured engine overhead (Task 34's deferred item)
+
+Task 34 asked for "a measured per-dispatch engine overhead figure (µs/request) once Task 9
+exists". `internal/runner/bench_test.go` provides it, on the 5800X against a loopback
+`httptest` server returning a 38KB body:
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `DispatchBaseline` (bare `http.Client`) | 74,545 | 48,716 | 82 |
+| `DispatchDrain` (perf mode) | 76,316 | 49,719 | 93 |
+| `DispatchKeepBody` (functional mode) | 97,519 | 140,198 | 111 |
+| `URLBuild` | 458 | 296 | 10 |
+| `AggregatorRecord` | 115 | 81 | 0 |
+
+**Engine overhead is ~1.8 µs per dispatch** — the difference between `DispatchDrain` and
+`DispatchBaseline`, or about 0.007% of the 25ms a real request takes at 50 workers. That
+is the number the README's "the hot path stays lean" claim should quote. The fan-in
+aggregator costs 115 ns per result, so at the measured peak of 1,817 req/s it uses ~0.02%
+of one core — which is what justifies it being a single goroutine with no locks at all.
