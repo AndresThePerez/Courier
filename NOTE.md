@@ -472,6 +472,15 @@ The API was still verified end to end by hand (Task 14 step 5) against a local s
 on 127.0.0.1:8086 — every route, the 400/404/409 paths, the SSE replay, `/metrics`, pprof
 reachability, and SIGTERM shutdown.
 
+**Three fixtures were spot-checked live** afterwards, with Courier on 8084 pointed at the
+shared dev target on 8081 (`/healthz` reported the expected `{"docs":20324,"status":"ok"}`
+first, so the corpus was the pinned one): `search?q=charizard` → `total` **107**,
+`suggest?q=alak` → **8** suggestions, `/healthz` → `docs` **20324**. All three passed, which
+is as much of the fixture list as can honestly be checked against the old build. Nothing in
+the error-handling collection was run against it, per N2 — those assertions describe the M3
+contract and the deployed build still answers with the lenient one. Latency came back at
+16-18ms end to end, inside the curated `lt 150` bound with room to spare.
+
 ## N25 — Self-telemetry is a server-scoped `expvar.Map`; pprof refuses to bind off-box (Addendum Task 31)
 
 `/metrics` is an `expvar.Map` that is **not** published to expvar's package global, and the
