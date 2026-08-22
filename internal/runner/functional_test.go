@@ -264,14 +264,14 @@ func TestFunctionalDeadlineExpiresWithoutFakingATransportError(t *testing.T) {
 
 func TestBodyPreviewTruncatesAtTheCap(t *testing.T) {
 	body := []byte(strings.Repeat("z", report.MaxBodyPreview+100))
-	preview, truncated := bodyPreview(body)
+	preview, truncated := Preview(body)
 	if !truncated || len(preview) != report.MaxBodyPreview {
 		t.Errorf("preview = %d bytes truncated=%v, want %d truncated", len(preview), truncated, report.MaxBodyPreview)
 	}
 
 	// A multi-byte rune straddling the cap must not be cut in half.
 	runes := []byte(strings.Repeat("é", report.MaxBodyPreview))
-	preview, truncated = bodyPreview(runes)
+	preview, truncated = Preview(runes)
 	if !truncated {
 		t.Fatal("want truncated")
 	}
@@ -279,7 +279,7 @@ func TestBodyPreviewTruncatesAtTheCap(t *testing.T) {
 		t.Error("preview must remain valid UTF-8")
 	}
 
-	if p, tr := bodyPreview(nil); p != "" || tr {
+	if p, tr := Preview(nil); p != "" || tr {
 		t.Errorf("empty body preview = %q %v", p, tr)
 	}
 }

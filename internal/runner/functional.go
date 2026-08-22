@@ -164,7 +164,7 @@ func functionalResult(i int, r sandbox.Request, ex *Executor, resp Response) rep
 		}
 	}
 
-	preview, truncated := bodyPreview(resp.Body)
+	preview, truncated := Preview(resp.Body)
 	res.BodyPreview, res.BodyTruncated = preview, truncated
 
 	target := assert.NewTarget(resp.Status, resp.LatencyMs, resp.Body)
@@ -177,12 +177,12 @@ func functionalResult(i int, r sandbox.Request, ex *Executor, resp Response) rep
 	return res
 }
 
-// bodyPreview truncates to report.MaxBodyPreview.
+// Preview truncates to report.MaxBodyPreview.
 //
 // One truncation rule, everywhere: this 16KB preview is what streams live *and*
 // what is stored. A search response is 34-42KB, so truncation is the normal
 // case, and a twenty-run history of untruncated bodies would be ~100MB.
-func bodyPreview(body []byte) (string, bool) {
+func Preview(body []byte) (string, bool) {
 	if len(body) == 0 {
 		return "", false
 	}

@@ -62,6 +62,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	id, err := s.mgr.Start(s.runCtx, rr)
 	switch {
 	case err == nil:
+		s.metrics.runStarted()
 		writeJSON(w, http.StatusAccepted, startedBody{RunID: id})
 
 	case isValidationError(err):
@@ -105,6 +106,7 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "", "%s", err.Error())
 		return
 	}
+	s.metrics.runCancelled()
 	w.WriteHeader(http.StatusNoContent)
 }
 

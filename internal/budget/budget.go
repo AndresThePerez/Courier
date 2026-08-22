@@ -148,27 +148,56 @@ func (b *Bucket) Admit() Decision {
 func (b *Bucket) Spend(workerSeconds float64) Charge {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	now := b.now()
-	b.accrue(now)
-
-	before := b.balance
-	b.balance -= workerSeconds
+	before, after := b.debit(workerSeconds)
 
 	cooldown := b.floor
-	if deficit := -math.Min(b.balance, 0); deficit > 0 {
+	if deficit := -math.Min(after, 0); deficit > 0 {
 		if d := time.Duration(deficit / b.refill * float64(time.Second)); d > cooldown {
 			cooldown = d
 		}
 	}
-	b.cooldownUntil = now.Add(cooldown)
+	b.cooldownUntil = b.last.Add(cooldown)
 
 	return Charge{
 		Cost:          workerSeconds,
 		Before:        before,
-		After:         b.balance,
+		After:         after,
 		Cooldown:      cooldown,
 		CooldownUntil: b.cooldownUntil,
 	}
+}
+
+// Debit charges worker-seconds without opening a cooldown window.
+//
+// It is what a single /api/send costs the ledger. Spend's floor exists so the
+// UI always has a beat to count down after a *run*; applying it to one editor
+// request would put the Start button into a five-second cooldown every time a
+// visitor pressed Send, which is a rate limit the design does not ask for — the
+// one-in-flight rule already caps that path at one worker-second per second.
+//
+// The load bound is unaffected, and this is the spec's own reading of it: the
+// send's debit lowers the balance, so the *next run's* Spend computes a longer
+// cooldown from it. Total load still converges on Refill.
+func (b *Bucket) Debit(workerSeconds float64) Charge {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	before, after := b.debit(workerSeconds)
+	return Charge{
+		Cost:          workerSeconds,
+		Before:        before,
+		After:         after,
+		CooldownUntil: b.cooldownUntil,
+	}
+}
+
+// debit refills to now and subtracts. It must be called under the lock, and it
+// leaves b.last at the instant the debit was applied so a caller that also sets
+// a cooldown measures it from the same moment.
+func (b *Bucket) debit(workerSeconds float64) (before, after float64) {
+	b.accrue(b.now())
+	before = b.balance
+	b.balance -= workerSeconds
+	return before, b.balance
 }
 
 // Balance is the current worker-second balance, refilled to now.
