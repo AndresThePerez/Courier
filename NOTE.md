@@ -610,3 +610,53 @@ Task 17 because `openLive` was still a stub.
 A run reopened from history pins the Results view: the page stops following the live
 run and does not re-attach until the visitor asks for it back with Watch. Reopening
 a stored report and then having a live run paint over it would be the worse default.
+
+---
+
+## N30 — What Amendment A1's one page actually contains (Task 19)
+
+**Plan says:** Task 19 step 4 renders the histogram as native `Rect` bars, a
+per-request performance breakdown, a full functional failures detail with
+expected-vs-actual, and sets `pdf.SetCreationDate(r.StartedAt)` for determinism.
+Step 6 wires "the two Download PDF buttons (results header and each history row)".
+
+**What we do instead**, reading Amendment A1 ("Single-page render: header, verdict,
+summary stats table, SLA ladder as text rows. No histogram rect-drawing, no
+multi-page layout"):
+
+- **On the page.** Header (wordmark, run/mode/status/started/duration/config, the
+  `... (executed via internal network)` target line), the coloured verdict band with
+  its reasons, a summary stats table, and — performance only — the percentile table,
+  the SLA ladder as text rows, Apdex with its rating and bands, and the status/error
+  kind counts. Functional keeps its per-request table plus at most four failure
+  lines: a functional report with no request list is a report about nothing, and the
+  truncation the plan's step 5 asks for ("no clipped columns") needs a list to
+  truncate.
+- **Not on the page.** The histogram (A1), the performance per-request breakdown
+  (A1), and any second page.
+- **One page is structural, not a hope.** `SetAutoPageBreak(false)` plus an accept-
+  page-break func that always refuses, and every block checks a `bottom` budget
+  before it draws. Lists stop early and say `... and N more requests`. The footer
+  is the one block allowed below the budget, because it sets the budget.
+  `TestRenderIsSinglePage` renders a 50-request sequence and asserts `PageCount() == 1`.
+
+**Determinism needed two more calls than the plan names.** fpdf stamps *two* dates
+with `time.Now` (`/CreationDate` and `/ModDate`), and it writes the font catalog in
+map order. Byte-identical output needs `SetCreationDate` **and**
+`SetModificationDate` **and** `SetCatalogSort(true)`. With only the plan's one call,
+two renders of the same report differ by the order of the two Helvetica font objects.
+
+**The verdict band reads "N/A - partial data" with an ASCII hyphen**, not N15's em
+dash. The core PDF fonts are WinAnsi and no font file is embedded — an em dash typed
+as UTF-8 would render as mojibake, and shipping a font file to print one character
+would cost more than the dash is worth. Everything drawn on the page goes through
+`ascii()` for the same reason: request names and query values are visitor-supplied.
+
+**A live run's report renders rather than 404s.** `GET /api/runs/{id}/report.pdf`
+404s on exactly what `GET /api/runs/{id}` 404s on — an id the manager never had.
+A run in flight has a coherent partial report (the polling fallback's contract), so
+it renders one, marked `running`, with the verdict withheld.
+
+**Only one Download PDF button, in the results header** (already wired in Task 18,
+pointing at this route). Per-history-row download is product chrome that Amendment
+A4 cuts: history is "list + reopen only", and reopening a run shows the button.
