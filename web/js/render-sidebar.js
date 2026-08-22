@@ -116,11 +116,15 @@ export function render(state) {
   // Remember which collections the visitor had expanded, so a notify from an
   // unrelated part of the app does not collapse the tree under their cursor.
   const previouslyOpen = openCollections;
+  const detailNodes = tree.querySelectorAll('details[data-id]');
   openCollections = new Set();
-  for (const node of tree.querySelectorAll('details[data-id]')) {
+  for (const node of detailNodes) {
     if (node.open) openCollections.add(node.dataset.id);
   }
-  if (openCollections.size === 0) openCollections = previouslyOpen;
+  // Fall back only when there was no tree to read (first render, loading
+  // placeholder) — an all-closed tree is a state the visitor chose, and
+  // restoring the previous set would pop the last-closed collection back open.
+  if (detailNodes.length === 0) openCollections = previouslyOpen;
 
   replace(tree, state.collections.map((c) => {
     const node = collectionNode(c, state.selectedId);

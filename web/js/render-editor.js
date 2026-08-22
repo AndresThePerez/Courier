@@ -87,11 +87,15 @@ function own() {
 }
 
 // edit is the only way this module changes the draft: fork if needed, mutate,
-// then hand the whole thing back through set() so every render module sees it.
+// persist, then hand the whole thing back through set() so every render module
+// sees it. Persisting on every edit (not only on Save) is what makes the
+// sidebar note truthful — a fork that kept the pre-edit snapshot until Save
+// would silently revert the visitor's changes on reload.
 function edit(mutate) {
   const draft = own();
   if (!draft) return;
   mutate(draft);
+  workspace.save(draft);
   set({ draft, selectedId: draft.id });
 }
 

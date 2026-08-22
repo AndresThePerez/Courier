@@ -166,7 +166,7 @@ could never fail, which makes it not a verdict but a decoration. Revision 2
 recalibrated every judgment surface against measured reality:
 
 - Verdict gate: **p95 ≤ 50ms** and error rate < 1%.
-- SLA ladder: **25 / 50 / 100 ms** (was 100/300/1000 — all always-green).
+- SLA ladder: **25 / 50 / 100 ms** (was 100/200/500 — all always-green).
 - Apdex **T = 25ms**.
 - Histogram buckets **0–5 / 5–10 / 10–25 / 25–50 / 50–100 / 100+ ms**.
 

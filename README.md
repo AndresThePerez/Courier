@@ -54,9 +54,12 @@ a promise (see below).
    **Find the breaking point** panel), start it, and watch the live counters — then the
    verdict, SLA ladder, Apdex, and histogram render from the finished report.
 3. Open any request in the editor, change a parameter, and **Send** it. Try an illegal
-   one (`page_size=abc`) — the field-naming `400` you get back is the sandbox working.
-   Editing a built-in request forks a private copy into **My Workspace**
-   (fork-on-write; the curated tree never mutates).
+   value (`page_size=abc`) — the field-naming `400` that comes back is the target's
+   strict contract, surfaced verbatim. Courier's own sandbox sits in front of it:
+   param *keys* are chosen from each endpoint's server-provided allowlist, and anything
+   outside it is refused before a byte reaches the target. Editing a built-in request
+   forks a private copy into **My Workspace** (fork-on-write; the curated tree never
+   mutates).
 
 ![A functional run streaming its results live over SSE, row by row, then completing 9/9 against the pinned corpus](docs/sse-run.gif)
 
@@ -184,6 +187,12 @@ Reading them: a functional request costs ~452 µs of Courier against 1–30 ms o
 and target time. **Performance mode does none of that work** — no assertion evaluation,
 bodies straight to `io.Discard` — which is what the 1.8 µs figure measures, about
 0.007% of a real 25ms request at 50 workers.
+
+**Whole-process footprint during a maximum run** (50 workers × 30s, 20,624 requests
+against the live target, measured from `/proc`): **3.3 CPU-seconds — about 10% of one
+core** (~160 µs of total process CPU per request, kernel networking and SSE included)
+and a **peak RSS of 20 MB**. That is the co-hosting cost the Host decision discloses:
+running the tester next to the target spends a tenth of a core and twenty megabytes.
 
 ## What happens when the target dies
 
