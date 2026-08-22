@@ -36,9 +36,10 @@ func TestPercentileNearestRank(t *testing.T) {
 	}
 }
 
-// Buckets are the Revision 2 values, sized to Pokesearch's real 1-30ms range.
+// Buckets are the deploy-calibrated values, sized to the server's measured
+// 29-517ms range.
 func TestHistogramBucketsAndBoundaries(t *testing.T) {
-	s := []float64{1, 4.9, 5, 9, 10, 24, 25, 49, 50, 99, 100, 1200}
+	s := []float64{1, 24.9, 25, 49, 50, 99, 100, 199, 200, 399, 400, 1200}
 	buckets := Histogram(s)
 	if len(buckets) != 6 {
 		t.Fatalf("len(buckets) = %d, want 6", len(buckets))
@@ -46,7 +47,7 @@ func TestHistogramBucketsAndBoundaries(t *testing.T) {
 	want := []struct {
 		label string
 		count int
-	}{{"0-5ms", 2}, {"5-10ms", 2}, {"10-25ms", 2}, {"25-50ms", 2}, {"50-100ms", 2}, {"100ms+", 2}}
+	}{{"0-25ms", 2}, {"25-50ms", 2}, {"50-100ms", 2}, {"100-200ms", 2}, {"200-400ms", 2}, {"400ms+", 2}}
 	total := 0
 	for i, b := range buckets {
 		if b.Label != want[i].label || b.Count != want[i].count {
@@ -65,30 +66,30 @@ func TestHistogramBucketsAndBoundaries(t *testing.T) {
 func TestSLALadderIsMonotonicAtNewTiers(t *testing.T) {
 	tal := newTally()
 	for i := 0; i < 1000; i++ {
-		tal.AddResponse(200, float64(i%200)+0.5, 10)
+		tal.AddResponse(200, float64(i%400)+0.5, 10)
 	}
 	st := ComputeStats(-1, "overall", tal, time.Second)
-	if !(st.SLA.Under25 <= st.SLA.Under50 && st.SLA.Under50 <= st.SLA.Under100) {
+	if !(st.SLA.Under50 <= st.SLA.Under150 && st.SLA.Under150 <= st.SLA.Under300) {
 		t.Errorf("ladder not monotonic: %+v", st.SLA)
 	}
-	if st.SLA.Under100 > 100 || st.SLA.Under25 < 0 {
+	if st.SLA.Under300 > 100 || st.SLA.Under50 < 0 {
 		t.Errorf("ladder out of range: %+v", st.SLA)
 	}
-	// The tiers must actually discriminate on this distribution — the old
-	// 100/200/500ms tiers would read 100/100/100 here.
-	if st.SLA.Under25 == st.SLA.Under100 {
+	// The tiers must actually discriminate on this distribution — tiers set
+	// far above the observed range would read 100/100/100 here.
+	if st.SLA.Under50 == st.SLA.Under300 {
 		t.Errorf("tiers do not discriminate: %+v", st.SLA)
 	}
 }
 
-func TestApdexAtT25(t *testing.T) {
-	// 100 satisfied (<=25ms), 100 tolerating (<=100ms), 0 frustrated -> 0.75
+func TestApdexAtT50(t *testing.T) {
+	// 100 satisfied (<=50ms), 100 tolerating (<=200ms), 0 frustrated -> 0.75
 	tal := newTally()
 	for i := 0; i < 100; i++ {
-		tal.AddResponse(200, 10, 10)
+		tal.AddResponse(200, 30, 10)
 	}
 	for i := 0; i < 100; i++ {
-		tal.AddResponse(200, 80, 10)
+		tal.AddResponse(200, 160, 10)
 	}
 	a := ComputeStats(-1, "overall", tal, time.Second).Apdex
 	if math.Abs(a.Score-0.75) > 1e-9 {
@@ -101,7 +102,7 @@ func TestApdexAtT25(t *testing.T) {
 		t.Errorf("rating = %q, want Fair", a.Rating)
 	}
 	// Exact thresholds: T is satisfied, 4T is tolerating.
-	edge := ComputeStats(-1, "e", okTally(25, 100), time.Second).Apdex
+	edge := ComputeStats(-1, "e", okTally(50, 200), time.Second).Apdex
 	if edge.Satisfied != 1 || edge.Tolerating != 1 {
 		t.Errorf("threshold handling = %+v", edge)
 	}
@@ -225,15 +226,16 @@ func TestAbortedDispatchesAreNotErrors(t *testing.T) {
 }
 
 func TestVerdictAtRecalibratedSLOs(t *testing.T) {
-	// Measured: 10 workers -> p95 19.3ms (PASS); 50 workers -> p95 59.4ms (FAIL).
-	fast := ComputeStats(-1, "overall", okTally(repeat(19.3, 1000)...), time.Second)
+	// Measured on the deploy host: 10 workers -> p95 118.8ms (PASS);
+	// 25 workers -> p95 262.2ms (FAIL).
+	fast := ComputeStats(-1, "overall", okTally(repeat(118.8, 1000)...), time.Second)
 	if v, _ := Verdict(fast); v != "PASS" {
-		t.Errorf("p95 19.3ms verdict = %q, want PASS", v)
+		t.Errorf("p95 118.8ms verdict = %q, want PASS", v)
 	}
-	slow := ComputeStats(-1, "overall", okTally(repeat(59.4, 1000)...), time.Second)
+	slow := ComputeStats(-1, "overall", okTally(repeat(262.2, 1000)...), time.Second)
 	v, reasons := Verdict(slow)
 	if v != "FAIL" || len(reasons) == 0 {
-		t.Errorf("p95 59.4ms verdict = %q reasons %v, want FAIL with a reason", v, reasons)
+		t.Errorf("p95 262.2ms verdict = %q reasons %v, want FAIL with a reason", v, reasons)
 	}
 	// Error rate alone can fail it.
 	tal := newTally()

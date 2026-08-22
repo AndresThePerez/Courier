@@ -170,6 +170,16 @@ recalibrated every judgment surface against measured reality:
 - Apdex **T = 25ms**.
 - Histogram buckets **0–5 / 5–10 / 10–25 / 25–50 / 50–100 / 100+ ms**.
 
+The calibration then ran a second time, by design, at deploy (the spec's Deployment
+step 5): the deploy host is a 4-core Ryzen 3 2200G with Elasticsearch capped at 1 GB,
+and its measured series (p95 38.6 → 407.9 ms across 1 → 50 workers) sat entirely above
+the dev-calibrated gate — a verdict that could never *pass* there, the same defect
+mirrored. The shipped constants are re-derived from the deploy measurement to keep the
+falsifiable shape (PASS at 1 and 10 workers, FAIL at 25 and 50): verdict gate
+**p95 ≤ 150ms**, ladder **50 / 150 / 300 ms**, Apdex **T = 50ms**, buckets
+**0–25 / 25–50 / 50–100 / 100–200 / 200–400 / 400+ ms**. Both measurements are in
+[docs/knee.md](knee.md).
+
 The principle: **an unfalsifiable green is worse than no verdict**. The same
 principle shows up at the edges — `Verdict` fails a run with zero dispatches
 rather than vacuously passing it (NOTE.md N7), and curated assertion values

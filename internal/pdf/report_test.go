@@ -253,7 +253,7 @@ func TestRenderPerformanceBody(t *testing.T) {
 	body := text(t, fixturePerformanceReport())
 	for _, want := range []string{
 		"VERDICT", "p95", "p99", "Apdex", "SLA ladder",
-		"under 25ms", "under 50ms", "under 100ms",
+		"under 50ms", "under 150ms", "under 300ms",
 		"req/s", "Errors", "Aborted",
 	} {
 		if !strings.Contains(body, want) {

@@ -4,6 +4,42 @@ Raw data behind the **"Find the breaking point"** panel (`web/knee.svg`, Addendu
 This file is the data, not the prose — the README's numbers-first first screen (Task 35)
 and `docs/design.md` (Task 29) quote from here.
 
+Two series live here: the **deploy-host series** (first — it is what the live panel
+shows and what the shipped SLO constants are calibrated to) and the earlier
+**dev-workstation series** (kept in full: the hardware comparison is itself a result).
+
+## Deploy-host series (2026-08-22, deploy calibration — the live panel's numbers)
+
+| | |
+|---|---|
+| Host | 4-core Ryzen 3 2200G, Elasticsearch capped at 1 GB, co-hosted with the portfolio site |
+| Path | Courier container → internal Docker network (`demo-net` alias) → Pokesearch container |
+| Target | Pokesearch `milestone-3`, commit `6bbceb9`, 20,324 documents |
+| Sequence / mode / duration | the curated `search-basics` collection · performance · 10s per point |
+
+| workers | req/s | p50 | p95 | p99 | errors | Apdex(T=25*) | verdict (p95 ≤ 150ms) |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | 46.4 | 29.24 ms | 38.64 ms | 41.12 ms | 0 | 0.700 | PASS |
+| **10** | **154.1** | **70.36 ms** | **118.80 ms** | **136.40 ms** | **0** | 0.515 | PASS |
+| 25 | 166.5 | 147.85 ms | 262.24 ms | 300.84 ms | 0 | 0.086 | FAIL |
+| 50 | 174.8 | 281.83 ms | 407.93 ms | 516.61 ms | 0 | 0.014 | FAIL |
+
+\* the Apdex column above was computed by the pre-calibration build (T=25ms) during the
+measurement run; the shipped build scores with the deploy-calibrated T=50ms.
+
+**The knee is at ~10 workers here.** 10 workers deliver 88% of the peak; 10→25 buys +8%
+throughput for +110% p50; 25→50 buys +5% for +91% p50. Roughly the 3× latency the
+Pokesearch session predicted for this hardware (their e2e `q=charizard` ≈ 73ms local vs
+~25ms on the workstation). During the 50-worker pass the co-hosted portfolio site was
+monitored from outside the box: p95 260ms over the tunnel, no degradation, so the
+50-worker cap stays. These figures drove the deploy SLO recalibration (verdict
+p95 ≤ 150ms, ladder 50/150/300, Apdex T=50, buckets to 400+) — see `internal/report`
+and `docs/design.md`.
+
+---
+
+# Dev-workstation series (2026-08-22, pre-deploy)
+
 ## What was measured
 
 | | |

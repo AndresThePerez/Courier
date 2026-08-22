@@ -296,9 +296,9 @@ func (d *doc) performance() {
 		label string
 		pct   float64
 	}{
-		{"under 25ms", o.SLA.Under25},
 		{"under 50ms", o.SLA.Under50},
-		{"under 100ms", o.SLA.Under100},
+		{"under 150ms", o.SLA.Under150},
+		{"under 300ms", o.SLA.Under300},
 	} {
 		if !d.room(rowH) {
 			break

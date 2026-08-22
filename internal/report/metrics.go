@@ -8,22 +8,26 @@ import (
 	"time"
 )
 
-// SLO constants — recalibrated 2026-08-22 to the measured target.
+// SLO constants — calibrated 2026-08-22 against the DEPLOY host (spec
+// Deployment step 5), superseding the workstation dev values.
 //
-// This block is the only place they are defined, and it is re-measured against
-// the home server at deploy. The values matter: against Pokesearch's real
-// 1-30ms responses the original 100/200/500ms ladder read 100%/100%/100% and
-// Apdex(T=100ms) was 1.000 at every concurrency level. A verdict that can never
-// fail is decoration, not a load test.
+// This block is the only place they are defined. The values matter: a verdict
+// that can never fail — or never pass — is decoration, not a load test. The
+// dev-calibrated gate (p95 ≤ 50ms, tiers 25/50/100, T=25) was measured on a
+// Ryzen 5800X where the internal-network series read p95 20→128ms across
+// 1→50 workers; the deploy host (4-core Ryzen 3 2200G, ES capped at 1g,
+// co-hosted with the portfolio site) measured p95 38.6 / 118.8 / 262.2 /
+// 407.9ms at 1/10/25/50 workers. These constants reproduce the same
+// falsifiable shape there: PASS at 1 and 10 workers, FAIL at 25 and 50.
 const (
-	VerdictP95Ms        = 50.0 // PASS iff p95 <= this AND error rate < VerdictMaxErrorRate
+	VerdictP95Ms        = 150.0 // PASS iff p95 <= this AND error rate < VerdictMaxErrorRate
 	VerdictMaxErrorRate = 0.01
 
-	SLATier1Ms = 25.0
-	SLATier2Ms = 50.0
-	SLATier3Ms = 100.0
+	SLATier1Ms = 50.0
+	SLATier2Ms = 150.0
+	SLATier3Ms = 300.0
 
-	ApdexTMs = 25.0 // tolerating <= 4T = 100ms
+	ApdexTMs = 50.0 // tolerating <= 4T = 200ms
 )
 
 // Sample is one completed HTTP response. Transport failures produce none.
@@ -216,7 +220,7 @@ func ladderOf(sorted []float64) SLALadder {
 		}
 		return 100 * float64(count) / float64(n)
 	}
-	return SLALadder{Under25: share(SLATier1Ms), Under50: share(SLATier2Ms), Under100: share(SLATier3Ms)}
+	return SLALadder{Under50: share(SLATier1Ms), Under150: share(SLATier2Ms), Under300: share(SLATier3Ms)}
 }
 
 func apdexOf(satisfied, tolerating, frustrated int) ApdexScore {
@@ -244,15 +248,16 @@ func ApdexRating(score float64) string {
 	}
 }
 
-// buckets are the Revision 2 histogram bounds, sized to the target's real
-// 1-30ms range. Half-open [From, To); To == 0 is unbounded.
+// buckets are the histogram bounds, sized to the deploy host's measured
+// 29-517ms range (see the SLO block above). Half-open [From, To); To == 0 is
+// unbounded.
 var buckets = []Bucket{
-	{Label: "0-5ms", From: 0, To: 5},
-	{Label: "5-10ms", From: 5, To: 10},
-	{Label: "10-25ms", From: 10, To: 25},
+	{Label: "0-25ms", From: 0, To: 25},
 	{Label: "25-50ms", From: 25, To: 50},
 	{Label: "50-100ms", From: 50, To: 100},
-	{Label: "100ms+", From: 100, To: 0},
+	{Label: "100-200ms", From: 100, To: 200},
+	{Label: "200-400ms", From: 200, To: 400},
+	{Label: "400ms+", From: 400, To: 0},
 }
 
 // Histogram buckets a latency distribution. It always returns all six buckets,

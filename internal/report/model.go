@@ -142,9 +142,9 @@ type Percentiles struct {
 // SLALadder is the share of completed responses under each tier, as a
 // percentage.
 type SLALadder struct {
-	Under25  float64 `json:"under_25"`
 	Under50  float64 `json:"under_50"`
-	Under100 float64 `json:"under_100"`
+	Under150 float64 `json:"under_150"`
+	Under300 float64 `json:"under_300"`
 }
 
 // ApdexScore is the application performance index and its bands.
