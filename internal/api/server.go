@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AndresThePerez/courier/internal/collections"
@@ -23,6 +24,17 @@ import (
 // assertions of small JSON; a quarter of a megabyte is generous for that and
 // still bounds what an anonymous visitor can make the decoder allocate.
 const MaxBodyBytes = 256 << 10
+
+// Log event names this package writes, in the same "event" + "run_id"
+// vocabulary internal/runner uses, so one jq filter reads the whole trail.
+const (
+	// EventSendExecuted is one editor Send, with what it cost the ledger.
+	EventSendExecuted = "send_executed"
+
+	// EventServerClosed is the end of a graceful shutdown: the engine drained
+	// and the connection pool released.
+	EventServerClosed = "server_closed"
+)
 
 // Options configures a Server at startup. The target is fixed here and can
 // never be influenced by a client request.
@@ -54,6 +66,13 @@ type Server struct {
 	bus *sse.Broadcaster
 	mgr *runner.Manager
 
+	// sending is the one-in-flight rule for POST /api/send. An atomic.Bool is
+	// right here and wrong for the run lifecycle: this really is two states
+	// with no metadata, where the lifecycle is three states plus a run id, a
+	// mode, and a start time.
+	sending atomic.Bool
+
+	metrics *metrics
 	started time.Time
 
 	// runCtx is the parent of every run context. It outlives the HTTP request
@@ -91,21 +110,32 @@ func New(static fs.FS, opts Options) *Server {
 		now:      now,
 		ex:       ex,
 		bus:      bus,
-		mgr:      runner.NewManagerAt(ex, opts.TargetDisplay, bus, log, now),
 		started:  now(),
 		runCtx:   ctx,
 		stopRuns: stop,
 		done:     make(chan struct{}),
 	}
+	// Three-step rather than one literal, because the wiring is genuinely
+	// circular: the run manager publishes through the metrics tap, and the tap
+	// belongs to the server the manager is being built for.
+	s.metrics = newMetrics()
+	s.mgr = runner.NewManagerAt(ex, opts.TargetDisplay, meteredBus{bus, s.metrics}, log, now)
 	s.routes(static)
 	return s
 }
 
 // routes is the whole public surface.
+//
+// There is deliberately no /debug/pprof here. Profiling is mounted on a
+// separate loopback-only listener (debug.go): the public interface of a sandbox
+// demo must not expose an endpoint that dumps process memory or lets an
+// anonymous visitor pin a CPU for thirty seconds.
 func (s *Server) routes(static fs.FS) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/collections", s.handleCollections)
+	s.mux.HandleFunc("POST /api/send", s.handleSend)
 
 	s.mux.HandleFunc("POST /api/runs", s.handleStartRun)
 	s.mux.HandleFunc("GET /api/runs", s.handleHistory)
@@ -153,6 +183,7 @@ func (s *Server) Close(ctx context.Context) error {
 	// 50-worker run that is ~100 goroutines waiting out IdleConnTimeout for no
 	// reason, and at shutdown there is nobody left to reuse them.
 	s.ex.CloseIdleConnections()
+	s.log.Info("server closed", "event", EventServerClosed)
 	return err
 }
 
