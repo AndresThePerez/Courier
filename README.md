@@ -59,12 +59,12 @@ quietly assumed.
 ## Running locally
 
 ```bash
-# Target: a local Pokesearch on 8085 (8080 is taken on the dev workstation).
-PORT=8084 TARGET_URL=http://127.0.0.1:8085 go run ./cmd/server
+# Target: the shared dev Pokesearch on 8081 (8080 is taken on the dev workstation).
+PORT=8084 TARGET_URL=http://127.0.0.1:8081 go run ./cmd/server
 
 curl -s localhost:8084/healthz    # -> {"status":"ok"}
 open http://localhost:8084/
 ```
 
-Environment: `PORT` (default `8080`), `TARGET_URL` (default `http://127.0.0.1:8085`),
+Environment: `PORT` (default `8080`), `TARGET_URL` (default `http://127.0.0.1:8081`),
 `TARGET_DISPLAY` (the friendly target name shown in the UI and the PDF).

@@ -14,7 +14,7 @@ import (
 func main() {
 	port := envOr("PORT", "8080")
 	opts := api.Options{
-		TargetURL:     envOr("TARGET_URL", "http://127.0.0.1:8085"),
+		TargetURL:     envOr("TARGET_URL", "http://127.0.0.1:8081"),
 		TargetDisplay: envOr("TARGET_DISPLAY", "pokesearch.andrestheperez.com"),
 	}
 	log.Printf("courier listening on :%s (target %s)", port, opts.TargetURL)

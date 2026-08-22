@@ -11,7 +11,7 @@ import (
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	static := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>courier</html>")}}
-	return New(static, Options{TargetURL: "http://127.0.0.1:8085", TargetDisplay: "pokesearch.andrestheperez.com"})
+	return New(static, Options{TargetURL: "http://127.0.0.1:8081", TargetDisplay: "pokesearch.andrestheperez.com"})
 }
 
 func TestHealthz(t *testing.T) {
