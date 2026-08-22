@@ -323,3 +323,177 @@ exists". `internal/runner/bench_test.go` provides it, on the 5800X against a loo
 is the number the README's "the hot path stays lean" claim should quote. The fan-in
 aggregator costs 115 ns per result, so at the measured peak of 1,817 req/s it uses ~0.02%
 of one core — which is what justifies it being a single goroutine with no locks at all.
+
+## N18 — `sse.New` takes a logger, and `SubscribeReplay` is one call (Task 11)
+
+**Plan says:** `func New() *Broadcaster`, plus separate `Replay()` and `Subscribe()`.
+
+**What we do instead:** `New(log *slog.Logger)` (nil accepted and discarded, same
+contract as `NewManager`), and `SubscribeReplay() ([]Event, <-chan Event, func(), error)`
+alongside the plan's `Subscribe`/`Replay`.
+
+**Why:** Addendum Task 30 lists SSE subscriber connect/disconnect in the log trail, and
+the broadcaster is where subscribers live — so that is where the logger has to arrive.
+Every line carries `event` + `run_id` + `subscribers`, and a disconnect carries `reason`
+(`client_closed` vs `slow_subscriber`), which is the distinction that makes the trail
+worth having.
+
+`SubscribeReplay` exists because doing the two separately is a real bug, not a tidiness
+point: an event published between `Replay()` and `Subscribe()` lands in *both*, and the
+viewer renders a duplicate result row no run ever produced. The handler uses the combined
+call; the split ones stay for tests and for any caller that only wants one half.
+
+There is no `Broadcaster.Close`. Shutdown releases stream handlers through the API
+server's own `done` channel (see N19), which is the thing that actually has to unblock
+`http.Server.Shutdown`.
+
+## N19 — `runner.NewManagerAt` and `api.Options.Now` (Tasks 12, 14)
+
+The budget's 5s cooldown floor is real time. `internal/runner`'s own tests inject a clock
+by setting the unexported `m.now`, which a test in `internal/api` cannot do — so a handler
+test wanting three runs in history would have to sleep 10+ seconds.
+
+`NewManagerAt(ex, target, pub, log, now)` is `NewManager` with the clock passed in (nil
+means `time.Now`, and `NewManager` now delegates to it). `api.Options.Now` threads it
+through; production leaves it nil. The manager and its bucket still read the *same*
+source — that is the whole point of `m.clock`, and it is the only place either is set.
+
+`api.Options` also gained `Logger`, and `Server` gained `Close(ctx) error` and a
+`Manager()` accessor. `Close` cancels the run context, releases the SSE handlers, waits
+for the engine (bounded by ctx), and drops the idle connection pool.
+
+## N20 — `/api/send` uses `budget.Debit`, not `budget.Spend` (Task 14)
+
+**Spec says:** "`/api/send` debits the same bucket ... a send's debit simply lengthens the
+next run's cooldown."
+
+**Problem:** `Spend` sets `cooldownUntil = now + max(floor, deficit/R)` unconditionally, so
+routing sends through it would put the Start button into a 5-second countdown every time a
+visitor pressed Send in the editor. That is a rate limit the design does not ask for — the
+one-in-flight rule already caps that path at one worker-second per second.
+
+**What we do instead:** `Bucket.Debit(workerSeconds)` charges the balance without opening a
+cooldown window; `Spend` keeps the floor and both now share one `debit` core. The load
+bound is unchanged and this is the spec's own reading of it: the send lowers the balance,
+so the *next run's* `Spend` computes a longer cooldown from it, and total load still
+converges on `R`.
+
+## N21 — `runner.bodyPreview` is now exported as `runner.Preview` (Tasks 7, 14)
+
+`/api/send` returns a response body to the editor and must truncate it exactly the way a
+functional run does — one truncation rule, everywhere, including the partial-rune backoff.
+The helper is exported rather than reimplemented; `functional.go` is otherwise unchanged.
+
+## N22 — SSE wire details the plan and the spec disagree on (Task 12)
+
+Where they conflict, the spec (Revision 2.1) wins, because it was written after the plan's
+Task 12 prose:
+
+- **Heartbeat is 2s**, not the plan's "`: ping` every 15s". The client's fallback trigger is
+  "no bytes for 5s", so a 15s heartbeat would guarantee a false fallback on any quiet run.
+- **Over the subscriber cap the handler answers `503 {"poll": true}`** (spec), which the
+  client treats as an immediate fallback trigger and does not retry, rather than the plan's
+  unspecified "tell the client to poll".
+- **The terminal event is `run_finished`**, not a separate `done` (see N12). It is the
+  spec's terminal event under the name the engine already publishes.
+
+Three things the plan leaves undefined, decided here:
+
+1. **Every frame carries both.** `event: <type>` *and* a `data:` payload that is the whole
+   `runner.Event` envelope (`type`, `run_id`, `data`). A client may use
+   `addEventListener(type)` or one handler switching on `type`; neither costs the other
+   anything, and `json.Marshal` never emits a raw newline so one `data:` line always suffices.
+2. **The stream stays open after `run_finished`.** Closing it would make `EventSource`
+   reconnect ~3s later, replay the log, and see the same terminal event — a reconnect loop
+   for any tab left open. The frontend closes it on `run_finished`; until then it costs one
+   parked handler and a 2s heartbeat.
+3. **A finished run whose events the broadcaster has moved past gets a synthesized
+   `run_finished`** built from the stored report, then the stream closes. An empty stream
+   would leave the client unable to tell "finished" from "died" — the exact distinction the
+   polling fallback exists to make.
+
+Events are also filtered by `run_id`, so a stream opened for run A never renders run B's
+events if the broadcaster is reset underneath it.
+
+## N23 — Curated collections follow Addendum A2, and the error collection is rewritten (Task 13)
+
+**Plan says:** six collections, 30-40 requests, and a `05 - Error Handling & Edge Cases`
+that asserts "graceful degradation, never 400s".
+
+**What we do instead:** **four collections, 18 requests** (A2: 15-18 across 3-4), and the
+error collection asserts the **Pokesearch M3 contract in both directions**. The plan's own
+test — `len(all) != 6`, `total < 30 || total > 40` — is replaced by the A2 bounds; keeping
+it would have failed the amendment it was written before.
+
+| File | ID | Requests |
+|---|---|---|
+| `01-search-basics.json` | `search-basics` | 5 |
+| `02-search-filters.json` | `search-filters` | 4 |
+| `03-suggest-health.json` | `suggest-health` | 4 |
+| `04-error-handling.json` | `error-handling` | 5 |
+
+Three judgement calls inside the error collection:
+
+- **`400` cases assert `error.code == "invalid_param"` and the exact `error.field`**
+  (`sort`, `supertype`, `page_size`), and a test enforces that a request asserting a field
+  actually *sends* that parameter.
+- **Unknown comma-list members are asserted with a bounded range, not an exact total.**
+  `types=Lightning,Wizard` asserts `200`, `total > 1500`, and `total < 5000`. `Lightning`
+  alone is a measured 1,513; the total with an unknown member dropped is *inferred*, not
+  measured, and the standing policy is that curated values come from the fixture list. The
+  range still falsifies both failure modes — a 400, or the filter being dropped entirely
+  (20,324).
+- **Unknown *query key* leniency is not asserted at all, because Courier cannot exercise
+  it.** The sandbox rejects an unknown key before it ever reaches Pokesearch, which is the
+  allowlist working. Only list-member leniency is reachable from here.
+
+Cut for A2, all with verified fixtures, ready to re-add if the budget grows: browse page 2
+(`q=pikachu&page=2` → page 2, 24 results), sort by name/newest/oldest, `series=Base` (494),
+`set=base1` (102), `supertype=energy` (392), special characters (`q=★` → 29), the 300-char
+query (0), empty result set (`q=zzzzqqqqxxxx` → 0 total, 0 pages), suggest fuzzy fallback,
+and the `debug=1` query inspector.
+
+## N24 — Task 13 step 5 (verify the fixtures against a live index) is NOT done
+
+The task says to run every curated request against local Pokesearch and require zero
+assertion failures. That is deliberately skipped here, for the reason N1 and N2 give: the
+only reachable target is the shared dev instance on 8081, which another session rebuilds at
+task boundaries and which still serves a **partial** M3 contract, and
+`docker compose` must not be run from `~/Repositories/pokesearch`. Verifying against it
+would produce a false red (or, worse, a false green on the old lenient build).
+
+Every value in the curated set comes from the plan's verified fixture table and the spec's
+measured profile. **The verification is owed at Phase 7/8**, where the spec already requires
+it: run the full curated suite against the deployed target and require zero assertion
+failures *before* announcing the URL. The M3 `400` assertions are the ones most likely to
+move, since they were written against a contract document rather than a running server.
+
+The API was still verified end to end by hand (Task 14 step 5) against a local stub target
+on 127.0.0.1:8086 — every route, the 400/404/409 paths, the SSE replay, `/metrics`, pprof
+reachability, and SIGTERM shutdown.
+
+## N25 — Self-telemetry is a server-scoped `expvar.Map`; pprof refuses to bind off-box (Addendum Task 31)
+
+`/metrics` is an `expvar.Map` that is **not** published to expvar's package global, and the
+handler is ours rather than `expvar.Handler()`. Two reasons: `expvar.Publish` panics on a
+duplicate name and every handler test builds another `Server` in the same process; and the
+default handler also renders `cmdline` and `memstats`, i.e. `os.Args` — a public demo that
+hands out its own command line is a disclosure, not a feature. A test asserts neither key
+appears. Counters: `runs_started`, `runs_cancelled`, `runs_aborted`, `sends_completed`,
+`sends_refused`. Gauges (`expvar.Func`, evaluated at render): `budget_balance`,
+`sse_subscribers`, `sse_subscriber_cap`, `goroutines`, `uptime_secs`, `run_in_progress`.
+The gauges are attached on first render because they read a `Server` that is not finished
+being built when its metrics are created.
+
+`runs_aborted` counts terminal events with a status other than `completed`, observed by
+wrapping the broadcaster (`meteredBus`) rather than by adding a hook to the run manager.
+Counting cancels in the DELETE handler alone would miss expired runs and runs stopped by
+shutdown.
+
+pprof is a **separate `http.Server` on its own loopback listener**, never a route on the
+public mux. `api.StartPprof` returns an error rather than binding when the address is not
+loopback — `0.0.0.0:6060`, `:6060`, a LAN IP and a hostname are all refused, so a deploy
+that sets `PPROF_ADDR` by habit fails loudly instead of quietly publishing the process's
+memory. `PPROF_ADDR=off` disables it; the default is `127.0.0.1:6060`. Tested from both
+sides: every `/debug/pprof/*` path and `/debug/vars` on the public mux, and a real profile
+fetch on the loopback listener.
