@@ -7,6 +7,7 @@ import * as api from './api.js';
 import * as workspace from './workspace.js';
 import * as sidebar from './render-sidebar.js';
 import * as editor from './render-editor.js';
+import * as runner from './render-runner.js';
 
 const TABS = ['runner', 'editor', 'results'];
 
@@ -75,12 +76,19 @@ function render(state) {
   renderTopbar(state);
   sidebar.render(state);
   editor.render(state);
+  runner.render(state);
 }
 
 async function boot() {
   workspace.init();
 
   editor.init();
+  runner.init({
+    // The runner drives its own refresh after a start or a cancel rather than
+    // waiting up to StatusPollMs for the poll to catch up.
+    refresh: () => Promise.all([refreshStatus(), refreshHistory()]),
+    showTab,
+  });
   sidebar.init({
     select: (request) => {
       // The editor clears the previous request's notes and response first, so
@@ -89,8 +97,8 @@ async function boot() {
       sidebar.selectRequest(request);
       showTab('editor');
     },
-    add: () => {},
-    addAll: () => {},
+    add: (request) => runner.add(request),
+    addAll: (collection) => runner.addAll(collection),
     openRun: () => {},
   });
 
@@ -111,9 +119,12 @@ async function boot() {
 
   await Promise.all([refreshStatus(), refreshHistory()]);
   setInterval(() => {
-    // Only poll while there is nothing live to watch: a run being streamed
-    // reports its own state, and the poll exists for the idle case.
-    if (!get().run) refreshStatus();
+    // Only poll while nothing live is attached: a run being streamed reports
+    // its own state, and the poll exists for the idle case. The gate is the
+    // transport rather than state.run, because a run can be adopted (Watch,
+    // history) before — or without — a transport ever attaching to it, and a
+    // page with neither a stream nor a poll would never learn the run ended.
+    if (get().transport === 'idle') refreshStatus();
   }, StatusPollMs);
 }
 

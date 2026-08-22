@@ -12,9 +12,17 @@
   --warn: #f0b429;
   --radius: 6px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* Native controls — checkboxes, radios, number spinners, scrollbars — take
+     their colours from this and nowhere else. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
+
+/* The UA's [hidden] rule is a bare element selector, so any class here that
+   sets display would silently outrank it and show a hidden node anyway. Every
+   render module toggles visibility through the attribute, so it wins here. */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -137,7 +145,7 @@ button { font: inherit; }
 
 /* ---------- form controls ---------- */
 
-input[type="text"], select {
+input[type="text"], input[type="number"], select {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--line);
@@ -146,7 +154,10 @@ input[type="text"], select {
   font: inherit;
   min-width: 0;
 }
-input[type="text"]:focus, select:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+input[type="text"]:focus, input[type="number"]:focus, select:focus {
+  outline: 1px solid var(--accent); outline-offset: -1px;
+}
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); margin: 0; }
 input::placeholder { color: var(--muted); opacity: 0.7; }
 select:disabled, input:disabled { opacity: 0.5; }
 option:disabled { color: var(--muted); }
@@ -214,6 +225,65 @@ option:disabled { color: var(--muted); }
   line-height: 1.45;
   tab-size: 2;
 }
+
+/* ---------- run sequence ---------- */
+
+.block-actions { display: flex; gap: 0.3rem; margin-left: auto; }
+.seq-count {
+  font-family: var(--mono); font-weight: 400;
+  text-transform: none; letter-spacing: 0; color: var(--muted);
+}
+
+.seq-row {
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.seq-row.is-off { opacity: 0.5; }
+.seq-index { flex: 0 0 1.4rem; text-align: right; color: var(--muted); font-size: 11px; }
+.seq-check { flex: 0 0 auto; }
+.seq-body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.seq-name, .seq-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seq-target { color: var(--muted); font-size: 11px; }
+
+/* ---------- run config rail ---------- */
+
+.mode-picker { display: flex; gap: 0.4rem; }
+.mode-option {
+  display: flex; align-items: center; gap: 0.35rem;
+  flex: 1 1 0; min-width: 0; cursor: pointer;
+  padding: 0.35rem 0.5rem;
+  background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: var(--radius);
+}
+.mode-option:has(input:checked) { border-color: var(--accent); color: var(--accent); }
+#mode-note { margin: 0.45rem 0 0; }
+
+.options { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 0.8rem; }
+/* .field carries a 14rem basis for the editor's row; in this column it would
+   become a 14rem-tall control. */
+.options .field { flex: 0 0 auto; }
+.check { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+.field-row { display: flex; align-items: center; gap: 0.4rem; }
+.field-row input { flex: 0 0 5.5rem; }
+.hint { color: var(--muted); font-size: 11px; }
+
+.run-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.run-actions .btn { flex: 1 1 auto; }
+.banner {
+  margin: 0.6rem 0 0;
+  padding: 0.45rem 0.55rem;
+  background: var(--panel-2);
+  border-left: 2px solid var(--line);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--muted); font-size: 12px; line-height: 1.45;
+}
+.banner.is-live { border-left-color: var(--accent); color: var(--text); }
+.countdown { margin: 0.5rem 0 0; color: var(--warn); font-family: var(--mono); font-size: 12px; }
+#start-note { margin: 0.5rem 0 0; }
 
 /* ---------- misc ---------- */
 

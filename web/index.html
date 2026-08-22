@@ -50,7 +50,18 @@
         <button id="tab-results" type="button" class="tab">Results</button>
       </nav>
 
-      <div id="panel-runner" class="panel"></div>
+      <div id="panel-runner" class="panel">
+        <h3 class="block-heading">
+          Run sequence
+          <span id="sequence-count" class="seq-count"></span>
+          <span class="block-actions">
+            <button id="select-all" type="button" class="btn btn-mini">Select all</button>
+            <button id="deselect-all" type="button" class="btn btn-mini">Deselect all</button>
+          </span>
+        </h3>
+        <p id="sequence-note" class="note" hidden></p>
+        <div id="sequence-list" class="rows"></div>
+      </div>
 
       <div id="panel-editor" class="panel">
         <p id="editor-empty" class="note">Pick a request in the sidebar to open it here.</p>
@@ -97,10 +108,70 @@
         </div>
       </div>
 
-      <div id="panel-results" class="panel"></div>
+      <div id="panel-results" class="panel">
+        <p class="note">Results appear here once a run is under way.</p>
+      </div>
     </section>
 
-    <aside id="panel-rail"></aside>
+    <aside id="panel-rail">
+      <section class="rail-section">
+        <h2 class="rail-heading">Run configuration</h2>
+
+        <div class="mode-picker">
+          <label class="mode-option">
+            <input id="mode-functional" type="radio" name="run-mode" value="functional" checked>
+            <span>Functional</span>
+          </label>
+          <label class="mode-option">
+            <input id="mode-performance" type="radio" name="run-mode" value="performance">
+            <span>Performance</span>
+          </label>
+        </div>
+        <p id="mode-note" class="note"></p>
+
+        <div id="functional-options" class="options">
+          <label class="check">
+            <input id="stop-on-failure" type="checkbox">
+            <span>Stop on first failure</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Delay between requests</span>
+            <span class="field-row">
+              <input id="delay-ms" type="number" min="0" max="1000" step="10" inputmode="numeric">
+              <span class="hint">ms &mdash; 0 to 1000</span>
+            </span>
+          </label>
+        </div>
+
+        <div id="performance-options" class="options" hidden>
+          <label class="field">
+            <span class="field-label">Concurrency</span>
+            <span class="field-row">
+              <input id="concurrency" type="number" min="1" max="50" step="1" inputmode="numeric">
+              <span class="hint">workers &mdash; 1 to 50</span>
+            </span>
+          </label>
+          <label class="field">
+            <span class="field-label">Duration</span>
+            <span class="field-row">
+              <input id="duration-secs" type="number" min="1" max="30" step="1" inputmode="numeric">
+              <span class="hint">seconds &mdash; 1 to 30</span>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <section class="rail-section">
+        <div class="run-actions">
+          <button id="start-run" type="button" class="btn btn-primary">Start run</button>
+          <button id="watch-run" type="button" class="btn" hidden>Watch this run</button>
+          <button id="cancel-run" type="button" class="btn btn-danger" hidden>Cancel run</button>
+        </div>
+        <p id="run-status-banner" class="banner" hidden></p>
+        <p id="cooldown-countdown" class="countdown" hidden></p>
+        <p id="start-note" class="note" hidden></p>
+      </section>
+    </aside>
   </div>
 </div>
 <script type="module" src="/js/main.js"></script>
