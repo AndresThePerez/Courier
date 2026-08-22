@@ -550,3 +550,63 @@ the ticker survives one beat past the deadline so a render that straddled it is 
 a second later rather than three. Measured before the fix: a tab could show "cooling down"
 in the topbar beside an enabled Start button for a full poll interval. Measured after:
 zero disagreements across 1,600 samples over four cooldowns, foreground and background.
+
+## N28 — The "no bytes for 5s" fallback trigger is "no events since connect" (Task 18)
+
+**Plan and spec say:** fall back to polling when the stream "delivers nothing within
+5s of a run the server reports as running", and the server's 2s `: ping` heartbeat
+exists to keep that trigger from firing on a quiet run (N22).
+
+**What we do instead:** `api.openLive` arms a 5s timer when the `EventSource` opens
+and disarms it permanently on the first *event*. Heartbeats are not observed at all.
+
+**Why:** `EventSource` never hands a comment line to script — the parser consumes
+`: ping` and dispatches nothing — so "no bytes" is not observable from the client.
+What is observable is "no events since the stream opened", and that is the case the
+timer is really for: a proxy that buffers the response (the Cloudflare tunnel in
+Phase 8) accepts the connection and then delivers nothing while the server has
+already replayed `run_started` into the void. A live run always replays at least
+`run_started` on connect, so silence at open means the bytes are not arriving.
+
+Keeping the timer armed *after* the first event would have been the literal reading
+and a bug: a functional run against a slow target can legitimately go far longer
+than 5s between events, and the heartbeat that was supposed to prove otherwise is
+invisible here. The heartbeat still earns its place — it stops proxies reaping the
+connection — it just cannot be the client's liveness signal.
+
+The same limitation folds in the `503 {"poll": true}` case. `EventSource` reports a
+refused connection, a dropped one, a mid-flight reconnect, and the subscriber-cap
+503 as one bare error with no status code, so the client treats every `onerror`
+before `run_finished` as an immediate fallback and never lets `EventSource` retry —
+which is exactly what the 503 asks for, arrived at without being able to read it.
+
+## N29 — Every tab attaches to a live run; only the starting tab follows it (Tasks 17, 18)
+
+**Plan says:** Task 17's `watch-run` is what attaches a second visitor to the live
+run, and Task 18 step 7 requires that reloading mid-run "re-attaches and repaints
+from the replay log".
+
+**What we do instead:** `main.js` attaches whenever `GET /api/status` reports a live
+run and nothing is attached — start, Watch, and reload all arrive through that one
+rule. `api.js` gained `onRunStarted(fn)`, called on the 202, so the tab that pressed
+Start is the only one that also switches itself to the Results tab.
+
+**Why:** a mid-run reload has no memory of what it was watching, so something other
+than a button has to decide to re-attach; persisting "I was watching run X" in
+sessionStorage would have been a second source of truth about a fact the server
+already publishes. Making it one rule also means spectator mode, reconnect, and
+"someone else started a run" are the same code path rather than three. Switching
+tabs is the one thing that must *not* be shared: hijacking a spectator's tab because
+somebody else pressed Start is the wrong half of the behaviour, and the 202 is the
+only place a page knows the run is its own.
+
+**One edit outside Task 18's file list:** `render-runner.js`'s `watch()` cleared
+`results`, `progress`, and `report` unconditionally. Once the page attaches on its
+own, that clears a replay that has already arrived and does not arrive twice — a
+functional spectator pressing Watch lost every row rendered so far. It now clears
+only when the tab is not already following that run. The clobber was invisible in
+Task 17 because `openLive` was still a stub.
+
+A run reopened from history pins the Results view: the page stops following the live
+run and does not re-attach until the visitor asks for it back with Watch. Reopening
+a stored report and then having a live run paint over it would be the worse default.

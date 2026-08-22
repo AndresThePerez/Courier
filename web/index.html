@@ -109,7 +109,80 @@
       </div>
 
       <div id="panel-results" class="panel">
-        <p class="note">Results appear here once a run is under way.</p>
+        <div class="results-head">
+          <div id="results-summary" class="results-summary"></div>
+          <!-- The renderer and its route arrive in Task 19; the link points at
+               the route that task specifies. target=_blank so a visitor who
+               clicks it early does not lose the page they are reading, and no
+               download attribute because the route sets Content-Disposition
+               itself. -->
+          <a id="download-pdf" class="btn btn-mini" target="_blank" rel="noopener" hidden>Download PDF</a>
+        </div>
+        <p id="transport-note" class="note" hidden></p>
+        <p id="results-empty" class="note">Results appear here once a run is under way.</p>
+
+        <div id="perf-live" hidden>
+          <div class="gauges">
+            <div class="gauge">
+              <span class="gauge-label">Elapsed</span>
+              <span id="perf-elapsed" class="gauge-value mono">0.0s</span>
+            </div>
+            <div class="gauge">
+              <span class="gauge-label">Requests / sec</span>
+              <span id="perf-rps" class="gauge-value mono">0</span>
+            </div>
+          </div>
+          <p id="perf-counters" class="note mono"></p>
+          <p class="note">
+            Percentiles are computed once, after the run, over the samples the aggregator owns
+            &mdash; there are deliberately none mid-run.
+          </p>
+        </div>
+
+        <div id="perf-dashboard" hidden>
+          <div id="verdict-badge" class="verdict"></div>
+
+          <section class="dash-block">
+            <h3 class="block-heading">SLA ladder</h3>
+            <div id="sla-ladder"></div>
+          </section>
+
+          <section class="dash-block">
+            <h3 class="block-heading">Apdex &mdash; T = 25ms</h3>
+            <div id="apdex-block"></div>
+          </section>
+
+          <section class="dash-block">
+            <h3 class="block-heading">Latency</h3>
+            <div id="latency-table" class="table-wrap"></div>
+          </section>
+
+          <section class="dash-block">
+            <h3 class="block-heading">Latency distribution</h3>
+            <div id="histogram"></div>
+          </section>
+
+          <section class="dash-block">
+            <h3 class="block-heading">Per request</h3>
+            <div id="per-request-table" class="table-wrap"></div>
+          </section>
+
+          <section class="dash-block">
+            <h3 class="block-heading">Errors</h3>
+            <div id="error-block"></div>
+          </section>
+
+          <p class="note closed-loop">
+            Courier is a <strong>closed-loop</strong> tester: workers wait for each response before
+            issuing the next, like <code>hey</code>, not open-loop fixed-rate like <code>vegeta</code>.
+            Under saturation this understates tail latency (coordinated omission).
+          </p>
+        </div>
+
+        <div id="functional-results" hidden>
+          <div id="results-filter" class="filter-row"></div>
+          <div id="results-rows" class="rows"></div>
+        </div>
       </div>
     </section>
 

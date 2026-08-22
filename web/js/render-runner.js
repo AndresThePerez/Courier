@@ -271,14 +271,22 @@ async function cancel() {
   render(get());
 }
 
-// watch is spectator mode's entry point. Task 18 owns the live transport
-// (api.openLive is still a stub); what belongs here is the decision — which run
-// this page is watching, and that it is watching rather than driving it.
+// watch is spectator mode's entry point. main.js owns the live transport; what
+// belongs here is the decision — which run this page is watching, and that it
+// is watching rather than driving it.
+//
+// The page attaches to a live run on its own (that is what makes a mid-run
+// reload repaint from the replay log), so by the time Watch is pressed this tab
+// is usually already following the run. Clearing the results in that case would
+// throw away a replay that has already arrived and does not arrive twice; the
+// only thing left to say is that this tab is a spectator.
 function watch() {
-  const s = get().status || {};
+  const state = get();
+  const s = state.status || {};
   if (!s.run_id) return;
   startNote = '';
-  set({
+  const following = state.run && state.run.id === s.run_id;
+  set(following ? { spectator: true } : {
     run: { id: s.run_id, mode: s.mode || '', started_at: s.started_at || '' },
     spectator: true,
     results: [],
