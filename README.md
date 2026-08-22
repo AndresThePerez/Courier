@@ -1,5 +1,13 @@
 # Courier
 
+[![CI](https://github.com/AndresThePerez/courier/actions/workflows/ci.yml/badge.svg)](https://github.com/AndresThePerez/courier/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Dependencies](https://img.shields.io/badge/direct%20deps-1-brightgreen)](go.mod)
+
+> Badges resolve once the repository is pushed to GitHub. `.github/workflows/ci.yml`
+> runs `go vet ./...`, `go test -race ./...`, `go build ./...`, and the Docker image
+> build on every push and pull request to `main`.
+
 A public, Postman-style API test runner and load tester: one Go binary that serves an
 embedded three-pane UI, runs curated request collections against a fixed target in two
 modes — **Functional** (declarative assertions) and **Performance** (a worker-pool load
