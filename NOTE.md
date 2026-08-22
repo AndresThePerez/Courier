@@ -696,3 +696,106 @@ ACCEPT). The `host.docker.internal:host-gateway` mapping itself is correct — i
 resolves to 172.17.0.1 inside the container. The Task 22 container run was therefore
 driven against a stub container on the compose network instead. Nothing in the image
 or the compose files works around this; it is a host firewall fact.
+
+---
+
+## N32 — What the acceptance matrix actually runs, and the three items the plan could not have (Task 20)
+
+**Plan says:** Task 20 step 1 brings the target up with `APP_PORT=8085 docker compose up -d`
+from `~/Repositories/pokesearch`; step 2 lists the E2E matrix; step 4 is a target-down
+drill that stops Elasticsearch and then the app container.
+
+**What we do instead:** `internal/acceptance/acceptance_test.go` (build tag `acceptance`,
+`COURIER_URL` to name the instance) drives a Courier already pointed at the shared dev
+target on 8081 — that is N1, not a new deviation — and the three items that need the
+target to *misbehave* run against a scratch stub instead of that shared instance.
+
+**Every item's status, run 2026-08-22 against Pokesearch `milestone-3` (commit `9c042d3`,
+20,324 docs):**
+
+| Matrix item | Test | Result |
+|---|---|---|
+| Every curated collection, zero assertion failures | `TestCuratedCollectionsRunClean` | PASS — 18/18 requests, 4/4 collections |
+| Perf report fully populated + `C*D/L` within ±35% | `TestPerformanceSanity` | PASS — 0.2% off |
+| Wall clock ≤ duration + one request, `OverrunMs` set | `TestPerformanceSanity` | PASS |
+| `concurrency=500, duration=600` clamped to 50/30 | `TestClampsAndBusyConflict` | PASS |
+| Second `POST /api/runs` during a run → 409 + `run_id` | `TestClampsAndBusyConflict` | PASS |
+| `page_size` → 400 naming the field | `TestStrictParamIsRejectedNamingTheField` | PASS |
+| SSE reconnect mid-run + spectator replay-then-live | `TestSSEReconnectAndSpectator` | PASS |
+| Cancel: 204 in ~1s, `cancelled` report, lock freed | `TestCancelDuringRun` | PASS — 204 in 4ms |
+| Cooldown: immediate rerun 409 + `cooldown_until`, then 202 | `TestCooldownWindow` | PASS |
+| Polling contract: coherent partial on every poll | `TestPollingContract` | PASS — 22 polls |
+| `report.pdf` parses for both modes | `TestReportPDFParsesForBothModes` | PASS |
+| History ≤ 20, newest-first | `TestHistoryIsCappedAndNewestFirst` | PASS — 20 rows |
+| Courier starts with its target down | `TestCourierStartsWithItsTargetDown` | PASS |
+| Metrics accounting against a real 503 | `TestMetricsAccountingAgainstA503` | PASS — **against the stub** |
+| Functional deadline against a stalling target | `TestFunctionalDeadlineAgainstAStallingTarget` | PASS — **against the stub**, 12 dispatched / 38 skipped in 2m5s |
+
+### N32a — N24 is discharged: not one curated fixture had drifted
+
+This is the verification N24 owed. All four collections ran functionally end to end
+against the live Milestone 3 build with **zero assertion failures and zero skips** —
+including the five error-handling assertions N2 and N24 said could not be checked until
+M3 was deployed. `error.code`, `error.field` and `request_id` all came back exactly as the
+contract document described.
+
+**Nothing was changed to make this pass.** Every fixture — `charizard` 107, `base1-1` →
+Alakazam, browse 20,324 / 24 results / 11 type facets, `charzard` 128, `pikachu` 221 with
+9 type facets and 173 set facets, `Rare Holo` 1,617, `Fire,Water` 3,992, hp 300–380 → 491,
+`sort=hp&order=desc` → 380 / Mega Venusaur ex, `alak` → 8 / Alakazam, `p` → 8, `zzzzzzzz`
+→ 0, `/healthz` 20,324, `page=99999` → page 400 / 0 results, `Lightning,Wizard` → 1,513 —
+was independently re-measured with `curl` against 8081 *before* the suite ran, and every
+one matched. There are **no vault Design-Spec fixture-table implications**: the table is
+correct as written.
+
+### N32b — Two target-manipulation items run against a stub, and the suite says so
+
+The plan's step 2 metrics item says "stop Elasticsearch but leave Pokesearch's app up",
+and step 4 stops the app container. Neither is available: the target is a shared instance
+another session owns and `docker compose` must never be run from `~/Repositories/pokesearch`
+(N1). Breaking it to test Courier would break it for everyone.
+
+So `STUB_URL` names a *second* Courier whose target is a scratch stub with a `/__mode`
+control plane (`ok` | `fail` → structured M3 503 with code `es_unavailable` | `stall`).
+Unset, those two tests **skip with a message that says why** rather than passing quietly —
+the suite documents both target modes honestly rather than pretending one covers the other.
+What the 503 item asserts is unchanged and is still the regression test the Task 6 rewrite
+earned: `requests == ok + errors + aborted`, `status_counts[503] == requests`, every 503
+latency binned in the histogram, `error_kinds[non_2xx] == requests` with
+`error_kinds[connection] == 0`, and Apdex frustrated == requests with score 0.
+
+### N32c — The polling contract is counters-only mid-run, and that is deliberate
+
+Writing this test found one thing worth recording, and it is a documentation gap rather
+than a bug. A partial report fetched mid-run carries `requests`, `errors`, `aborted`,
+`requests_per_sec` and `latency.avg` — but **`ok` is 0 and the percentiles are 0**, because
+`Manager.absorb` folds the `Progress` tick and that payload has no `OK` field and no
+percentiles by design (they are computed once, at the end, over samples the aggregator
+alone owns). Mid-run, OK is *derivable* (`requests - errors - aborted`), not published.
+
+The first draft of the test asserted `requests == ok + errors + aborted` on every poll and
+failed 21 times in a row. Nothing was changed in the server: the frontend never reads
+`overall.ok` mid-run — `api.js`'s polling fallback synthesizes progress events from exactly
+the fields `absorb` populates, and the dashboard that renders `overall.ok` is built only
+from a finished report. The identity is therefore asserted **on the finished report**, and
+the mid-run assertions are the ones that are actually contractual: counters never go
+backwards, `errors + aborted` never exceeds `requests`, percentiles stay 0, the verdict
+stays `N/A` (never PASS or FAIL), and `finished_at` stays unset.
+
+Likewise, "the verdict is withheld mid-run" means `N/A` — the value the live report is
+created with — not the empty string. N30 says the PDF withholds it; the JSON says `N/A`.
+
+### N32d — The suite is ordered and not parallel, and two tests reuse earlier runs
+
+Courier admits one run at a time and every finished run opens a cooldown window, so a
+parallel matrix would spend its life in 409s. `startRun` waits out the cooldown before
+every POST; `TestCooldownWindow` is the one test that deliberately does not. The PDF item
+reuses the run ids the curated and performance items already paid for rather than buying
+two more runs and two more cooldowns, and skips with a clear message if they are missing.
+
+`internal/acceptance/doc.go` carries **no** build tag on purpose: without one buildable
+file the directory has no Go files at all under the default tags and `go vet ./...` reports
+the package as broken.
+
+**Load spent:** the whole suite costs roughly 200 worker-seconds against 8081 out of a
+1,500 burst that refills at 5/s, so every cooldown in it is the 5s floor.
