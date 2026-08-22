@@ -799,3 +799,53 @@ the package as broken.
 
 **Load spent:** the whole suite costs roughly 200 worker-seconds against 8081 out of a
 1,500 burst that refills at 5/s, so every cooldown in it is the 5s floor.
+
+---
+
+## N33 — The knee is where the addendum said; the fall is not (Task 33)
+
+**Addendum says:** "Pre-render the curve ... showing the knee at ~25 workers", and the
+Pokesearch session's own profiling expects throughput to **peak at ~25 and fall at 50**
+while p50 roughly doubles.
+
+**What we measured**, twice, 10s per point, through `POST /api/runs` against Pokesearch
+`milestone-3` (commit `9c042d3`, 20,324 docs) over the curated `search-basics` sequence:
+
+| workers | req/s | p50 | p95 | errors |
+|---:|---:|---:|---:|---:|
+| 1 | 87.2 | 15.89 ms | 20.19 ms | 0.00% |
+| 10 | 556.7 | 22.38 ms | 32.63 ms | 0.00% |
+| 25 | 676.8 | 39.84 ms | 69.45 ms | 0.00% |
+| 50 | 692.0 | 71.40 ms | 128.49 ms | 0.00% |
+
+- **Knee at ~25 workers — reproduced.** Throughput there is within 2% of everything the
+  target ever gives up.
+- **p50 roughly doubling from 25 to 50 — reproduced** (1.79x).
+- **Throughput falling at 50 — not reproduced.** It rose 2.2%, in both series, which
+  agreed to within 1.5% on every figure. The curve saturates flat rather than turning over.
+
+Reported as measured, and said out loud in `docs/knee.md` and in the panel's own caption.
+A flat top is the milder of the two shapes and is what a target with a bounded work queue
+and no depth-dependent contention looks like; a turnover would need a resource ceiling this
+run never reached. Nothing was retried or discarded to get this shape — both raw series,
+with run ids, are printed in `docs/knee.md`.
+
+**Two things the panel does that the addendum does not name:**
+
+- **The numbers are constants in `render-runner.js`, not a fetch.** The panel is a record of
+  a measurement on known hardware against a known corpus; a curve that redrew itself from
+  whatever the last run returned would make its own claim unfalsifiable. The four buttons
+  are how a visitor takes their own reading and compares — the 1-worker point run from the
+  UI during browser verification came back at 86.6 req/s / p50 16.0ms / p95 20.3ms against
+  the panel's 87.2 / 15.9 / 20.2.
+- **A button replaces the sequence rather than appending to it.** Adding to whatever was
+  already queued would reproduce a different run than the table measured, and the table
+  would then be describing something the button does not do.
+
+`web/knee.svg` is a hand-written static SVG loaded through `<img>`, with the theme's colours
+baked in — an `<img>`-loaded SVG cannot inherit the page's custom properties. `TestNoInnerHTML`
+is untouched: the table and the buttons are built with `dom.js` and `textContent` only.
+`web/embed.go` names the file explicitly and `TestEmbeddedAssetsArePresent` fails if a
+referenced asset is ever left out of the embed directive.
+
+**This does not add a run mode**, per the addendum's own caveat. It is a preset loader.

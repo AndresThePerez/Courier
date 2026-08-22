@@ -51,6 +51,21 @@
       </nav>
 
       <div id="panel-runner" class="panel">
+        <section id="knee-panel" class="knee">
+          <h3 class="block-heading">Find the breaking point</h3>
+          <p class="note">
+            Every backend has a concurrency past which more workers buy latency instead of
+            throughput. Here is Pokesearch's, measured through this tool. Pick a point and
+            Courier loads the config that reproduces it - then press Start run.
+          </p>
+          <img id="knee-curve" class="knee-curve" src="knee.svg"
+               alt="Throughput rises from 87 requests per second at 1 worker to 677 at 25 and
+                    flattens at 692 at 50, while p50 latency climbs from 15.9ms to 71.4ms.">
+          <div id="knee-table" class="table-wrap"></div>
+          <div id="knee-buttons" class="knee-buttons"></div>
+          <p id="knee-note" class="note" hidden></p>
+        </section>
+
         <h3 class="block-heading">
           Run sequence
           <span id="sequence-count" class="seq-count"></span>

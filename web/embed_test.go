@@ -32,6 +32,9 @@ var requiredIDs = []string{
 	"assertion-rows", "add-assertion", "assertion-note",
 	"send-request", "save-request", "send-status", "send-response",
 
+	// "find the breaking point" knee demo
+	"knee-panel", "knee-curve", "knee-table", "knee-buttons", "knee-note",
+
 	// runner sequence
 	"sequence-list", "sequence-count", "sequence-note", "select-all", "deselect-all",
 
@@ -65,6 +68,12 @@ var requiredScripts = []string{
 	"js/render-runner.js", "js/render-results.js",
 }
 
+// requiredAssets is every non-script file the markup references by URL. Same
+// reasoning as requiredScripts: embed.go names files explicitly, so one left
+// out of the directive is a broken image on the visitor's machine and nowhere
+// else.
+var requiredAssets = []string{"knee.svg"}
+
 func TestEmbeddedMarkupHasRequiredElements(t *testing.T) {
 	html, err := Files.ReadFile("index.html")
 	if err != nil {
@@ -88,6 +97,21 @@ func TestEmbeddedScriptsArePresent(t *testing.T) {
 	for _, name := range requiredScripts {
 		if _, err := Files.ReadFile(name); err != nil {
 			t.Errorf("missing embedded script %s: %v", name, err)
+		}
+	}
+}
+
+func TestEmbeddedAssetsArePresent(t *testing.T) {
+	html, err := Files.ReadFile("index.html")
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	for _, name := range requiredAssets {
+		if _, err := Files.ReadFile(name); err != nil {
+			t.Errorf("missing embedded asset %s: %v", name, err)
+		}
+		if !strings.Contains(string(html), name) {
+			t.Errorf("index.html never references %s; drop it or use it", name)
 		}
 	}
 }

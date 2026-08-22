@@ -414,6 +414,35 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
 #error-block p { margin: 0.25rem 0; }
 #error-block .block-heading { margin-top: 0.8rem; }
 
+/* ---------- knee demo ---------- */
+
+/* The panel sits above the run sequence because it is what a first-time
+   visitor should reach first: four buttons, no config to compose. */
+.knee {
+  margin: 0 0 1.1rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+.knee > .note { margin: 0.2rem 0 0; max-width: 560px; }
+
+/* The curve is a pre-rendered static SVG, so max-width keeps it from
+   ballooning on a wide pane and height:auto keeps its aspect ratio on a narrow
+   one. It never drives horizontal overflow. */
+.knee-curve {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  margin: 0.7rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+#knee-table { max-width: 560px; }
+#knee-table td { font-family: var(--mono); }
+#knee-table tr.is-knee td { color: var(--warn); }
+.knee-buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.7rem; }
+#knee-note { margin: 0.5rem 0 0; }
+
 /* ---------- misc ---------- */
 
 .note { color: var(--muted); font-size: 11px; line-height: 1.45; }

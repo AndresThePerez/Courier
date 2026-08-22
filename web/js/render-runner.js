@@ -12,7 +12,7 @@
 // once a second, would be a poll — and there is exactly one poll on this page.
 
 import { get, set, deepCopy } from './store.js';
-import { el, replace, byId, fmtTime } from './dom.js';
+import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as api from './api.js';
 
 // MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
@@ -39,6 +39,28 @@ const modeNotes = {
   performance: 'Holds the workers against the target for the full duration, closed-loop. Assertions are not evaluated.',
 };
 
+// ---------------------------------------------------------------- knee demo
+//
+// KneePoints is the measured saturation series (Addendum Task 33), run through
+// this API against Pokesearch milestone-3 over the pinned 20,324-document
+// index: 1 / 10 / 25 / 50 workers, 10s each. The numbers are the mean of two
+// consecutive series that agreed to within 1.5%; docs/knee.md carries both raw
+// series and the run ids.
+//
+// They are constants rather than a fetch on purpose. This is a *record* of a
+// measurement taken on known hardware against a known corpus, not a live
+// reading — a number that quietly changed with the weather would make the
+// panel's claim unfalsifiable. The buttons are how a visitor takes their own
+// reading and compares.
+const KneeDuration = 10;
+const KneeCollection = 'search-basics';
+const KneePoints = [
+  { workers: 1, rps: 87.2, p50: 15.89, p95: 20.19, errPct: 0 },
+  { workers: 10, rps: 556.7, p50: 22.38, p95: 32.63, errPct: 0 },
+  { workers: 25, rps: 676.8, p50: 39.84, p95: 69.45, errPct: 0, knee: true },
+  { workers: 50, rps: 692.0, p50: 71.40, p95: 128.49, errPct: 0 },
+];
+
 // refresh / showTab are wired by main.js, which owns the status poll and the
 // tab routing. Reaching into main.js from here would be an import cycle.
 let hooks = { refresh: async () => {}, showTab: () => {} };
@@ -54,6 +76,8 @@ let starting = false;
 let cancelling = false;
 let ticker = null;
 let lastPhase = null;
+let kneeNote = '';
+let kneeBuilt = false;
 
 export function init(h) {
   hooks = { ...hooks, ...h };
@@ -145,6 +169,83 @@ function setEnabled(key, on) {
 
 function setAllEnabled(on) {
   set({ sequence: get().sequence.map((e) => (e.enabled === on ? e : { ...e, enabled: on })) });
+}
+
+// ---------------------------------------------------------------- knee demo
+
+// preloadKnee is the whole one-click promise: it replaces the sequence, the
+// mode and both performance knobs in a single set(), so the page repaints once
+// and the visitor's next act is pressing Start.
+//
+// Replacing rather than appending is the point. Adding to whatever was already
+// queued would reproduce a *different* run than the one the table measured,
+// and the table would then be describing something the button does not do.
+function preloadKnee(workers) {
+  const collection = (get().collections || []).find((c) => c.id === KneeCollection);
+  const requests = (collection && collection.requests) || [];
+  if (requests.length === 0) {
+    kneeNote = 'The curated collections have not loaded yet - give the page a moment and try again.';
+    render(get());
+    return;
+  }
+  sequenceNote = '';
+  startNote = '';
+  kneeNote = `Loaded ${requests.length} search requests at ${workers} worker${workers === 1 ? '' : 's'}`
+    + ` for ${KneeDuration}s. Press Start run to take your own reading.`;
+  set({
+    sequence: requests.map((r) => entryFor(r)),
+    mode: 'performance',
+    options: { ...get().options, concurrency: workers, duration_secs: KneeDuration },
+  });
+}
+
+function renderKnee(state) {
+  const note = byId('knee-note');
+  note.hidden = !kneeNote;
+  setText(note, kneeNote);
+
+  // The table and the buttons are constants, so they are built once. Rebuilding
+  // them on every status poll would take focus off a button mid-keyboard-press
+  // for no gain, the same reason renderSequence keeps a signature.
+  if (kneeBuilt) return;
+  kneeBuilt = true;
+
+  const head = el('tr', {}, [
+    el('th', { text: 'workers' }),
+    el('th', { text: 'req/s' }),
+    el('th', { text: 'p50' }),
+    el('th', { text: 'p95' }),
+    el('th', { text: 'errors' }),
+  ]);
+  const rows = KneePoints.map((p) => {
+    const tr = el('tr', {}, [
+      el('td', { text: String(p.workers) }),
+      el('td', { text: p.rps.toFixed(1) }),
+      el('td', { text: fmtMs(p.p50) }),
+      el('td', { text: fmtMs(p.p95) }),
+      el('td', { text: `${p.errPct.toFixed(2)}%` }),
+    ]);
+    if (p.knee) tr.className = 'is-knee';
+    return tr;
+  });
+  replace(byId('knee-table'), [
+    el('table', { class: 'data-table' }, [el('thead', {}, [head]), el('tbody', {}, rows)]),
+    el('p', {
+      class: 'note',
+      text: 'Throughput is within 2% of its maximum at 25 workers, and doubling to 50 buys about'
+        + ' 2% more while p50 latency rises by roughly 80%. That is the knee: past it the queue is'
+        + ' growing, not the work getting done.',
+    }),
+  ]);
+
+  replace(byId('knee-buttons'), KneePoints.map((p) => el('button', {
+    class: `btn btn-mini${p.knee ? ' btn-primary' : ''}`,
+    type: 'button',
+    text: `${p.workers} worker${p.workers === 1 ? '' : 's'}${p.knee ? ' - the knee' : ''}`,
+    title: `Load a ${KneeDuration}s performance run at ${p.workers} worker${p.workers === 1 ? '' : 's'}`
+      + ` over the ${KneeCollection} collection (measured: ${p.rps.toFixed(1)} req/s, p50 ${fmtMs(p.p50)})`,
+    on: { click: () => preloadKnee(p.workers) },
+  })));
 }
 
 // ---------------------------------------------------------------- run config
@@ -339,6 +440,7 @@ function tick() {
 // ---------------------------------------------------------------- render
 
 export function render(state) {
+  renderKnee(state);
   renderSequence(state);
   renderConfig(state);
   renderControls(state);
