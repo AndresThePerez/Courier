@@ -1,0 +1,31 @@
+# Local override: exercise the real image without demo-net existing.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Compose deep-merges mappings across -f files, so the base's `networks: demo`
+# key cannot be removed here — only redefined. It is therefore turned into a
+# plain project-local bridge (external: false, renamed so it can never be
+# mistaken for the shared demo-net) and `default` is declared alongside it in
+# the same mapping form the base uses. Verify the merge before running anything:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml config
+#
+# TARGET_URL points at the host rather than a sibling container. The plan says
+# 8085; the dev target on this workstation is 8081 (NOTE.md N1), and either way
+# it is an override away.
+services:
+  courier:
+    environment:
+      - TARGET_URL=${TARGET_URL:-http://host.docker.internal:8081}
+      - TARGET_DISPLAY=${TARGET_DISPLAY:-pokesearch.andrestheperez.com (dev)}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
+    networks:
+      default: {}
+
+networks:
+  default: {}
+  demo:
+    external: false
+    name: courier-dev
