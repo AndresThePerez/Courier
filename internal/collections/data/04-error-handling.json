@@ -135,14 +135,14 @@
         {
           "type": "json",
           "path": "$.total",
-          "op": "gt",
-          "value": 1500
+          "op": "eq",
+          "value": 1513
         },
         {
           "type": "json",
-          "path": "$.total",
-          "op": "lt",
-          "value": 5000
+          "path": "$.results[0].types",
+          "op": "contains",
+          "value": "Lightning"
         }
       ]
     }
