@@ -41,6 +41,19 @@ var requiredIDs = []string{
 	"stop-on-failure", "delay-ms", "concurrency", "duration-secs",
 	"start-run", "cancel-run", "watch-run", "start-note",
 	"run-status-banner", "cooldown-countdown",
+
+	// results — shared header and the live transport's own note
+	"results-empty", "results-summary", "download-pdf", "transport-note",
+
+	// results — functional
+	"functional-results", "results-filter", "results-rows",
+
+	// results — performance live phase
+	"perf-live", "perf-elapsed", "perf-rps", "perf-counters",
+
+	// results — performance dashboard
+	"perf-dashboard", "verdict-badge", "sla-ladder", "apdex-block",
+	"latency-table", "histogram", "per-request-table", "error-block",
 }
 
 // requiredScripts is every module index.html transitively needs. embed.go
@@ -49,7 +62,7 @@ var requiredIDs = []string{
 var requiredScripts = []string{
 	"js/main.js", "js/store.js", "js/api.js", "js/dom.js",
 	"js/workspace.js", "js/render-sidebar.js", "js/render-editor.js",
-	"js/render-runner.js",
+	"js/render-runner.js", "js/render-results.js",
 }
 
 func TestEmbeddedMarkupHasRequiredElements(t *testing.T) {
