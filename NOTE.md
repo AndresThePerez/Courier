@@ -506,3 +506,17 @@ that sets `PPROF_ADDR` by habit fails loudly instead of quietly publishing the p
 memory. `PPROF_ADDR=off` disables it; the default is `127.0.0.1:6060`. Tested from both
 sides: every `/debug/pprof/*` path and `/debug/vars` on the public mux, and a real profile
 fetch on the loopback listener.
+
+## N26 — The idle status poll is 3s, not the plan's 5s (Tasks 15, 17)
+
+**Plan says:** Task 17 polls `GET /api/status` "on load, then every 5s while idle".
+
+**What we do instead:** `main.js` states `StatusPollMs = 3000` once, and every idle tab
+shares that one poll.
+
+**Why:** the Design Spec's status-poll figure is 3s — it is the cadence the spec's
+"re-read `cooldown_until` from the status poll" guidance (see the `/api/send` contract:
+Send debits the budget but must never start a countdown) was written against. Spec beats
+plan where they conflict (precedent N10, N22). The poll is also suppressed entirely while
+a run is being watched: the live transport reports run state itself, and the poll exists
+for the idle case.
