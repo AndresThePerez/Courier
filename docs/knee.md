@@ -63,6 +63,19 @@ either contention that gets worse under depth or a resource ceiling this run nev
 Nothing here was tuned, retried, or discarded to get this shape — both series are printed
 below in full.
 
+**Probable cause, from the Pokesearch side (2026-08-22, unproven but specific):** the
+pre-M3 build's Elasticsearch client ran on Go's default transport —
+`MaxIdleConnsPerHost = 2` — so 50 concurrent searches thrashed connections to ES, and that
+churn was their leading suspect for the old throughput fall past the knee. Milestone 3
+raised it to 100 (their commit `a4501ab`), which is the exact class of tuning Courier
+applies to its own client for the same reason. Two independent series agreeing at +2.2%
+where the pre-M3 profile fell is the signature that fix would leave, and the persistence of
+the p50 doubling fits too: queueing at ES stays, the client-side thrash is what went away.
+The defensible joint claim, with both datasets cited: **the M3 target sustains 50 workers
+where the pre-M3 build's throughput regressed.** Proving causality would take an A/B of
+this series against the old image (`master @ e860e76`) on identical hardware — not run
+here, because it would need a second seeded index and the shared dev stack stays untouched.
+
 ## Raw series
 
 Wall clock is the run's real elapsed time, which exceeds 10s by the tail request the closed
