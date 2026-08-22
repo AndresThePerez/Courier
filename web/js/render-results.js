@@ -379,7 +379,7 @@ function renderVerdict(rep, perf) {
       }),
       !partial && el('p', {
         class: 'note',
-        text: 'Verdict SLOs are fixed server-side constants: p95 within 50ms and an error rate under 1%, calibrated against this target rather than borrowed from generic web-latency advice.',
+        text: 'Verdict SLOs are fixed server-side constants: p95 within 150ms and an error rate under 1%, calibrated against this target on this hardware rather than borrowed from generic web-latency advice.',
       }),
     ]),
   ]);
@@ -387,9 +387,9 @@ function renderVerdict(rep, perf) {
 
 function renderLadder(sla) {
   replace(byId('sla-ladder'), [
-    ladderBar('under 25ms', sla.under_25 || 0),
     ladderBar('under 50ms', sla.under_50 || 0),
-    ladderBar('under 100ms', sla.under_100 || 0),
+    ladderBar('under 150ms', sla.under_150 || 0),
+    ladderBar('under 300ms', sla.under_300 || 0),
   ]);
 }
 
@@ -421,7 +421,7 @@ function renderApdex(apdex) {
     }),
     el('p', {
       class: 'note',
-      text: 'Satisfied at or under 25ms, tolerating at or under 100ms. Every non-2xx and every transport failure counts as frustrated however fast it was; dispatches Courier aborted are not counted at all.',
+      text: 'Satisfied at or under 50ms, tolerating at or under 200ms. Every non-2xx and every transport failure counts as frustrated however fast it was; dispatches Courier aborted are not counted at all.',
     }),
   ]);
 }

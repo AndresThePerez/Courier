@@ -42,10 +42,11 @@ const modeNotes = {
 // ---------------------------------------------------------------- knee demo
 //
 // KneePoints is the measured saturation series (Addendum Task 33), run through
-// this API against Pokesearch milestone-3 over the pinned 20,324-document
-// index: 1 / 10 / 25 / 50 workers, 10s each. The numbers are the mean of two
-// consecutive series that agreed to within 1.5%; docs/knee.md carries both raw
-// series and the run ids.
+// this API on the DEPLOY host against Pokesearch milestone-3 over the pinned
+// 20,324-document index and the internal Docker network: 1 / 10 / 25 / 50
+// workers, 10s each, measured at deploy calibration (2026-08-22). docs/knee.md
+// carries this series plus the earlier dev-workstation one for the hardware
+// comparison.
 //
 // They are constants rather than a fetch on purpose. This is a *record* of a
 // measurement taken on known hardware against a known corpus, not a live
@@ -55,10 +56,10 @@ const modeNotes = {
 const KneeDuration = 10;
 const KneeCollection = 'search-basics';
 const KneePoints = [
-  { workers: 1, rps: 87.2, p50: 15.89, p95: 20.19, errPct: 0 },
-  { workers: 10, rps: 556.7, p50: 22.38, p95: 32.63, errPct: 0 },
-  { workers: 25, rps: 676.8, p50: 39.84, p95: 69.45, errPct: 0, knee: true },
-  { workers: 50, rps: 692.0, p50: 71.40, p95: 128.49, errPct: 0 },
+  { workers: 1, rps: 46.4, p50: 29.24, p95: 38.64, errPct: 0 },
+  { workers: 10, rps: 154.1, p50: 70.36, p95: 118.8, errPct: 0, knee: true },
+  { workers: 25, rps: 166.5, p50: 147.85, p95: 262.24, errPct: 0 },
+  { workers: 50, rps: 174.8, p50: 281.83, p95: 407.93, errPct: 0 },
 ];
 
 // refresh / showTab are wired by main.js, which owns the status poll and the
@@ -232,9 +233,10 @@ function renderKnee(state) {
     el('table', { class: 'data-table' }, [el('thead', {}, [head]), el('tbody', {}, rows)]),
     el('p', {
       class: 'note',
-      text: 'Throughput is within 2% of its maximum at 25 workers, and doubling to 50 buys about'
-        + ' 2% more while p50 latency rises by roughly 80%. That is the knee: past it the queue is'
-        + ' growing, not the work getting done.',
+      text: 'Ten workers already deliver 88% of everything this target ever gives up. Going to'
+        + ' 25 buys 8% more throughput for double the median latency, and 50 buys 5% more for'
+        + ' double again. That is the knee: past it the queue is growing, not the work getting'
+        + ' done.',
     }),
   ]);
 

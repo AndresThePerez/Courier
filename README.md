@@ -19,25 +19,28 @@ writer), no frontend build step.
 
 ## The numbers
 
-Measured against the pinned 20,324-document Pokesearch index (Milestone 3 build), on
-the dev workstation:
+Measured against the pinned 20,324-document Pokesearch index (Milestone 3 build) on
+the deploy host, over the internal container network — the numbers the live demo's
+panel shows and its SLOs are calibrated to:
 
-| workers | req/s | p50 | p95 | error rate | verdict (p95 ≤ 50ms) |
+| workers | req/s | p50 | p95 | error rate | verdict (p95 ≤ 150ms) |
 |---:|---:|---:|---:|---:|---|
-| 1 | 87.2 | 15.89 ms | 20.19 ms | 0.00% | PASS |
-| 10 | 556.7 | 22.38 ms | 32.63 ms | 0.00% | PASS |
-| **25** | **676.8** | **39.84 ms** | **69.45 ms** | **0.00%** | FAIL |
-| 50 | 692.0 | 71.40 ms | 128.49 ms | 0.00% | FAIL |
+| 1 | 46.4 | 29.24 ms | 38.64 ms | 0.00% | PASS |
+| **10** | **154.1** | **70.36 ms** | **118.80 ms** | **0.00%** | PASS |
+| 25 | 166.5 | 147.85 ms | 262.24 ms | 0.00% | FAIL |
+| 50 | 174.8 | 281.83 ms | 407.93 ms | 0.00% | FAIL |
 
-![Throughput and p50 latency against worker count — the knee is at ~25 workers](web/knee.svg)
+![Throughput and p50 latency against worker count — the knee is at ~10 workers](web/knee.svg)
 
-**The knee is at ~25 workers.** Doubling the load to 50 buys +2.2% throughput and costs
-+79% median latency — past the knee the extra concurrency is queueing, not working.
-Error rate stays 0.00% at every point (the target degrades gracefully rather than
-falling over), and the SLO verdict flips *before* the knee, which is the point of
-having one. Two independent series agree within 1.5%; raw data, run ids, and the
-methodology are in [docs/knee.md](docs/knee.md). Reproduce any point in one click from
-the UI's **Find the breaking point** panel.
+**The knee is at ~10 workers on this hardware.** Ten workers already deliver 88% of
+everything the target ever gives up; 25 buys +8% throughput for double the median
+latency, and 50 buys +5% for double again — past the knee the extra concurrency is
+queueing, not working. Error rate stays 0.00% at every point (the target degrades
+gracefully rather than falling over), and the SLO verdict flips *between* 10 and 25
+workers, which is the point of having one. The same series on the dev workstation (a
+5800X: knee ~25, peak 692 req/s), the raw data, run ids, and methodology are in
+[docs/knee.md](docs/knee.md). Reproduce any point in one click from the UI's
+**Find the breaking point** panel.
 
 Courier's own cost stays out of the measurement: **engine overhead is ~1.8 µs per
 dispatch** (measured: perf-mode dispatch vs a bare `http.Client` baseline), the fan-in

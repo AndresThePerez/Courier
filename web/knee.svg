@@ -1,10 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 300" role="img"
      aria-labelledby="knee-title knee-desc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
   <title id="knee-title">Throughput and p50 latency against worker count</title>
-  <desc id="knee-desc">Throughput rises from 87 requests per second at 1 worker to 557 at 10 and
-    677 at 25, then flattens at 692 at 50 workers. Median latency climbs the whole way — 15.9ms,
-    22.4ms, 39.8ms, 71.4ms — so past about 25 workers extra concurrency buys latency, not
-    throughput. Measured against Pokesearch milestone-3 over 20,324 documents.</desc>
+  <desc id="knee-desc">Throughput rises from 46 requests per second at 1 worker to 154 at 10,
+    then flattens — 167 at 25 and 175 at 50 workers. Median latency climbs the whole way —
+    29ms, 70ms, 148ms, 282ms — so past about 10 workers extra concurrency buys latency, not
+    throughput. Measured on the deploy host against Pokesearch milestone-3 over 20,324
+    documents.</desc>
 
   <rect width="560" height="300" fill="#1a1d26"/>
 
@@ -27,56 +28,56 @@
 
   <g font-size="10" fill="#9aa1b4">
     <!-- left: req/s -->
-    <text x="58" y="34" text-anchor="end">800</text>
-    <text x="58" y="87" text-anchor="end">600</text>
-    <text x="58" y="140" text-anchor="end">400</text>
-    <text x="58" y="193" text-anchor="end">200</text>
+    <text x="58" y="34" text-anchor="end">200</text>
+    <text x="58" y="87" text-anchor="end">150</text>
+    <text x="58" y="140" text-anchor="end">100</text>
+    <text x="58" y="193" text-anchor="end">50</text>
     <text x="58" y="246" text-anchor="end">0</text>
     <!-- right: p50 ms -->
-    <text x="502" y="34">80</text>
-    <text x="502" y="87">60</text>
-    <text x="502" y="140">40</text>
-    <text x="502" y="193">20</text>
+    <text x="502" y="34">300</text>
+    <text x="502" y="87">225</text>
+    <text x="502" y="140">150</text>
+    <text x="502" y="193">75</text>
     <text x="502" y="246">0</text>
   </g>
 
   <!-- the knee -->
-  <line x1="352" y1="30" x2="352" y2="242" stroke="#f0b429" stroke-width="1"
+  <line x1="208" y1="30" x2="208" y2="242" stroke="#f0b429" stroke-width="1"
         stroke-dasharray="3 4" opacity="0.55"/>
-  <text x="346" y="44" text-anchor="end" font-size="10" fill="#f0b429">knee ≈ 25</text>
+  <text x="202" y="44" text-anchor="end" font-size="10" fill="#f0b429">knee ≈ 10</text>
 
   <!-- throughput -->
-  <polyline points="64,218.9 208,94.5 352,62.6 496,58.6"
+  <polyline points="64,192.8 208,78.7 352,65.5 496,56.7"
             fill="none" stroke="#ff7a45" stroke-width="2.5"
             stroke-linejoin="round" stroke-linecap="round"/>
   <g fill="#ff7a45">
-    <circle cx="64" cy="218.9" r="3.5"/>
-    <circle cx="208" cy="94.5" r="3.5"/>
-    <circle cx="352" cy="62.6" r="4.5"/>
-    <circle cx="496" cy="58.6" r="3.5"/>
+    <circle cx="64" cy="192.8" r="3.5"/>
+    <circle cx="208" cy="78.7" r="4.5"/>
+    <circle cx="352" cy="65.5" r="3.5"/>
+    <circle cx="496" cy="56.7" r="3.5"/>
   </g>
   <g font-size="10" fill="#ff7a45">
-    <text x="70" y="233">87</text>
-    <text x="208" y="88" text-anchor="middle">557</text>
-    <text x="358" y="56">677</text>
-    <text x="496" y="46" text-anchor="end">692</text>
+    <text x="70" y="207">46</text>
+    <text x="208" y="72" text-anchor="middle">154</text>
+    <text x="358" y="59">167</text>
+    <text x="496" y="44" text-anchor="end">175</text>
   </g>
 
   <!-- p50 -->
-  <polyline points="64,199.9 208,182.7 352,136.4 496,52.8"
+  <polyline points="64,221.4 208,192.2 352,137.5 496,42.8"
             fill="none" stroke="#f0b429" stroke-width="2.5"
             stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6 3"/>
   <g fill="#f0b429">
-    <circle cx="64" cy="199.9" r="3.5"/>
-    <circle cx="208" cy="182.7" r="3.5"/>
-    <circle cx="352" cy="136.4" r="3.5"/>
-    <circle cx="496" cy="52.8" r="3.5"/>
+    <circle cx="64" cy="221.4" r="3.5"/>
+    <circle cx="208" cy="192.2" r="3.5"/>
+    <circle cx="352" cy="137.5" r="3.5"/>
+    <circle cx="496" cy="42.8" r="3.5"/>
   </g>
   <g font-size="10" fill="#f0b429">
-    <text x="72" y="187">15.9ms</text>
-    <text x="208" y="199" text-anchor="middle">22.4ms</text>
-    <text x="352" y="150" text-anchor="middle">39.8ms</text>
-    <text x="446" y="102" text-anchor="middle">71.4ms</text>
+    <text x="72" y="235">29ms</text>
+    <text x="230" y="207" text-anchor="middle">70ms</text>
+    <text x="352" y="152" text-anchor="middle">148ms</text>
+    <text x="446" y="52" text-anchor="middle">282ms</text>
   </g>
 
   <!-- x axis -->
@@ -87,5 +88,5 @@
     <text x="496" y="260">50</text>
   </g>
   <text x="280" y="278" text-anchor="middle" font-size="11" fill="#9aa1b4">Courier workers (closed loop, 10s per point)</text>
-  <text x="280" y="293" text-anchor="middle" font-size="10" fill="#9aa1b4">Pokesearch milestone-3, 20,324 docs — 0.00% errors at every point</text>
+  <text x="280" y="293" text-anchor="middle" font-size="10" fill="#9aa1b4">Deploy host, internal network — Pokesearch milestone-3, 20,324 docs, 0.00% errors at every point</text>
 </svg>
