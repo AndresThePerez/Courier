@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/AndresThePerez/courier/internal/pdf"
 	"github.com/AndresThePerez/courier/internal/report"
 	"github.com/AndresThePerez/courier/internal/runner"
 	"github.com/AndresThePerez/courier/internal/sandbox"
@@ -119,6 +121,40 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, rep)
+}
+
+// handleReportPDF serves the same report handleGetRun serves, rendered.
+//
+// It 404s on exactly what handleGetRun 404s on — an id the manager has never
+// heard of — because from the client's side those are the same fact: there is
+// nothing to download. A run still in flight renders its partial report, which
+// is the polling fallback's contract in another format; the page says
+// "running" and withholds the verdict rather than pretending to a judgement.
+//
+// The render is synchronous and small (a single page, a few kilobytes, no
+// image decoding), so it is done on the request goroutine rather than cached.
+func (s *Server) handleReportPDF(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rep, ok := s.mgr.Report(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "", "no run %q", id)
+		return
+	}
+
+	out, err := pdf.Render(rep)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "", "render report: %s", err.Error())
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "application/pdf")
+	h.Set("Content-Length", strconv.Itoa(len(out)))
+	// The run id is sanitised by Filename; it is server-generated, but a header
+	// is the wrong place to find that out the hard way.
+	h.Set("Content-Disposition", `attachment; filename="`+pdf.Filename(rep.ID)+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
 }
 
 // handleHistory lists finished runs, newest first.

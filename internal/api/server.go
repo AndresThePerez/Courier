@@ -142,6 +142,7 @@ func (s *Server) routes(static fs.FS) {
 	s.mux.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
 	s.mux.HandleFunc("DELETE /api/runs/{id}", s.handleCancelRun)
 	s.mux.HandleFunc("GET /api/runs/{id}/stream", s.handleStream)
+	s.mux.HandleFunc("GET /api/runs/{id}/report.pdf", s.handleReportPDF)
 
 	s.mux.Handle("GET /", http.FileServerFS(static))
 }

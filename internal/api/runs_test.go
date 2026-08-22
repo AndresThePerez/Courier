@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -330,6 +331,40 @@ func TestGetRunWhileRunningReturnsPartialReport(t *testing.T) {
 func TestGetRunNotFound(t *testing.T) {
 	s := newServer(t, newTarget(t, 0), nil)
 	if rec := do(t, s, http.MethodGet, "/api/runs/nope", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestGetReportPDF(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	id := startRun(t, s, payload(3, 0))
+	waitIdle(t, s)
+
+	rec := do(t, s, http.MethodGet, "/api/runs/"+id+"/report.pdf", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET report.pdf = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Errorf("Content-Type = %q, want application/pdf", ct)
+	}
+	want := `attachment; filename="courier-` + id + `.pdf"`
+	if cd := rec.Header().Get("Content-Disposition"); cd != want {
+		t.Errorf("Content-Disposition = %q, want %q", cd, want)
+	}
+	body := rec.Body.Bytes()
+	if len(body) < 2000 || string(body[:5]) != "%PDF-" {
+		t.Fatalf("body is %d bytes starting %q, want a PDF document", len(body), body[:min(len(body), 8)])
+	}
+	if cl := rec.Header().Get("Content-Length"); cl != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length = %q, want %d", cl, len(body))
+	}
+}
+
+// The download 404s on exactly what GET /api/runs/{id} 404s on: an id the
+// manager has never heard of.
+func TestGetReportPDFNotFound(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	if rec := do(t, s, http.MethodGet, "/api/runs/nope/report.pdf", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
