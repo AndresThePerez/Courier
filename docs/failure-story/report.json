@@ -1,0 +1,524 @@
+{
+  "id": "run-20260822-223241-8e9c",
+  "mode": "performance",
+  "status": "completed",
+  "started_at": "2026-08-22T17:32:41.156081703-05:00",
+  "finished_at": "2026-08-22T17:32:56.156824811-05:00",
+  "duration_ms": 15000,
+  "target": "stub-target",
+  "config": {
+    "stop_on_failure": false,
+    "delay_ms": 0,
+    "concurrency": 10,
+    "duration_secs": 15
+  },
+  "entries": [
+    {
+      "index": 0,
+      "name": "01 - Basic Text Search",
+      "endpoint": "search",
+      "path": "/api/search",
+      "query": "?q=charizard"
+    },
+    {
+      "index": 1,
+      "name": "02 - Exact Card By ID",
+      "endpoint": "search",
+      "path": "/api/search",
+      "query": "?id=base1-1"
+    },
+    {
+      "index": 2,
+      "name": "03 - Browse (No Query)",
+      "endpoint": "search",
+      "path": "/api/search",
+      "query": ""
+    },
+    {
+      "index": 3,
+      "name": "04 - Fuzzy Match On A Typo",
+      "endpoint": "search",
+      "path": "/api/search",
+      "query": "?q=charzard"
+    },
+    {
+      "index": 4,
+      "name": "05 - Facets Scope To The Query",
+      "endpoint": "search",
+      "path": "/api/search",
+      "query": "?q=pikachu"
+    }
+  ],
+  "performance": {
+    "verdict": "FAIL",
+    "verdict_reasons": [
+      "error rate 99.39% is at or above the 1.00% gate"
+    ],
+    "overall": {
+      "index": -1,
+      "name": "overall",
+      "requests": 974606,
+      "ok": 5910,
+      "errors": 968696,
+      "aborted": 0,
+      "success_ratio": 0.606398893501579,
+      "requests_per_sec": 64973.2196117436,
+      "bytes": 15231252,
+      "latency": {
+        "min": 8.131,
+        "avg": 8.444174788494076,
+        "p50": 8.426,
+        "p90": 8.618,
+        "p95": 8.684,
+        "p99": 8.822,
+        "max": 9.432
+      },
+      "sla": {
+        "under_25": 100,
+        "under_50": 100,
+        "under_100": 100
+      },
+      "apdex": {
+        "score": 0.006063988935015791,
+        "rating": "Unacceptable",
+        "satisfied": 5910,
+        "tolerating": 0,
+        "frustrated": 968696
+      },
+      "histogram": [
+        {
+          "label": "0-5ms",
+          "from": 0,
+          "to": 5,
+          "count": 0
+        },
+        {
+          "label": "5-10ms",
+          "from": 5,
+          "to": 10,
+          "count": 5910
+        },
+        {
+          "label": "10-25ms",
+          "from": 10,
+          "to": 25,
+          "count": 0
+        },
+        {
+          "label": "25-50ms",
+          "from": 25,
+          "to": 50,
+          "count": 0
+        },
+        {
+          "label": "50-100ms",
+          "from": 50,
+          "to": 100,
+          "count": 0
+        },
+        {
+          "label": "100ms+",
+          "from": 100,
+          "to": 0,
+          "count": 0
+        }
+      ],
+      "status_counts": {
+        "0": 968696,
+        "200": 5910
+      },
+      "error_kinds": {
+        "connection": 968696
+      }
+    },
+    "per_request": [
+      {
+        "index": 0,
+        "name": "01 - Basic Text Search",
+        "requests": 194923,
+        "ok": 1182,
+        "errors": 193741,
+        "aborted": 0,
+        "success_ratio": 0.6063932937621522,
+        "requests_per_sec": 12994.763921399928,
+        "bytes": 3165396,
+        "latency": {
+          "min": 8.135,
+          "avg": 8.441382402707278,
+          "p50": 8.423,
+          "p90": 8.616,
+          "p95": 8.682,
+          "p99": 8.808,
+          "max": 9.432
+        },
+        "sla": {
+          "under_25": 100,
+          "under_50": 100,
+          "under_100": 100
+        },
+        "apdex": {
+          "score": 0.006063932937621522,
+          "rating": "Unacceptable",
+          "satisfied": 1182,
+          "tolerating": 0,
+          "frustrated": 193741
+        },
+        "histogram": [
+          {
+            "label": "0-5ms",
+            "from": 0,
+            "to": 5,
+            "count": 0
+          },
+          {
+            "label": "5-10ms",
+            "from": 5,
+            "to": 10,
+            "count": 1182
+          },
+          {
+            "label": "10-25ms",
+            "from": 10,
+            "to": 25,
+            "count": 0
+          },
+          {
+            "label": "25-50ms",
+            "from": 25,
+            "to": 50,
+            "count": 0
+          },
+          {
+            "label": "50-100ms",
+            "from": 50,
+            "to": 100,
+            "count": 0
+          },
+          {
+            "label": "100ms+",
+            "from": 100,
+            "to": 0,
+            "count": 0
+          }
+        ],
+        "status_counts": {
+          "0": 193741,
+          "200": 1182
+        },
+        "error_kinds": {
+          "connection": 193741
+        }
+      },
+      {
+        "index": 1,
+        "name": "02 - Exact Card By ID",
+        "requests": 194922,
+        "ok": 1182,
+        "errors": 193740,
+        "aborted": 0,
+        "success_ratio": 0.6063964047157324,
+        "requests_per_sec": 12994.697255260367,
+        "bytes": 2910084,
+        "latency": {
+          "min": 8.131,
+          "avg": 8.44471827411169,
+          "p50": 8.426,
+          "p90": 8.618,
+          "p95": 8.671,
+          "p99": 8.832,
+          "max": 9.031
+        },
+        "sla": {
+          "under_25": 100,
+          "under_50": 100,
+          "under_100": 100
+        },
+        "apdex": {
+          "score": 0.006063964047157325,
+          "rating": "Unacceptable",
+          "satisfied": 1182,
+          "tolerating": 0,
+          "frustrated": 193740
+        },
+        "histogram": [
+          {
+            "label": "0-5ms",
+            "from": 0,
+            "to": 5,
+            "count": 0
+          },
+          {
+            "label": "5-10ms",
+            "from": 5,
+            "to": 10,
+            "count": 1182
+          },
+          {
+            "label": "10-25ms",
+            "from": 10,
+            "to": 25,
+            "count": 0
+          },
+          {
+            "label": "25-50ms",
+            "from": 25,
+            "to": 50,
+            "count": 0
+          },
+          {
+            "label": "50-100ms",
+            "from": 50,
+            "to": 100,
+            "count": 0
+          },
+          {
+            "label": "100ms+",
+            "from": 100,
+            "to": 0,
+            "count": 0
+          }
+        ],
+        "status_counts": {
+          "0": 193740,
+          "200": 1182
+        },
+        "error_kinds": {
+          "connection": 193740
+        }
+      },
+      {
+        "index": 2,
+        "name": "03 - Browse (No Query)",
+        "requests": 194920,
+        "ok": 1182,
+        "errors": 193738,
+        "aborted": 0,
+        "success_ratio": 0.6064026267186539,
+        "requests_per_sec": 12994.563922981248,
+        "bytes": 2910084,
+        "latency": {
+          "min": 8.157,
+          "avg": 8.441550761421304,
+          "p50": 8.426,
+          "p90": 8.613,
+          "p95": 8.676,
+          "p99": 8.822,
+          "max": 9.016
+        },
+        "sla": {
+          "under_25": 100,
+          "under_50": 100,
+          "under_100": 100
+        },
+        "apdex": {
+          "score": 0.006064026267186538,
+          "rating": "Unacceptable",
+          "satisfied": 1182,
+          "tolerating": 0,
+          "frustrated": 193738
+        },
+        "histogram": [
+          {
+            "label": "0-5ms",
+            "from": 0,
+            "to": 5,
+            "count": 0
+          },
+          {
+            "label": "5-10ms",
+            "from": 5,
+            "to": 10,
+            "count": 1182
+          },
+          {
+            "label": "10-25ms",
+            "from": 10,
+            "to": 25,
+            "count": 0
+          },
+          {
+            "label": "25-50ms",
+            "from": 25,
+            "to": 50,
+            "count": 0
+          },
+          {
+            "label": "50-100ms",
+            "from": 50,
+            "to": 100,
+            "count": 0
+          },
+          {
+            "label": "100ms+",
+            "from": 100,
+            "to": 0,
+            "count": 0
+          }
+        ],
+        "status_counts": {
+          "0": 193738,
+          "200": 1182
+        },
+        "error_kinds": {
+          "connection": 193738
+        }
+      },
+      {
+        "index": 3,
+        "name": "04 - Fuzzy Match On A Typo",
+        "requests": 194920,
+        "ok": 1182,
+        "errors": 193738,
+        "aborted": 0,
+        "success_ratio": 0.6064026267186539,
+        "requests_per_sec": 12994.563922981248,
+        "bytes": 3137028,
+        "latency": {
+          "min": 8.155,
+          "avg": 8.445487309644676,
+          "p50": 8.43,
+          "p90": 8.615,
+          "p95": 8.686,
+          "p99": 8.827,
+          "max": 8.992
+        },
+        "sla": {
+          "under_25": 100,
+          "under_50": 100,
+          "under_100": 100
+        },
+        "apdex": {
+          "score": 0.006064026267186538,
+          "rating": "Unacceptable",
+          "satisfied": 1182,
+          "tolerating": 0,
+          "frustrated": 193738
+        },
+        "histogram": [
+          {
+            "label": "0-5ms",
+            "from": 0,
+            "to": 5,
+            "count": 0
+          },
+          {
+            "label": "5-10ms",
+            "from": 5,
+            "to": 10,
+            "count": 1182
+          },
+          {
+            "label": "10-25ms",
+            "from": 10,
+            "to": 25,
+            "count": 0
+          },
+          {
+            "label": "25-50ms",
+            "from": 25,
+            "to": 50,
+            "count": 0
+          },
+          {
+            "label": "50-100ms",
+            "from": 50,
+            "to": 100,
+            "count": 0
+          },
+          {
+            "label": "100ms+",
+            "from": 100,
+            "to": 0,
+            "count": 0
+          }
+        ],
+        "status_counts": {
+          "0": 193738,
+          "200": 1182
+        },
+        "error_kinds": {
+          "connection": 193738
+        }
+      },
+      {
+        "index": 4,
+        "name": "05 - Facets Scope To The Query",
+        "requests": 194921,
+        "ok": 1182,
+        "errors": 193739,
+        "aborted": 0,
+        "success_ratio": 0.6063995157012328,
+        "requests_per_sec": 12994.630589120809,
+        "bytes": 3108660,
+        "latency": {
+          "min": 8.149,
+          "avg": 8.447735194585457,
+          "p50": 8.426,
+          "p90": 8.633,
+          "p95": 8.693,
+          "p99": 8.837,
+          "max": 8.986
+        },
+        "sla": {
+          "under_25": 100,
+          "under_50": 100,
+          "under_100": 100
+        },
+        "apdex": {
+          "score": 0.0060639951570123285,
+          "rating": "Unacceptable",
+          "satisfied": 1182,
+          "tolerating": 0,
+          "frustrated": 193739
+        },
+        "histogram": [
+          {
+            "label": "0-5ms",
+            "from": 0,
+            "to": 5,
+            "count": 0
+          },
+          {
+            "label": "5-10ms",
+            "from": 5,
+            "to": 10,
+            "count": 1182
+          },
+          {
+            "label": "10-25ms",
+            "from": 10,
+            "to": 25,
+            "count": 0
+          },
+          {
+            "label": "25-50ms",
+            "from": 25,
+            "to": 50,
+            "count": 0
+          },
+          {
+            "label": "50-100ms",
+            "from": 50,
+            "to": 100,
+            "count": 0
+          },
+          {
+            "label": "100ms+",
+            "from": 100,
+            "to": 0,
+            "count": 0
+          }
+        ],
+        "status_counts": {
+          "0": 193739,
+          "200": 1182
+        },
+        "error_kinds": {
+          "connection": 193739
+        }
+      }
+    ],
+    "overrun_ms": 0
+  },
+  "note": ""
+}
