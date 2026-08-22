@@ -2,16 +2,20 @@ package api
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
 )
 
+func testStatic() fs.FS {
+	return fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>courier</html>")}}
+}
+
 func testServer(t *testing.T) *Server {
 	t.Helper()
-	static := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>courier</html>")}}
-	return New(static, Options{TargetURL: "http://127.0.0.1:8081", TargetDisplay: "pokesearch.andrestheperez.com"})
+	return New(testStatic(), Options{TargetURL: "http://127.0.0.1:8081", TargetDisplay: "pokesearch.andrestheperez.com"})
 }
 
 func TestHealthz(t *testing.T) {

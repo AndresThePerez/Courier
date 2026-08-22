@@ -101,6 +101,20 @@ type Manager struct {
 // taken from a package global: a run's log trail is part of its behaviour, and
 // a test that asserts on it should not have to reach through a global to do so.
 func NewManager(ex *Executor, targetDisplay string, pub Publisher, log *slog.Logger) *Manager {
+	return NewManagerAt(ex, targetDisplay, pub, log, nil)
+}
+
+// NewManagerAt is NewManager with the clock passed in; nil means time.Now.
+//
+// The manager and its budget must always read the same time source — a caller
+// that injected one and not the other would prove nothing — so this is the only
+// place either is set. It exists because the load budget's 5s cooldown floor is
+// real time: a package outside this one that needs to cross it (the API layer's
+// handler tests) would otherwise have to sleep through it once per run.
+func NewManagerAt(ex *Executor, targetDisplay string, pub Publisher, log *slog.Logger, now func() time.Time) *Manager {
+	if now == nil {
+		now = time.Now
+	}
 	if pub == nil {
 		pub = nopPublisher{}
 	}
@@ -112,7 +126,7 @@ func NewManager(ex *Executor, targetDisplay string, pub Publisher, log *slog.Log
 		target: targetDisplay,
 		pub:    pub,
 		log:    log,
-		now:    time.Now,
+		now:    now,
 		byID:   map[string]*report.Report{},
 	}
 	m.bucket = budget.New(m.clock)

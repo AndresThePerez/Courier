@@ -219,6 +219,15 @@ func (b *Broadcaster) Subscribers() int {
 	return len(b.subs)
 }
 
+// RunID is the run the replay log currently describes, or "" before the first
+// run. A stream handler reads it to tell "this run's events are still here"
+// from "the broadcaster has moved on to a later run".
+func (b *Broadcaster) RunID() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.runID
+}
+
 // record appends to the replay log under the lock, collapsing progress to
 // latest-only and trimming the oldest events past the cap.
 func (b *Broadcaster) record(e runner.Event) {
