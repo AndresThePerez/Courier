@@ -4,37 +4,59 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Courier</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231a1d24'/%3E%3Cpath d='M3 5.5 8 9l5-3.5M3 5.5v5.6c0 .5.4.9.9.9h8.2c.5 0 .9-.4.9-.9V5.5c0-.5-.4-.9-.9-.9H3.9c-.5 0-.9.4-.9.9z' fill='none' stroke='%237aa2f7' stroke-width='1.2'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div id="app">
   <header id="topbar">
+    <button id="sidebar-toggle" type="button" aria-label="Toggle sidebar">&#9776;</button>
     <span id="brand">Courier</span>
     <span id="target-label"></span>
     <span id="run-state"></span>
   </header>
 
-  <main id="panes">
+  <div id="panes">
     <aside id="panel-sidebar">
-      <nav id="collections-tree"></nav>
-      <section id="workspace-list"></section>
-      <section id="history-list"></section>
+      <section class="rail-section">
+        <h2 class="rail-heading">Collections</h2>
+        <nav id="collections-tree" class="tree"></nav>
+      </section>
+
+      <section class="rail-section">
+        <h2 class="rail-heading">
+          My Workspace
+          <button id="reset-workspace" type="button" class="link-btn">Reset</button>
+        </h2>
+        <div id="reset-confirm" class="confirm" hidden></div>
+        <div id="workspace-tree" class="tree"></div>
+      </section>
+
+      <section class="rail-section">
+        <h2 class="rail-heading">History</h2>
+        <div id="history-list" class="tree"></div>
+      </section>
+
+      <p id="target-note" class="note">
+        Requests display as <code id="target-note-name">pokesearch.andrestheperez.com</code>;
+        Courier executes them over the internal Docker network for clean, edge-free measurement.
+      </p>
     </aside>
 
-    <section id="panel-editor">
-      <div id="request-editor"></div>
+    <section id="panel-main">
+      <nav id="tabs" class="tabs">
+        <button id="tab-runner" type="button" class="tab">Runner</button>
+        <button id="tab-editor" type="button" class="tab">Request</button>
+        <button id="tab-results" type="button" class="tab">Results</button>
+      </nav>
+
+      <div id="panel-runner" class="panel"></div>
+      <div id="panel-editor" class="panel"></div>
+      <div id="panel-results" class="panel"></div>
     </section>
 
-    <section id="panel-runner">
-      <div id="sequence-list"></div>
-      <div id="run-config"></div>
-      <div id="run-controls"></div>
-    </section>
-
-    <section id="panel-results">
-      <div id="results-view"></div>
-    </section>
-  </main>
+    <aside id="panel-rail"></aside>
+  </div>
 </div>
 <script type="module" src="/js/main.js"></script>
 </body>

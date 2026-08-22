@@ -1,12 +1,17 @@
+/* Courier design system. One dark theme, custom properties only, no build step. */
 :root {
   --bg: #12141a;
   --panel: #1a1d26;
+  --panel-2: #20242f;
   --line: #2a2f3d;
   --text: #e6e8ef;
   --muted: #9aa1b4;
   --accent: #ff7a45;
   --pass: #3ecf8e;
   --fail: #ff5c5c;
+  --warn: #f0b429;
+  --radius: 6px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -19,11 +24,9 @@ html, body {
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-#app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
+#app { display: flex; flex-direction: column; height: 100%; }
+
+/* ---------- topbar ---------- */
 
 #topbar {
   display: flex;
@@ -32,34 +35,129 @@ html, body {
   padding: 0.6rem 1rem;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
 }
 
-#brand {
-  color: var(--accent);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+#brand { color: var(--accent); font-weight: 600; letter-spacing: 0.04em; }
+#target-label, #run-state { color: var(--muted); font-size: 12px; }
+#run-state.is-live { color: var(--accent); }
+#sidebar-toggle {
+  display: none;
+  background: none; border: 1px solid var(--line); color: var(--text);
+  border-radius: var(--radius); padding: 0.15rem 0.5rem; cursor: pointer;
 }
 
-#target-label, #run-state { color: var(--muted); }
+/* ---------- three-pane grid ---------- */
 
 #panes {
   display: grid;
-  grid-template-columns: 260px 1fr 320px;
-  flex: 1;
+  grid-template-columns: 280px 1fr 320px;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
-#panel-sidebar, #panel-editor, #panel-runner, #panel-results {
-  overflow: auto;
-  padding: 0.75rem;
-  border-right: 1px solid var(--line);
-}
+#panel-sidebar, #panel-main, #panel-rail { min-height: 0; min-width: 0; }
+#panel-sidebar, #panel-rail { overflow: auto; padding: 0.75rem; background: var(--panel); }
+#panel-sidebar { border-right: 1px solid var(--line); }
+#panel-rail { border-left: 1px solid var(--line); }
 
-#panel-results {
-  grid-column: 1 / -1;
-  border-right: 0;
-  border-top: 1px solid var(--line);
-}
+#panel-main { display: flex; flex-direction: column; overflow: hidden; }
+.panel { flex: 1 1 auto; overflow: auto; padding: 0.9rem 1rem; display: none; }
+.panel.is-active { display: block; }
 
+/* ---------- tabs ---------- */
+
+.tabs {
+  display: flex; gap: 0.25rem;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex: 0 0 auto;
+}
+.tab {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 0.6rem 0.8rem; cursor: pointer; font: inherit;
+}
+.tab:hover { color: var(--text); }
+.tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* ---------- sidebar ---------- */
+
+.rail-section { margin-bottom: 1.1rem; }
+.rail-heading {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin: 0 0 0.4rem;
+}
+.tree { display: flex; flex-direction: column; gap: 0.15rem; }
+.tree-empty { color: var(--muted); font-size: 12px; padding: 0.2rem 0; }
+
+.collection { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.collection > summary {
+  cursor: pointer; padding: 0.4rem 0.5rem; list-style: none;
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.collection > summary::-webkit-details-marker { display: none; }
+.collection-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  border: 1px solid var(--line); border-radius: 3px; padding: 0 0.25rem; color: var(--muted);
+}
+.collection-body { padding: 0 0.35rem 0.35rem; display: flex; flex-direction: column; gap: 0.1rem; }
+.collection-actions { padding: 0.15rem 0.35rem 0.4rem; }
+
+.req-row { display: flex; align-items: center; gap: 0.3rem; }
+.req-open {
+  flex: 1 1 auto; min-width: 0; text-align: left; background: none; border: 0;
+  color: var(--text); font: inherit; padding: 0.22rem 0.3rem; cursor: pointer;
+  border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.req-open:hover { background: var(--line); }
+.req-open.is-selected { background: var(--line); color: var(--accent); }
+.method { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
+/* ---------- buttons ---------- */
+
+button { font: inherit; }
+.btn {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.35rem 0.7rem; cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #16110d; font-weight: 600; }
+.btn-danger { border-color: var(--fail); color: var(--fail); }
+.btn-mini { padding: 0.05rem 0.35rem; font-size: 11px; line-height: 1.4; }
+.link-btn {
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 11px; text-decoration: underline; padding: 0;
+}
+.link-btn:hover { color: var(--text); }
+
+/* ---------- misc ---------- */
+
+.note { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.confirm {
+  border: 1px solid var(--warn); border-radius: var(--radius);
+  padding: 0.4rem 0.5rem; margin-bottom: 0.4rem; font-size: 12px;
+}
+.confirm-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+code, .mono { font-family: var(--mono); }
 .pass { color: var(--pass); }
 .fail { color: var(--fail); }
+.muted { color: var(--muted); }
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 900px) {
+  #sidebar-toggle { display: inline-block; }
+  #panes { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  #panel-sidebar {
+    position: fixed; top: 41px; bottom: 0; left: 0; width: 280px; max-width: 85vw;
+    z-index: 20; transform: translateX(-100%); transition: transform 0.15s ease-out;
+    border-right: 1px solid var(--line);
+  }
+  #app.sidebar-open #panel-sidebar { transform: translateX(0); }
+  #panel-rail { border-left: 0; border-top: 1px solid var(--line); max-height: 45vh; }
+}
