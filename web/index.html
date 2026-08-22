@@ -51,7 +51,52 @@
       </nav>
 
       <div id="panel-runner" class="panel"></div>
-      <div id="panel-editor" class="panel"></div>
+
+      <div id="panel-editor" class="panel">
+        <p id="editor-empty" class="note">Pick a request in the sidebar to open it here.</p>
+
+        <div id="editor-form" hidden>
+          <div class="editor-head">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input id="editor-name" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="field">
+              <span class="field-label">Endpoint</span>
+              <select id="endpoint-select"></select>
+            </label>
+            <span id="editor-origin" class="badge"></span>
+          </div>
+          <p id="editor-note" class="note" hidden></p>
+
+          <section class="editor-block">
+            <h3 class="block-heading">
+              Query parameters
+              <button id="add-param" type="button" class="btn btn-mini">Add parameter</button>
+            </h3>
+            <div id="param-rows" class="rows"></div>
+            <p id="param-note" class="note" hidden></p>
+          </section>
+
+          <section class="editor-block">
+            <h3 class="block-heading">
+              Assertions
+              <button id="add-assertion" type="button" class="btn btn-mini">Add assertion</button>
+            </h3>
+            <div id="assertion-rows" class="rows"></div>
+            <p id="assertion-note" class="note" hidden></p>
+          </section>
+
+          <div class="editor-actions">
+            <button id="send-request" type="button" class="btn btn-primary">Send</button>
+            <button id="save-request" type="button" class="btn">Save to workspace</button>
+            <span id="send-status" class="send-status"></span>
+          </div>
+
+          <div id="send-response"></div>
+        </div>
+      </div>
+
       <div id="panel-results" class="panel"></div>
     </section>
 

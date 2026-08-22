@@ -16,6 +16,7 @@ const state = {
   workspace: [],
   selectedId: null,
   draft: null, // the request the editor is editing (a copy, never a catalog object)
+  send: null, // the editor's last Send: { pending, result, kind, error, field }
 
   // runner
   sequence: [], // [{ key, enabled, request }]

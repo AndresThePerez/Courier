@@ -25,6 +25,12 @@ var requiredIDs = []string{
 	// sidebar
 	"collections-tree", "workspace-tree", "reset-workspace", "reset-confirm",
 	"history-list", "target-note", "target-note-name",
+
+	// request editor
+	"editor-empty", "editor-form", "editor-name", "editor-origin", "editor-note",
+	"endpoint-select", "param-rows", "add-param", "param-note",
+	"assertion-rows", "add-assertion", "assertion-note",
+	"send-request", "save-request", "send-status", "send-response",
 }
 
 // requiredScripts is every module index.html transitively needs. embed.go
@@ -32,7 +38,7 @@ var requiredIDs = []string{
 // a 404 at runtime, in the console, on the visitor's machine.
 var requiredScripts = []string{
 	"js/main.js", "js/store.js", "js/api.js", "js/dom.js",
-	"js/workspace.js", "js/render-sidebar.js",
+	"js/workspace.js", "js/render-sidebar.js", "js/render-editor.js",
 }
 
 func TestEmbeddedMarkupHasRequiredElements(t *testing.T) {

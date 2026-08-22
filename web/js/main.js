@@ -6,6 +6,7 @@ import { byId } from './dom.js';
 import * as api from './api.js';
 import * as workspace from './workspace.js';
 import * as sidebar from './render-sidebar.js';
+import * as editor from './render-editor.js';
 
 const TABS = ['runner', 'editor', 'results'];
 
@@ -73,13 +74,18 @@ function render(state) {
   renderTabs(state);
   renderTopbar(state);
   sidebar.render(state);
+  editor.render(state);
 }
 
 async function boot() {
   workspace.init();
 
+  editor.init();
   sidebar.init({
     select: (request) => {
+      // The editor clears the previous request's notes and response first, so
+      // nothing left on screen belongs to a request that is no longer open.
+      editor.onSelect();
       sidebar.selectRequest(request);
       showTab('editor');
     },
