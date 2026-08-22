@@ -31,6 +31,16 @@ var requiredIDs = []string{
 	"endpoint-select", "param-rows", "add-param", "param-note",
 	"assertion-rows", "add-assertion", "assertion-note",
 	"send-request", "save-request", "send-status", "send-response",
+
+	// runner sequence
+	"sequence-list", "sequence-count", "sequence-note", "select-all", "deselect-all",
+
+	// run config rail and run controls
+	"mode-functional", "mode-performance", "mode-note",
+	"functional-options", "performance-options",
+	"stop-on-failure", "delay-ms", "concurrency", "duration-secs",
+	"start-run", "cancel-run", "watch-run", "start-note",
+	"run-status-banner", "cooldown-countdown",
 }
 
 // requiredScripts is every module index.html transitively needs. embed.go
@@ -39,6 +49,7 @@ var requiredIDs = []string{
 var requiredScripts = []string{
 	"js/main.js", "js/store.js", "js/api.js", "js/dom.js",
 	"js/workspace.js", "js/render-sidebar.js", "js/render-editor.js",
+	"js/render-runner.js",
 }
 
 func TestEmbeddedMarkupHasRequiredElements(t *testing.T) {

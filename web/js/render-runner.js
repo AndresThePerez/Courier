@@ -1,0 +1,515 @@
+// render-runner.js — the run sequence, the run-config rail, and the three run
+// controls (Start, Watch, Cancel).
+//
+// Everything visible here is a function of one fact: `state.status`, the
+// server's own answer about whether a run is live and when the load budget will
+// let the next one start. The page never decides that for itself — a 409 is not
+// an error here, it is the server correcting an optimistic click, and the UI
+// simply moves into the state the 409 describes.
+//
+// The single piece of local timekeeping is the cooldown countdown, which ticks
+// a deadline the server handed over once. Asking the server what second it is,
+// once a second, would be a poll — and there is exactly one poll on this page.
+
+import { get, set, deepCopy } from './store.js';
+import { el, replace, byId, fmtTime } from './dom.js';
+import * as api from './api.js';
+
+// MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
+// enforces them either way; matching them here means a visitor meets a cap as a
+// disabled control and a sentence rather than as a 400 after the fact.
+const MaxSequence = 50;
+
+// The asymmetry is sandbox.clampOptions': under the floor falls back to the
+// default, over the cap is pulled down to the cap.
+const Limits = {
+  delay_ms: { lo: 0, hi: 1000, fallback: 0 },
+  concurrency: { lo: 1, hi: 50, fallback: 10 },
+  duration_secs: { lo: 1, hi: 30, fallback: 10 },
+};
+
+const optionOf = {
+  'delay-ms': 'delay_ms',
+  concurrency: 'concurrency',
+  'duration-secs': 'duration_secs',
+};
+
+const modeNotes = {
+  functional: 'Runs the checked requests once, in order, and evaluates every assertion.',
+  performance: 'Holds the workers against the target for the full duration, closed-loop. Assertions are not evaluated.',
+};
+
+// refresh / showTab are wired by main.js, which owns the status poll and the
+// tab routing. Reaching into main.js from here would be an import cycle.
+let hooks = { refresh: async () => {}, showTab: () => {} };
+
+// Module-local render memory and notes, the same arrangement render-editor.js
+// uses: none of this is application state, it is what this module has last
+// painted and what it last has to say.
+let counter = 0;
+let lastSignature = null;
+let sequenceNote = '';
+let startNote = '';
+let starting = false;
+let cancelling = false;
+let ticker = null;
+let lastPhase = null;
+
+export function init(h) {
+  hooks = { ...hooks, ...h };
+
+  byId('select-all').addEventListener('click', () => setAllEnabled(true));
+  byId('deselect-all').addEventListener('click', () => setAllEnabled(false));
+
+  byId('mode-functional').addEventListener('change', () => setMode('functional'));
+  byId('mode-performance').addEventListener('change', () => setMode('performance'));
+
+  byId('stop-on-failure').addEventListener('change', (e) => setOption('stop_on_failure', e.target.checked));
+  for (const [id, key] of Object.entries(optionOf)) {
+    const input = byId(id);
+    input.addEventListener('input', (e) => setOption(key, clampOption(key, e.target.value)));
+    // Repaint on blur so a field the visitor cleared, or pushed past its cap,
+    // comes back showing the number the run will actually use.
+    input.addEventListener('blur', () => render(get()));
+  }
+
+  byId('start-run').addEventListener('click', start);
+  byId('cancel-run').addEventListener('click', cancel);
+  byId('watch-run').addEventListener('click', watch);
+}
+
+// ---------------------------------------------------------------- the sequence
+
+// entryFor snapshots a request into the sequence. The deep copy is the point:
+// queueing a request captures it as it is now, so editing it afterwards — or
+// deleting it from My Workspace — cannot silently rewrite a run that is already
+// configured.
+function entryFor(request) {
+  counter += 1;
+  return { key: `seq-${counter}`, enabled: true, request: deepCopy(request) };
+}
+
+// add is main.js's sidebar hook for the per-request `+` button.
+export function add(request) {
+  const list = get().sequence;
+  if (list.length >= MaxSequence) {
+    sequenceNote = `${MaxSequence} requests is the cap - remove one before adding another.`;
+    render(get());
+    return;
+  }
+  sequenceNote = '';
+  set({ sequence: [...list, entryFor(request)] });
+}
+
+// addAll is the "Add all to run" hook. A collection that does not fit is added
+// as far as it goes and the note says how far: silently dropping the tail, or
+// refusing the whole collection over one request, would both be worse than
+// saying what happened.
+export function addAll(collection) {
+  const list = get().sequence;
+  const requests = (collection && collection.requests) || [];
+  const taken = requests.slice(0, Math.max(MaxSequence - list.length, 0));
+
+  if (taken.length === 0) {
+    sequenceNote = requests.length === 0
+      ? 'That collection has no requests.'
+      : `${MaxSequence} requests is the cap - remove one before adding another.`;
+    render(get());
+    return;
+  }
+  sequenceNote = taken.length < requests.length
+    ? `Added ${taken.length} of ${requests.length} - ${MaxSequence} requests is the cap.`
+    : '';
+  set({ sequence: [...list, ...taken.map((r) => entryFor(r))] });
+}
+
+// move is the whole reordering story: Addendum A3 defers drag-and-drop, and the
+// arrows were always going to be the accessible path anyway. Focus follows the
+// row by its stable key, so a keyboard visitor can press the same button twice.
+function move(index, delta) {
+  const list = get().sequence.slice();
+  const to = index + delta;
+  if (to < 0 || to >= list.length) return;
+  [list[index], list[to]] = [list[to], list[index]];
+  set({ sequence: list });
+}
+
+function removeAt(index) {
+  sequenceNote = '';
+  set({ sequence: get().sequence.filter((_, i) => i !== index) });
+}
+
+function setEnabled(key, on) {
+  set({ sequence: get().sequence.map((e) => (e.key === key ? { ...e, enabled: on } : e)) });
+}
+
+function setAllEnabled(on) {
+  set({ sequence: get().sequence.map((e) => (e.enabled === on ? e : { ...e, enabled: on })) });
+}
+
+// ---------------------------------------------------------------- run config
+
+function setMode(mode) {
+  if (get().mode === mode) return;
+  startNote = '';
+  set({ mode });
+}
+
+function setOption(key, value) {
+  set({ options: { ...get().options, [key]: value } });
+}
+
+function clampOption(key, raw) {
+  const { lo, hi, fallback } = Limits[key];
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < lo) return fallback;
+  return n > hi ? hi : n;
+}
+
+// requestPayload is the sandbox.Request shape POST /api/runs validates. The
+// sequence already holds requests in that shape — curated ones arrive from the
+// server that way, and a workspace request is a fork of one — so this only
+// unaliases the objects the page is still holding.
+function requestPayload(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    endpoint: r.endpoint,
+    params: { ...(r.params || {}) },
+    assertions: (r.assertions || []).map((a) => ({ ...a })),
+  };
+}
+
+// ---------------------------------------------------------------- run controls
+
+async function start() {
+  if (starting) return;
+  const state = get();
+  const entries = state.sequence.filter((e) => e.enabled);
+  if (entries.length === 0) {
+    startNote = 'Nothing is checked - a run needs at least one request.';
+    render(get());
+    return;
+  }
+
+  starting = true;
+  startNote = 'Starting...';
+  render(get());
+
+  // Deliberately not gated on the phase this module last rendered: the button
+  // being disabled is the affordance, the server is the authority. A click that
+  // slips through between the run ending and the poll noticing gets a 409 and
+  // lands in the right state, which is exactly what step 5 asks for.
+  const outcome = await api.startRun({
+    mode: state.mode,
+    sequence: entries.map((e) => requestPayload(e.request)),
+    options: { ...state.options },
+  });
+
+  starting = false;
+  applyStartOutcome(outcome, state.mode);
+  await hooks.refresh();
+  render(get());
+}
+
+function applyStartOutcome(outcome, mode) {
+  if (outcome.ok) {
+    startNote = '';
+    adoptStatus({
+      running: true,
+      run_id: outcome.runId,
+      mode,
+      started_at: new Date().toISOString(),
+    });
+    return;
+  }
+  if (outcome.kind === 'busy') {
+    // Someone else got there first. Not an error — an invitation to watch.
+    startNote = '';
+    adoptStatus(outcome.runId ? { running: true, run_id: outcome.runId } : { running: true });
+    return;
+  }
+  if (outcome.kind === 'cooling') {
+    startNote = '';
+    adoptStatus({ running: false, cooldown_until: outcome.cooldownUntil });
+    return;
+  }
+  if (outcome.kind === 'invalid') {
+    // The sandbox refused the payload. Naming the field is the whole value of
+    // the 400: it is where a visitor learns the validation is real.
+    startNote = outcome.field
+      ? `Refused - ${outcome.field}: ${outcome.error}`
+      : `Refused - ${outcome.error}`;
+    return;
+  }
+  startNote = `Could not start the run - ${outcome.error}`;
+}
+
+// adoptStatus folds a server-reported fact into state.status. A 409 body comes
+// from the same manager the status poll reads, so it is just as authoritative,
+// and adopting it is what makes the UI flip states without a round trip. The
+// next poll corrects it if the moment has already passed.
+function adoptStatus(patch) {
+  set({ status: { ...(get().status || {}), ...patch } });
+}
+
+async function cancel() {
+  const id = (get().status || {}).run_id;
+  if (!id || cancelling) return;
+
+  cancelling = true;
+  startNote = 'Cancelling...';
+  render(get());
+
+  const outcome = await api.cancelRun(id);
+  cancelling = false;
+  // A 404 means the run finished on its own between the click and the request.
+  // From here that is the same fact as a successful cancel: there is nothing
+  // left to stop.
+  startNote = outcome.ok || outcome.gone ? '' : `Could not cancel - ${outcome.error}`;
+  await hooks.refresh();
+  render(get());
+}
+
+// watch is spectator mode's entry point. Task 18 owns the live transport
+// (api.openLive is still a stub); what belongs here is the decision — which run
+// this page is watching, and that it is watching rather than driving it.
+function watch() {
+  const s = get().status || {};
+  if (!s.run_id) return;
+  startNote = '';
+  set({
+    run: { id: s.run_id, mode: s.mode || '', started_at: s.started_at || '' },
+    spectator: true,
+    results: [],
+    progress: null,
+    report: null,
+  });
+  hooks.showTab('results');
+}
+
+// ---------------------------------------------------------------- run phase
+
+function cooldownMsLeft(state) {
+  const until = state.status && state.status.cooldown_until;
+  if (!until) return 0;
+  const ms = new Date(until).getTime() - Date.now();
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+function runPhase(state) {
+  if (state.status && state.status.running) return 'running';
+  if (cooldownMsLeft(state) > 0) return 'cooling';
+  return 'idle';
+}
+
+// The countdown is a local 1s tick against a deadline, never a request. It
+// re-enables Start the instant the deadline passes instead of up to one poll
+// interval later, and it stops itself the moment there is nothing left to count.
+function ensureTicker(active) {
+  if (active && ticker === null) ticker = setInterval(tick, 1000);
+  else if (!active && ticker !== null) {
+    clearInterval(ticker);
+    ticker = null;
+  }
+}
+
+// A tick repaints this module and nothing else — no other view depends on the
+// second-by-second count. The last second is the exception: the phase is about
+// to change, and the topbar renders the phase too, so those ticks go through
+// the store and everybody repaints together.
+//
+// The threshold is a whole second rather than zero on purpose. Branching on
+// "has the deadline passed" would read the clock once here and again inside the
+// render, and a tick landing between the two reads would repaint this module
+// as idle while leaving "cooling down" in the topbar until the next poll.
+function tick() {
+  if (cooldownMsLeft(get()) > 1000) render(get());
+  else set({});
+}
+
+// ---------------------------------------------------------------- render
+
+export function render(state) {
+  renderSequence(state);
+  renderConfig(state);
+  renderControls(state);
+}
+
+function setText(node, value) {
+  if (node.textContent !== value) node.textContent = value;
+}
+
+function renderSequence(state) {
+  const list = state.sequence;
+  const on = list.filter((e) => e.enabled).length;
+  setText(byId('sequence-count'), `${list.length} of ${MaxSequence} - ${on} selected`);
+
+  const note = byId('sequence-note');
+  note.hidden = !sequenceNote;
+  setText(note, sequenceNote);
+
+  byId('select-all').disabled = list.length === 0;
+  byId('deselect-all').disabled = list.length === 0;
+
+  // Rebuild only when the sequence itself changed. The 3s status poll notifies
+  // every render module; rebuilding this list on each one would take the focus
+  // out from under a visitor reordering rows with the keyboard.
+  const sig = list.map((e) => `${e.key}:${e.enabled ? 1 : 0}`).join('|');
+  if (sig === lastSignature) return;
+  lastSignature = sig;
+
+  const focus = focusKey();
+  const rows = byId('sequence-list');
+  if (list.length === 0) {
+    replace(rows, [el('div', {
+      class: 'rows-empty',
+      text: 'Nothing queued. Add a request with + in the sidebar, or add a whole collection with "Add all to run".',
+    })]);
+  } else {
+    replace(rows, list.map((entry, i) => sequenceRow(entry, i, list.length)));
+  }
+  restoreFocus(focus);
+}
+
+function sequenceRow(entry, index, total) {
+  const r = entry.request;
+  const query = Object.entries(r.params || {}).map(([k, v]) => `${k}=${v}`).join('&');
+
+  const check = el('input', {
+    class: 'seq-check',
+    type: 'checkbox',
+    attrs: {
+      'aria-label': `Include ${r.name || r.id} in the run`,
+      'data-focus-key': `seq-check:${entry.key}`,
+    },
+    on: { change: (e) => setEnabled(entry.key, e.target.checked) },
+  });
+  check.checked = entry.enabled;
+
+  return el('div', { class: `row seq-row${entry.enabled ? '' : ' is-off'}` }, [
+    el('span', { class: 'seq-index mono', text: String(index + 1) }),
+    check,
+    el('span', { class: 'seq-body' }, [
+      el('span', { class: 'seq-name', text: r.name || r.id }),
+      el('span', { class: 'seq-target mono', text: `${r.endpoint}${query ? `?${query}` : ''}` }),
+    ]),
+    arrow('↑', `Move ${r.name || r.id} up`, `seq-up:${entry.key}`, index === 0, () => move(index, -1)),
+    arrow('↓', `Move ${r.name || r.id} down`, `seq-down:${entry.key}`, index === total - 1, () => move(index, 1)),
+    el('button', {
+      class: 'btn btn-mini',
+      type: 'button',
+      text: 'x',
+      title: 'Remove from the run',
+      attrs: { 'aria-label': `Remove ${r.name || r.id} from the run` },
+      on: { click: () => removeAt(index) },
+    }),
+  ]);
+}
+
+function arrow(glyph, label, key, disabled, onClick) {
+  const btn = el('button', {
+    class: 'btn btn-mini',
+    type: 'button',
+    text: glyph,
+    title: label,
+    attrs: { 'aria-label': label, 'data-focus-key': key },
+    on: { click: onClick },
+  });
+  btn.disabled = disabled;
+  return btn;
+}
+
+function renderConfig(state) {
+  byId('mode-functional').checked = state.mode === 'functional';
+  byId('mode-performance').checked = state.mode === 'performance';
+  byId('functional-options').hidden = state.mode !== 'functional';
+  byId('performance-options').hidden = state.mode !== 'performance';
+  setText(byId('mode-note'), modeNotes[state.mode] || '');
+
+  byId('stop-on-failure').checked = Boolean(state.options.stop_on_failure);
+  for (const [id, key] of Object.entries(optionOf)) setNumber(id, state.options[key]);
+}
+
+// setNumber never writes over the field the visitor is typing into: assigning a
+// value moves the caret to the end, and a half-typed "5" on its way to "50"
+// would be clamped back under their fingers.
+function setNumber(id, value) {
+  const input = byId(id);
+  if (document.activeElement === input) return;
+  const text = String(value);
+  if (input.value !== text) input.value = text;
+}
+
+function renderControls(state) {
+  const phase = runPhase(state);
+  const runId = (state.status || {}).run_id || '';
+  const selected = state.sequence.filter((e) => e.enabled).length;
+
+  const startBtn = byId('start-run');
+  startBtn.disabled = phase !== 'idle' || selected === 0 || starting;
+  setText(startBtn, starting ? 'Starting...' : 'Start run');
+
+  const watchBtn = byId('watch-run');
+  watchBtn.hidden = phase !== 'running' || !runId;
+  watchBtn.title = runId ? `Follow run ${runId} in the Results tab` : '';
+
+  const cancelBtn = byId('cancel-run');
+  // Any visitor may cancel, spectators included: cancelling only ever reduces
+  // load, and a visitor watching a run they cannot stop is the worse of the two.
+  cancelBtn.hidden = phase !== 'running' || !runId;
+  cancelBtn.disabled = cancelling;
+  cancelBtn.title = runId ? `Stop run ${runId}` : '';
+
+  const banner = byId('run-status-banner');
+  const bannerText = bannerFor(state, phase);
+  banner.hidden = !bannerText;
+  banner.className = `banner${phase === 'running' ? ' is-live' : ''}`;
+  setText(banner, bannerText);
+
+  const countdown = byId('cooldown-countdown');
+  const left = cooldownMsLeft(state);
+  countdown.hidden = phase !== 'cooling';
+  setText(countdown, left > 0 ? `Start unlocks in ${Math.ceil(left / 1000)}s` : '');
+  // One beat past the deadline as well as during it. Whichever render noticed
+  // the cooldown end may have straddled it — main.js reads the clock again for
+  // the topbar — so the extra tick repaints the page once more and settles
+  // everyone on the same phase a second later rather than a poll later.
+  ensureTicker(phase === 'cooling' || lastPhase === 'cooling');
+  lastPhase = phase;
+
+  const note = byId('start-note');
+  const noteText = startNote
+    || (phase === 'idle' && selected === 0 ? 'Check at least one request to enable Start.' : '');
+  note.hidden = !noteText;
+  setText(note, noteText);
+}
+
+function bannerFor(state, phase) {
+  const s = state.status || {};
+  if (phase === 'running') {
+    const what = s.mode ? `A ${s.mode} run` : 'A run';
+    const when = s.started_at ? ` Started ${fmtTime(s.started_at)}.` : '';
+    return `${what} is in progress. Courier runs one at a time, so a second run can never contaminate the first one's measurements.${when}`;
+  }
+  if (phase === 'cooling') {
+    return 'That run has been charged to Courier\'s load budget. The next one waits for the budget to refill - which is what keeps a public demo from being a public load generator.';
+  }
+  return '';
+}
+
+// ---------------------------------------------------------------- focus
+
+// Rebuilding the list throws away whatever the visitor had focused, which for
+// the reorder arrows means every second press lands on nothing. Entry keys are
+// stable across a move, so focus follows the row rather than the position.
+function focusKey() {
+  const node = document.activeElement;
+  return node && node.dataset ? node.dataset.focusKey || null : null;
+}
+
+function restoreFocus(key) {
+  if (!key) return;
+  const node = document.querySelector(`[data-focus-key="${key}"]`);
+  if (node && node !== document.activeElement && !node.disabled) node.focus();
+}

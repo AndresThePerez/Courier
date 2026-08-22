@@ -520,3 +520,33 @@ Send debits the budget but must never start a countdown) was written against. Sp
 plan where they conflict (precedent N10, N22). The poll is also suppressed entirely while
 a run is being watched: the live transport reports run state itself, and the poll exists
 for the idle case.
+
+## N27 — The idle status poll is gated on the transport, not on `state.run` (Tasks 15, 17, 18)
+
+**N26 says:** the poll is "suppressed entirely while a run is being watched", and Task 15
+implemented that as `if (!get().run) refreshStatus()`.
+
+**What we do instead:** `if (get().transport === 'idle') refreshStatus()`.
+
+**Why:** `state.run` is set the moment a run is *adopted* — Watch records the run it is
+watching, and Task 18's history reopen will set it too — which is not the same moment a
+transport attaches to it. Task 17's Watch button sets `run` while `api.openLive` is still
+a stub, so the `!run` gate would leave that tab with neither a stream nor a poll: it would
+never learn the run ended, and Start would stay disabled behind a cooldown it could not
+see expire. Gating on the transport says what N26 actually meant — do not poll when
+something live is already reporting — and it keeps saying it once Task 18 sets
+`transport` to `sse`/`polling`, with no further edit.
+
+**Affects:** `web/js/main.js` only. Task 18 must set `state.transport` when it attaches
+and reset it to `idle` when the stream closes, or the poll will not come back.
+
+### N27a — The cooldown countdown ticks through the store in its last second
+
+`render-runner.js`'s countdown repaints locally at 1Hz, because no other view depends on
+the second-by-second count. Two exceptions, both about the *phase* change rather than the
+count: the final second goes through `set({})` so the topbar (`renderTopbar`, which reads
+the clock again for itself) flips with the controls instead of up to one poll later, and
+the ticker survives one beat past the deadline so a render that straddled it is corrected
+a second later rather than three. Measured before the fix: a tab could show "cooling down"
+in the topbar beside an enabled Start button for a full poll interval. Measured after:
+zero disagreements across 1,600 samples over four cooldowns, foreground and background.
