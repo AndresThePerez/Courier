@@ -347,3 +347,17 @@ func TestBodyPreviewTruncatesAtTheCap(t *testing.T) {
 		t.Errorf("empty body preview = %q %v", p, tr)
 	}
 }
+
+// PreviewN is the primitive both callers share: the run path passes the 16KB
+// preview cap, the editor's Send passes its own larger one.
+func TestPreviewNCapsAtN(t *testing.T) {
+	body := []byte(strings.Repeat("a", 100))
+	s, trunc := PreviewN(body, 40)
+	if len(s) != 40 || !trunc {
+		t.Errorf("PreviewN = len %d trunc %v, want 40 true", len(s), trunc)
+	}
+	s, trunc = PreviewN(body, 200)
+	if len(s) != 100 || trunc {
+		t.Errorf("PreviewN under cap = len %d trunc %v, want 100 false", len(s), trunc)
+	}
+}

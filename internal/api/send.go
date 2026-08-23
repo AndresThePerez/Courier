@@ -10,6 +10,13 @@ import (
 	"github.com/AndresThePerez/courier/internal/template"
 )
 
+// SendBodyMax caps the editor's Send response body. A search response is
+// 34-42KB, so the run path's 16KB preview rule truncates the normal case — fine
+// for stored history, wrong for the one response a visitor is actively
+// inspecting. 256KB covers every catalog endpoint's largest honest answer while
+// still bounding a hostile target.
+const SendBodyMax = 256 << 10
+
 // sendResult is the editor's Send response: one request, one response, and the
 // assertion outcomes evaluated against it.
 //
@@ -92,7 +99,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	if resp.Err != nil {
 		out.Error, out.ErrorKind = resp.Err.Error(), resp.ErrKind
 	}
-	out.Body, out.BodyTruncated = runner.Preview(resp.Body)
+	out.Body, out.BodyTruncated = runner.PreviewN(resp.Body, SendBodyMax)
 
 	target := assert.NewTarget(resp.Status, resp.LatencyMs, resp.Body)
 	outcomes, allPassed := assert.EvaluateAll(clean.Assertions, target)
