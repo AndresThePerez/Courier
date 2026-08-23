@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -150,6 +151,42 @@ func TestSendDebitsTheBudgetWithoutStartingACooldown(t *testing.T) {
 		t.Fatalf("run after a send = %d %s, want 202", rec.Code, rec.Body.String())
 	}
 	waitIdle(t, s)
+}
+
+// Send expands templates too, and reports the resolved query — that is how the
+// editor can show which word was drawn. Expansion happens after validation: a
+// placeholder is an ordinary param value to the sandbox on the way in.
+func TestSendExpandsTemplate(t *testing.T) {
+	var mu sync.Mutex
+	var received string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		received = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"total":107}`)
+	}))
+	defer target.Close()
+
+	s := newServer(t, target.URL, nil)
+	req := sendable()
+	req.Params = map[string]string{"q": "{{randomPokemon}}"}
+	req.Assertions = nil
+
+	rec := do(t, s, http.MethodPost, "/api/send", req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	got := decode[sendResult](t, rec)
+
+	if strings.Contains(got.Query, "{{") || strings.Contains(got.Query, "%7B%7B") {
+		t.Errorf("reported query is still a template: %q", got.Query)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got.Query != "?"+received {
+		t.Errorf("reported query %q is not what the target received (%q)", got.Query, received)
+	}
 }
 
 // One truncation rule everywhere: the 16KB preview a run stores is the 16KB
