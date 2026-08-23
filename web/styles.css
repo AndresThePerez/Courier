@@ -283,6 +283,11 @@ option:disabled { color: var(--muted); }
 .seq-name, .seq-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seq-target { color: var(--muted); font-size: 11px; }
 
+/* Chips wrap inside seq-body, which is the flexible column: a row that grows
+   taller never pushes the reorder and remove controls out of the row. */
+.seq-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+.seq-chips .chip { font-size: 10px; color: var(--muted); }
+
 /* ---------- run config rail ---------- */
 
 .mode-picker { display: flex; gap: 0.4rem; }
