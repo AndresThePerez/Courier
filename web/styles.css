@@ -73,6 +73,11 @@ html, body {
 .panel { flex: 1 1 auto; overflow: auto; padding: 0.9rem 1rem; display: none; }
 .panel.is-active { display: block; }
 
+/* Center the working column: a 1fr middle pane on a wide monitor otherwise
+   piles everything into the top-left corner. The cap is generous because the
+   runner hero is a two-column grid, not prose. */
+.panel-inner { max-width: 1400px; margin: 0 auto; }
+
 /* ---------- tabs ---------- */
 
 .tabs {
@@ -266,7 +271,7 @@ option:disabled { color: var(--muted); }
 .seq-row {
   flex-wrap: nowrap;
   gap: 0.45rem;
-  padding: 0.3rem 0.4rem;
+  padding: 0.45rem 0.6rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
@@ -448,29 +453,52 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
 /* The panel sits above the run sequence because it is what a first-time
    visitor should reach first: four buttons, no config to compose. */
 .knee {
-  margin: 0 0 1.1rem;
-  padding-bottom: 0.9rem;
+  margin: 0 0 1.4rem;
+  padding-bottom: 1.1rem;
   border-bottom: 1px solid var(--line);
 }
-.knee > .note { margin: 0.2rem 0 0; max-width: 560px; }
+.knee > .note { margin: 0.2rem 0 0; max-width: 72ch; }
 
-/* The curve is a pre-rendered static SVG, so max-width keeps it from
-   ballooning on a wide pane and height:auto keeps its aspect ratio on a narrow
-   one. It never drives horizontal overflow. */
+/* Chart left, numbers right: the curve is the argument and the table is the
+   evidence, and on a wide pane they belong side by side. The 340px floor is
+   the knee table's min-content width (310px measured) plus slack, so the
+   numbers never fall back to their own scrollbar inside the column. */
+.knee-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+  gap: 1.4rem;
+  align-items: start;
+  margin-top: 0.9rem;
+}
+.knee-side { display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; }
+
+/* The curve is a pre-rendered static SVG; width:100% lets it fill its grid
+   column and height:auto keeps the aspect ratio. It never drives overflow. */
 .knee-curve {
   display: block;
   width: 100%;
-  max-width: 560px;
   height: auto;
-  margin: 0.7rem 0;
+  margin: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  background: var(--panel);
 }
-#knee-table { max-width: 560px; }
 #knee-table td { font-family: var(--mono); }
 #knee-table tr.is-knee td { color: var(--warn); }
-.knee-buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.7rem; }
-#knee-note { margin: 0.5rem 0 0; }
+.knee-buttons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+#knee-note { margin: 0; }
+
+/* Stack until the pane can actually hold both columns. The breakpoint is on
+   the viewport but the grid lives in the middle pane, which is 600px of fixed
+   rails plus padding narrower: at 1440px the pane is 812px, the first width
+   where the curve still gets 450px - 80% of its native 560 - after the table
+   takes its floor. Below that the chart shrinks to an unreadable stamp, so
+   the single-column flow narrow screens already had is the better layout. */
+@media (max-width: 1440px) {
+  .knee-grid { grid-template-columns: 1fr; }
+  .knee-curve { max-width: 560px; }
+  #knee-table { max-width: 560px; }
+}
 
 /* ---------- misc ---------- */
 
