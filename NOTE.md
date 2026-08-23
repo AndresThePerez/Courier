@@ -849,3 +849,14 @@ is untouched: the table and the buttons are built with `dom.js` and `textContent
 referenced asset is ever left out of the embed directive.
 
 **This does not add a run mode**, per the addendum's own caveat. It is a preset loader.
+
+## N34 — Future: Postman-style scripted assertions (planned, not built)
+
+Requested 2026-08-23: let a visitor write JS assertions that pass/fail like
+Postman's `pm.test`. Deliberately not built with the template-variable work.
+The server's assertion grammar is a closed, declarative allowlist on purpose
+(see docs/design.md); running visitor-supplied JS server-side would need a
+real sandbox story. The likely shape when this happens: client-side-only
+evaluation (a Web Worker with no DOM, feeding outcomes into the existing
+outcome renderer), with scripted outcomes clearly labeled as evaluated in the
+browser, never stored in run history.
