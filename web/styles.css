@@ -226,6 +226,35 @@ option:disabled { color: var(--muted); }
   tab-size: 2;
 }
 
+/* ---------- json viewer ---------- */
+
+/* The toolbar over a response body: Tree/Raw on the left, Copy pinned to the
+   right edge of whichever pane the body is sitting in. */
+.jsonview-bar { display: flex; align-items: center; gap: 0.3rem; margin: 0.4rem 0 0.3rem; }
+.jsonview-bar .btn.is-on { border-color: var(--accent); color: var(--accent); }
+.jsonview-bar .note { flex: 1 1 auto; min-width: 0; }
+.jsonview-bar .jv-copy { margin-left: auto; }
+
+.jv-node, .jv-row { line-height: 1.55; }
+.jv-row { padding-left: 0.9rem; overflow-wrap: anywhere; }
+.jv-children { margin-left: 0.35rem; padding-left: 1rem; border-left: 1px solid var(--line); }
+
+/* The triangle is drawn here rather than left to the UA's marker: that one
+   sits outside the summary's own box, so the key on a folded node would not
+   line up with the keys of the leaf rows around it. */
+.jv-summary { cursor: pointer; list-style: none; }
+.jv-summary::-webkit-details-marker { display: none; }
+.jv-summary::before { content: '\25B8'; display: inline-block; width: 0.9rem; color: var(--muted); }
+.jv-node[open] > .jv-summary::before { content: '\25BE'; }
+.jv-summary:hover { background: var(--panel-2); }
+
+.jv-key { color: var(--accent); }
+.jv-str { color: var(--pass); overflow-wrap: anywhere; }
+.jv-num, .jv-bool { color: var(--warn); }
+.jv-null { color: var(--muted); font-style: italic; }
+.jv-punct { color: var(--muted); }
+.jv-count { color: var(--muted); font-size: 11px; }
+
 /* ---------- run sequence ---------- */
 
 .block-actions { display: flex; gap: 0.3rem; margin-left: auto; }

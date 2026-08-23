@@ -10,6 +10,7 @@
 
 import { get, set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtBytes } from './dom.js';
+import { jsonView } from './json-view.js';
 import * as api from './api.js';
 import * as workspace from './workspace.js';
 
@@ -33,7 +34,7 @@ const assertionTypes = Object.keys(opsByType);
 // Module-local render memory. None of this is application state: it is what
 // the editor has last painted, so a notify from an unrelated part of the app
 // (the 3s status poll, say) does not rebuild a table under the visitor's
-// cursor or repaint a 16KB response body for nothing.
+// cursor or repaint a 256KB response body for nothing.
 let lastDraft = null;
 let lastSignature = '';
 let lastSend = null;
@@ -596,7 +597,7 @@ function renderSend(state) {
     fmtBytes(r.size_bytes),
   ];
   if (outcomes.length > 0) bits.push(`${passed}/${outcomes.length} assertions passed`);
-  if (r.body_truncated) bits.push('truncated at 16KB');
+  if (r.body_truncated) bits.push('truncated at 256KB');
   status.textContent = bits.join(' - ');
   status.className = `send-status ${r.passed ? 'pass' : 'fail'}`;
 
@@ -611,7 +612,7 @@ function renderSend(state) {
     }),
     outcomes.length > 0 && el('div', { class: 'outcomes' }, outcomes.map(outcomeRow)),
     el('h4', { class: 'block-heading', text: 'Response body' }),
-    el('pre', { class: 'body-pre mono', text: prettyBody(r.body) }),
+    jsonView(r.body, { truncated: Boolean(r.body_truncated) }),
   ]);
 }
 
@@ -625,18 +626,4 @@ function outcomeRow(o) {
     el('span', { class: 'outcome-cmp', text: `actual ${o.actual || '-'}` }),
     o.error && el('span', { class: 'outcome-err fail', text: o.error }),
   ]);
-}
-
-// prettyBody re-indents a JSON body and leaves anything else exactly as it
-// arrived. The body is target output, so it goes in through textContent on a
-// <pre> and nowhere near inner-HTML.
-function prettyBody(body) {
-  if (!body) return '(empty body)';
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    // A truncated body is perfectly good text and invalid JSON; showing it raw
-    // is more useful than a parse error about a cut Courier made itself.
-    return body;
-  }
 }
