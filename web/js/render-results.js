@@ -13,6 +13,7 @@
 // visitor's own input or a response body from the target.
 
 import { el, replace, byId, fmtMs, fmtBytes, fmtTime } from './dom.js';
+import { jsonView } from './json-view.js';
 
 // The filter is the plan's All/Passed/Failed/Skipped as four plain buttons.
 // Addendum A3 defers filter-tab chrome, so this is a button row and nothing
@@ -303,17 +304,8 @@ function bodySection(r, finished) {
       el('span', { text: 'Response body' }),
       r.body_truncated && el('span', { class: 'badge', text: 'truncated at 16KB' }),
     ]),
-    el('pre', { class: 'body-pre mono', text: prettyBody(r.body_preview) }),
+    jsonView(r.body_preview, { truncated: Boolean(r.body_truncated) }),
   ]);
-}
-
-function prettyBody(body) {
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    // A truncated body is perfectly good text and invalid JSON.
-    return body;
-  }
 }
 
 // ---------------------------------------------------------------- perf live
