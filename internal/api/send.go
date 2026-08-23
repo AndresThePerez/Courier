@@ -7,6 +7,7 @@ import (
 	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/runner"
 	"github.com/AndresThePerez/courier/internal/sandbox"
+	"github.com/AndresThePerez/courier/internal/template"
 )
 
 // sendResult is the editor's Send response: one request, one response, and the
@@ -55,6 +56,11 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "", "%s", err.Error())
 		return
 	}
+
+	// Templates expand here, after validation: the placeholder is an ordinary
+	// param value to the sandbox, and the resolved word is what dispatches and
+	// what the response's query field reports back to the editor.
+	clean = template.Expand(clean)
 
 	if !s.sending.CompareAndSwap(false, true) {
 		s.metrics.sendRefused()

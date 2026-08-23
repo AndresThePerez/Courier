@@ -8,6 +8,7 @@ import (
 	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/report"
 	"github.com/AndresThePerez/courier/internal/sandbox"
+	"github.com/AndresThePerez/courier/internal/template"
 )
 
 // FunctionalDeadline bounds a functional run's wall clock. Without it, fifty
@@ -78,8 +79,13 @@ func runFunctional(ctx context.Context, ex *Executor, rr sandbox.RunRequest, emi
 			continue
 		}
 
-		resp := ex.DoResolved(ctx, eps[i], r, true)
-		res := functionalResult(i, r, ex, resp)
+		// Expanded at dispatch, not at run start: a template entry repeated in a
+		// sequence draws a fresh word each time it fires. The row is built from
+		// the expanded request, so it records the word that was actually sent
+		// while run_started keeps the literal template.
+		rq := template.Expand(r)
+		resp := ex.DoResolved(ctx, eps[i], rq, true)
+		res := functionalResult(i, rq, ex, resp)
 
 		switch {
 		case res.Skipped: // Courier aborted this dispatch; not the target's fault.

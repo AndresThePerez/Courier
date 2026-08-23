@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -231,6 +233,40 @@ func TestPerfNoGoroutineLeak(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Errorf("goroutines %d → %d; the pool or aggregator leaked", before, after)
+}
+
+// Perf mode draws a fresh word for every dispatch — that is the honest version
+// of random load, and a single word repeated 18,000 times would measure the
+// target's cache instead of its search. Hundreds of dispatches against a
+// 76-entry pool make "at least two distinct queries" a safe assertion rather
+// than a coin flip. Under -race this is also what substantiates the template
+// package's claim that its generator is safe to draw from concurrently.
+func TestPerfExpandsTemplatePerDispatch(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.RawQuery] = true
+		mu.Unlock()
+		fmt.Fprint(w, "{}")
+	}))
+	defer srv.Close()
+
+	seq := []sandbox.Request{
+		{ID: "1", Name: "tpl", Endpoint: "search", Params: map[string]string{"q": "{{randomWord}}"}},
+	}
+	RunPerformance(context.Background(), NewExecutor(srv.URL), perfRun(seq, 8, 1), nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) < 2 {
+		t.Errorf("expected multiple distinct expanded queries, got %d: %v", len(seen), seen)
+	}
+	for q := range seen {
+		if strings.Contains(q, "%7B%7B") {
+			t.Errorf("target received an unexpanded template: %q", q)
+		}
+	}
 }
 
 // Workers start at their own sequence offset, so a sequence shorter than the

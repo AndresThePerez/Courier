@@ -7,6 +7,7 @@ import (
 
 	"github.com/AndresThePerez/courier/internal/report"
 	"github.com/AndresThePerez/courier/internal/sandbox"
+	"github.com/AndresThePerez/courier/internal/template"
 )
 
 // ProgressInterval is the live-counter cadence. It is a ticker case in the
@@ -58,6 +59,15 @@ func RunPerformance(ctx context.Context, ex *Executor, rr sandbox.RunRequest, em
 		Entries:   Entries(ex, seq),
 	}})
 
+	// Template entries draw per dispatch. Precomputed per entry: HasPlaceholder
+	// is a map walk, and the hot loop's overhead budget is measured in
+	// microseconds per dispatch — not a place to answer the same question
+	// 18,000 times.
+	tpl := make([]bool, len(seq))
+	for i, r := range seq {
+		tpl[i] = template.HasPlaceholder(r.Params)
+	}
+
 	// Buffered so a burst of completions does not serialise the workers behind
 	// the aggregator; the aggregator drains until close, so a send can never
 	// deadlock.
@@ -74,7 +84,11 @@ func RunPerformance(ctx context.Context, ex *Executor, rr sandbox.RunRequest, em
 			// two-request sequence still spreads load across both.
 			i := w % len(seq)
 			for dispatchCtx.Err() == nil {
-				results <- dispatch{index: i, resp: ex.DoResolved(ctx, eps[i], seq[i], false)}
+				rq := seq[i]
+				if tpl[i] {
+					rq = template.Expand(rq)
+				}
+				results <- dispatch{index: i, resp: ex.DoResolved(ctx, eps[i], rq, false)}
 				i = (i + 1) % len(seq)
 			}
 		}(w)

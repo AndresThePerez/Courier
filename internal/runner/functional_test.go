@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +39,19 @@ func (r *recorder) count(typ string) int {
 		}
 	}
 	return n
+}
+
+// first returns the earliest event of a type, so a test can assert on a
+// payload rather than only on the shape of the stream.
+func (r *recorder) first(typ string) (Event, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.events {
+		if e.Type == typ {
+			return e, true
+		}
+	}
+	return Event{}, false
 }
 
 func (r *recorder) types() []string {
@@ -259,6 +273,56 @@ func TestFunctionalDeadlineExpiresWithoutFakingATransportError(t *testing.T) {
 	}
 	if got.Skipped != 2 || !got.Results[1].Skipped || !got.Results[2].Skipped {
 		t.Errorf("remainder must be skipped: %+v", got)
+	}
+}
+
+// A template param expands per dispatch: the target sees a real word, each
+// result row records the query that dispatch actually sent, and the run_started
+// entries keep the literal template so the sequence stays readable.
+func TestFunctionalExpandsTemplatePerDispatch(t *testing.T) {
+	var mu sync.Mutex
+	var sent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		sent = append(sent, r.URL.RawQuery)
+		mu.Unlock()
+		fmt.Fprint(w, `{"total":1}`)
+	}))
+	defer srv.Close()
+
+	tpl := func(id string) sandbox.Request {
+		return sandbox.Request{ID: id, Name: "tpl", Endpoint: "search",
+			Params: map[string]string{"q": "{{randomPokemon}}"}}
+	}
+	rec := &recorder{}
+	res := RunFunctional(context.Background(), NewExecutor(srv.URL),
+		sandbox.RunRequest{Mode: sandbox.ModeFunctional, Sequence: []sandbox.Request{tpl("1"), tpl("2")}}, rec.emit)
+
+	mu.Lock()
+	got := slices.Clone(sent)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("target received %d requests, want 2: %v", len(got), got)
+	}
+
+	// The row is the record of one dispatch, so it must carry that dispatch's
+	// resolved word — not the template, and not the other entry's draw.
+	for i, row := range res.Functional.Results {
+		if strings.Contains(row.Query, "{{") || strings.Contains(row.Query, "%7B%7B") {
+			t.Errorf("result row %d query not expanded: %q", i, row.Query)
+		}
+		if row.Query != "?"+got[i] {
+			t.Errorf("result row %d query = %q, target received %q", i, row.Query, got[i])
+		}
+	}
+
+	e, ok := rec.first(EventRunStarted)
+	if !ok {
+		t.Fatal("no run_started event")
+	}
+	started := e.Data.(RunStarted)
+	if !strings.Contains(started.Entries[0].Query, "%7B%7Brandom") {
+		t.Errorf("run_started entry should keep the literal template, got %q", started.Entries[0].Query)
 	}
 }
 
