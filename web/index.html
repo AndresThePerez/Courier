@@ -51,6 +51,7 @@
       </nav>
 
       <div id="panel-runner" class="panel">
+       <div class="panel-inner">
         <section id="knee-panel" class="knee">
           <h3 class="block-heading">Find the breaking point</h3>
           <p class="note">
@@ -58,13 +59,17 @@
             throughput. Here is Pokesearch's, measured through this tool. Pick a point and
             Courier loads the config that reproduces it - then press Start run.
           </p>
-          <img id="knee-curve" class="knee-curve" src="knee.svg"
-               alt="Throughput rises from 46 requests per second at 1 worker to 154 at 10, then
-                    flattens - 167 at 25 and 175 at 50 - while p50 latency climbs from 29ms
-                    to 282ms.">
-          <div id="knee-table" class="table-wrap"></div>
-          <div id="knee-buttons" class="knee-buttons"></div>
-          <p id="knee-note" class="note" hidden></p>
+          <div class="knee-grid">
+            <img id="knee-curve" class="knee-curve" src="knee.svg"
+                 alt="Throughput rises from 46 requests per second at 1 worker to 154 at 10, then
+                      flattens - 167 at 25 and 175 at 50 - while p50 latency climbs from 29ms
+                      to 282ms.">
+            <div class="knee-side">
+              <div id="knee-table" class="table-wrap"></div>
+              <div id="knee-buttons" class="knee-buttons"></div>
+              <p id="knee-note" class="note" hidden></p>
+            </div>
+          </div>
         </section>
 
         <h3 class="block-heading">
@@ -77,9 +82,11 @@
         </h3>
         <p id="sequence-note" class="note" hidden></p>
         <div id="sequence-list" class="rows"></div>
+       </div>
       </div>
 
       <div id="panel-editor" class="panel">
+       <div class="panel-inner">
         <p id="editor-empty" class="note">Pick a request in the sidebar to open it here.</p>
 
         <div id="editor-form" hidden>
@@ -126,9 +133,11 @@
 
           <div id="send-response"></div>
         </div>
+       </div>
       </div>
 
       <div id="panel-results" class="panel">
+       <div class="panel-inner">
         <div class="results-head">
           <div id="results-summary" class="results-summary"></div>
           <!-- The renderer and its route arrive in Task 19; the link points at
@@ -203,6 +212,7 @@
           <div id="results-filter" class="filter-row"></div>
           <div id="results-rows" class="rows"></div>
         </div>
+       </div>
       </div>
     </section>
 
