@@ -484,6 +484,34 @@ function renderSequence(state) {
   restoreFocus(focus);
 }
 
+// Assertion chips teach that assertions exist without opening the editor: each
+// row wears its checks. Labels are compressed to fit a chip - the editor
+// remains the place to read them in full, and the results pane the place to see
+// how they went.
+const opGlyph = { eq: '=', neq: '≠', gt: '>', lt: '<', contains: '~', count: '#' };
+
+function chipLabel(a) {
+  switch (a.type) {
+    case 'status': return `status ${opGlyph[a.op] || a.op} ${a.value}`;
+    // lt is the only operator assert.opsByType allows on latency, so the
+    // glyph is a constant rather than a lookup that can only ever answer "<".
+    case 'latency': return `< ${a.value}ms`;
+    case 'json':
+      if (a.op === 'exists') return `${a.path} exists`;
+      return `${a.path} ${opGlyph[a.op] || a.op} ${JSON.stringify(a.value)}`;
+    case 'body_contains': return `body ~ ${JSON.stringify(a.value)}`;
+    default: return a.type;
+  }
+}
+
+// Returns null for a request with no assertions: a plain probe wears no chips
+// rather than an empty strip of padding. el() skips null children.
+function assertionChips(assertions) {
+  if (!assertions || assertions.length === 0) return null;
+  return el('span', { class: 'seq-chips' },
+    assertions.map((a) => el('span', { class: 'chip mono', text: chipLabel(a) })));
+}
+
 function sequenceRow(entry, index, total) {
   const r = entry.request;
   const query = Object.entries(r.params || {}).map(([k, v]) => `${k}=${v}`).join('&');
@@ -505,6 +533,7 @@ function sequenceRow(entry, index, total) {
     el('span', { class: 'seq-body' }, [
       el('span', { class: 'seq-name', text: r.name || r.id }),
       el('span', { class: 'seq-target mono', text: `${r.endpoint}${query ? `?${query}` : ''}` }),
+      assertionChips(r.assertions),
     ]),
     arrow('↑', `Move ${r.name || r.id} up`, `seq-up:${entry.key}`, index === 0, () => move(index, -1)),
     arrow('↓', `Move ${r.name || r.id} down`, `seq-down:${entry.key}`, index === total - 1, () => move(index, 1)),
