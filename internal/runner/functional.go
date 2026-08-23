@@ -185,19 +185,26 @@ func functionalResult(i int, r sandbox.Request, ex *Executor, resp Response) rep
 
 // Preview truncates to report.MaxBodyPreview.
 //
-// One truncation rule, everywhere: this 16KB preview is what streams live *and*
-// what is stored. A search response is 34-42KB, so truncation is the normal
-// case, and a twenty-run history of untruncated bodies would be ~100MB.
+// One truncation rule for *runs*, everywhere: this 16KB preview is what streams
+// live and what is stored — a search response is 34-42KB, so truncation is the
+// normal case, and a twenty-run history of untruncated bodies would be ~100MB.
+// The editor's single Send is not a run and carries its own, larger cap
+// (api.SendBodyMax): one body, held only by the response.
 func Preview(body []byte) (string, bool) {
+	return PreviewN(body, report.MaxBodyPreview)
+}
+
+// PreviewN truncates to max bytes, backing off a partial rune so the result is
+// always valid UTF-8 and JSON encoding does not silently substitute a
+// replacement character.
+func PreviewN(body []byte, max int) (string, bool) {
 	if len(body) == 0 {
 		return "", false
 	}
-	if len(body) <= report.MaxBodyPreview {
+	if len(body) <= max {
 		return string(body), false
 	}
-	cut := body[:report.MaxBodyPreview]
-	// Back off a partial rune so the preview is always valid UTF-8 and JSON
-	// encoding does not silently substitute a replacement character.
+	cut := body[:max]
 	for len(cut) > 0 && !utf8.Valid(cut) {
 		cut = cut[:len(cut)-1]
 	}

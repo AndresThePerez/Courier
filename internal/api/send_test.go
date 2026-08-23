@@ -189,12 +189,41 @@ func TestSendExpandsTemplate(t *testing.T) {
 	}
 }
 
-// One truncation rule everywhere: the 16KB preview a run stores is the 16KB
-// preview the editor gets.
+// A search response is 34-42KB, so the run path's 16KB preview truncates the
+// normal case. That is right for a stored history and wrong for the one
+// response a visitor is actively inspecting: Send must hand back all of it.
+func TestSendReturnsATypicalSearchBodyWhole(t *testing.T) {
+	const padding = 40 << 10
+	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"padding":"`+strings.Repeat("x", padding)+`"}`)
+	}))
+	defer big.Close()
+
+	s := newServer(t, big.URL, nil)
+	req := sendable()
+	req.Assertions = nil
+
+	rec := do(t, s, http.MethodPost, "/api/send", req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	got := decode[sendResult](t, rec)
+	if got.BodyTruncated {
+		t.Error("body_truncated = true on a 40KB body; a typical search response must arrive whole")
+	}
+	if len(got.Body) != got.SizeBytes {
+		t.Errorf("body is %d bytes of a %d byte response; Send returns all of it", len(got.Body), got.SizeBytes)
+	}
+}
+
+// Two caps, deliberately: a run stores a 16KB preview, Send carries
+// SendBodyMax. A body past even the larger cap is still cut, and the reported
+// size stays the target's, not the preview's.
 func TestSendTruncatesALargeBody(t *testing.T) {
 	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"padding":"`+strings.Repeat("x", report.MaxBodyPreview*2)+`"}`)
+		_, _ = io.WriteString(w, `{"padding":"`+strings.Repeat("x", SendBodyMax*2)+`"}`)
 	}))
 	defer big.Close()
 
@@ -208,13 +237,16 @@ func TestSendTruncatesALargeBody(t *testing.T) {
 	}
 	got := decode[sendResult](t, rec)
 	if !got.BodyTruncated {
-		t.Error("body_truncated = false on a body twice the preview cap")
+		t.Error("body_truncated = false on a body twice the send cap")
 	}
-	if len(got.Body) > report.MaxBodyPreview {
-		t.Errorf("body is %d bytes, want at most the %d byte preview", len(got.Body), report.MaxBodyPreview)
+	if len(got.Body) > SendBodyMax {
+		t.Errorf("body is %d bytes, want at most the %d byte send cap", len(got.Body), SendBodyMax)
 	}
-	if got.SizeBytes <= report.MaxBodyPreview {
-		t.Errorf("size_bytes = %d, want the full response size, not the preview's", got.SizeBytes)
+	if len(got.Body) <= report.MaxBodyPreview {
+		t.Errorf("body is %d bytes: Send is capped at SendBodyMax, not the run path's %d byte preview", len(got.Body), report.MaxBodyPreview)
+	}
+	if got.SizeBytes <= SendBodyMax {
+		t.Errorf("size_bytes = %d, want the full response size, not the truncated body's", got.SizeBytes)
 	}
 	if got.Assertions == nil {
 		t.Error("assertions must be an empty array, not null; the UI ranges over it")
