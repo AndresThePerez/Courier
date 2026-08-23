@@ -1,21 +1,17 @@
 # Courier
 
-[![CI](https://github.com/AndresThePerez/courier/actions/workflows/ci.yml/badge.svg)](https://github.com/AndresThePerez/courier/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![CI](https://github.com/AndresThePerez/Courier/actions/workflows/ci.yml/badge.svg)](https://github.com/AndresThePerez/Courier/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![Dependencies](https://img.shields.io/badge/direct%20deps-1-brightgreen)](go.mod)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> Badges resolve once the repository is pushed to GitHub. `.github/workflows/ci.yml`
-> runs `go vet ./...`, `go test -race ./...`, `go build ./...`, and the Docker image
-> build on every push and pull request to `main`.
+### **[Live demo → courier.andrestheperez.com](https://courier.andrestheperez.com)**
 
-A public, Postman-style API test runner and load tester: **one Go binary** that serves
-an embedded three-pane UI, runs curated request collections against a sandboxed target
-in two modes — **Functional** (sequential, declarative assertions, results streaming in
-row-by-row) and **Performance** (a worker-pool load engine with fan-in aggregation) —
-streams live results over **SSE with reconnect replay and a polling fallback**, prices
-aggregate load with a **token-bucket admission budget**, and exports any report as a
-single-page PDF rendered in pure Go. Stdlib everywhere, one direct dependency (the PDF
-writer), no frontend build step.
+Courier is a Postman-style API test runner and load tester that ships as **one Go binary**: an embedded three-pane UI, curated request collections, a sequential **Functional** runner with declarative assertions, and a worker-pool **Performance** engine with fan-in aggregation. Results stream live over **SSE with reconnect replay and a polling fallback**, aggregate load is priced against a **token-bucket admission budget**, and any report exports as a single-page PDF rendered in pure Go. Stdlib everywhere, one direct dependency (the PDF writer), no frontend build step.
+
+The interesting constraint is that it is *public*. A load tester exposed to the internet is a DDoS cannon with a nice UI unless the design forbids it, so the server never accepts a URL from the client — a run payload is `{endpoint_id, params, assertions}` against a target fixed at startup and a closed server-side endpoint catalog. Sustained load is bounded by a budget whose 10% duty cycle is proven by an in-repo simulator rather than asserted. Run state is owned by exactly one goroutine (no atomics, no mutexes, no torn snapshots), and Courier publishes its own per-dispatch overhead so you can see it is not part of the measurement.
+
+![Courier's three-pane UI: collections sidebar, the Find the breaking point panel with the measured knee curve, and the run configuration pane](docs/hero.png)
 
 ## The numbers
 
@@ -50,9 +46,11 @@ a promise (see below).
 
 ## Try it in 60 seconds
 
-1. Open the demo. Expand **01 — Search Basics** in the sidebar and click **Add all to
-   run**, then **Start Run** — watch functional results stream in live, row by row,
-   each with its assertion outcomes.
+Open the [live demo](https://courier.andrestheperez.com), then:
+
+1. Expand **01 — Search Basics** in the sidebar and click **Add all to run**, then
+   **Start Run** — watch functional results stream in live, row by row, each with its
+   assertion outcomes.
 2. Switch the mode to **Performance**, set 50 workers × 10s (or click a point in the
    **Find the breaking point** panel), start it, and watch the live counters — then the
    verdict, SLA ladder, Apdex, and histogram render from the finished report.
@@ -63,6 +61,12 @@ a promise (see below).
    outside it is refused before a byte reaches the target. Editing a built-in request
    forks a private copy into **My Workspace** (fork-on-write; the curated tree never
    mutates).
+4. Expand **05 — Randomized Traffic**: those params are template variables —
+   `{{randomWord}}` and `{{randomPokemon}}` resolve to a fresh random value for
+   every dispatched request, so a performance run queries something different
+   each iteration. Note their loose assertions next to the exact totals the
+   curated searches pin: assertions are per-request choices, editable in the
+   Request tab.
 
 ![A functional run streaming its results live over SSE, row by row, then completing 9/9 against the pinned corpus](docs/sse-run.gif)
 
@@ -82,12 +86,15 @@ Browser (vanilla ES modules, embedded in the binary — no build step)
           /api/send                 → the editor's single-request Send
           /api/status               → {running, run_id?, cooldown_until?, ...}
           /metrics · /healthz       → self-telemetry (expvar) · liveness
-              ── internal Docker network ──▶ Pokesearch (never via the public edge)
+              ── internal Docker network ──▶ target service (never via the public edge)
 ```
 
-Requests display as `pokesearch.andrestheperez.com`; Courier executes them over the
-internal container network, so the numbers measure the target — not Cloudflare's edge,
-not the tunnel.
+Routes are registered with method-scoped patterns, so the verb is part of the contract.
+`pprof` is deliberately *not* on this mux — it gets its own loopback-only listener.
+
+On the live deployment the target is Pokesearch. Requests display as
+`pokesearch.andrestheperez.com`; Courier executes them over the internal container
+network, so the numbers measure the target — not Cloudflare's edge, not the tunnel.
 
 ## Design decisions
 
@@ -115,11 +122,11 @@ before the budget — are in [docs/design.md](docs/design.md). The short list:
   visitor pressing Cancel cannot manufacture a failing verdict. Cancelled and expired
   runs render **"N/A — partial data"** instead of a verdict computed from a truncated
   sample. The invariant `requests == ok + errors + aborted` is tested.
-- **Live updates degrade, never lie.** SSE first (2s heartbeat, bounded replay log on
-  subscribe — a reconnect or mid-run spectator repaints complete state); a slow
+- **Live updates degrade, never lie.** SSE first (2s heartbeat, a 512-entry replay log
+  on subscribe — a reconnect or mid-run spectator repaints complete state); a slow
   subscriber is disconnected and self-heals via replay rather than silently losing
-  rows; past the subscriber cap the server answers `503 {"poll":true}` and the client
-  falls back to 500ms polling of the same report shape. Both transports feed one
+  rows; past the 100-subscriber cap the server answers `503 {"poll":true}` and the
+  client falls back to 500ms polling of the same report shape. Both transports feed one
   reducer — no render code knows which is active. SSE meets the Cloudflare tunnel at
   deploy; the fallback exists because buffering there would otherwise kill live
   results outright.
@@ -154,16 +161,23 @@ numeric knobs are **clamped**.
 
 | Cap | Value |
 |---|---|
-| Max concurrency (performance) | 50 workers (clamped) |
-| Max duration (performance) | 30s (clamped) |
+| Max concurrency (performance) | 50 workers (clamped; default 10) |
+| Max duration (performance) | 30s (clamped; default 10s) |
 | Max wall-clock (functional) | 120s hard deadline; remaining entries marked skipped |
 | Concurrent runs | 1 globally — `409 Conflict` |
 | Cooldown between runs | A global load budget: token bucket in worker-seconds (refill 5/s, burst 1500), floored at 5s; `409` with `cooldown_until` |
-| Per-request timeout | ~10s hard `http.Client.Timeout` |
-| Max requests per sequence | 50 |
-| Max assertions per request | 20 |
-| Functional `delay_ms` | ≤ 1000 |
+| Per-request timeout | 10s hard `http.Client.Timeout` |
+| Max requests per sequence | 50 (rejected) |
+| Max assertions per request | 20 (rejected) |
+| Functional `delay_ms` | ≤ 1000 (clamped) |
 | Param value length | ≤ 500 chars (truncated, not rejected) |
+| Param/request name length | ≤ 120 chars (truncated) |
+| API request payload | ≤ 256 KiB (rejected) |
+| Response body read for assertions | ≤ 1 MiB (truncated) |
+| Response body stored on a run result | ≤ 16 KiB preview |
+| Response body kept by the editor's **Send** | ≤ 256 KiB — the one response a visitor is actively reading is not cut to the preview size |
+| Run history | last 20 runs (in-memory ring) |
+| SSE subscribers per run | 100, then `503 {"poll":true}` |
 | Concurrent single-request sends | 1 globally — `429` |
 
 ## Engine overhead
@@ -221,20 +235,74 @@ disclosed rather than hidden in the target's numbers.
 
 ## Running locally
 
+Courier needs a target to point at. Any HTTP service that serves the endpoint catalog's
+paths will do — the live demo uses Pokesearch. Note that the curated collections'
+assertions are pinned to the 20,324-card Pokesearch index, so against a different target
+the app runs fine but those assertions will fail; edit them in the Request tab, or read
+the run as a load test rather than a functional one.
+
 ```bash
-# Target: the shared dev Pokesearch on 8081 (8080 is taken on the dev workstation).
+# Serve Courier on 8084, pointed at a target listening on 8081.
 PORT=8084 TARGET_URL=http://127.0.0.1:8081 go run ./cmd/server
 
 curl -s localhost:8084/healthz    # -> {"status":"ok"}
-open http://localhost:8084/
+# then open http://localhost:8084/
 ```
 
-Environment: `PORT` (default `8080`), `TARGET_URL` (default `http://127.0.0.1:8081`),
-`TARGET_DISPLAY` (the friendly target name shown in the UI and the PDF),
-`PPROF_ADDR` (loopback-only pprof listener, default `127.0.0.1:6060`, `off` to disable).
+Any free port works; these examples use `8084` to match the port the Compose files
+publish.
 
-Container: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build`
-(see `NOTE.md` N31 for the compose-merge and firewalld caveats).
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `8080` | Port the embedded UI and API listen on |
+| `TARGET_URL` | `http://127.0.0.1:8081` | Base URL of the target under test. Fixed at startup — never client-supplied |
+| `TARGET_DISPLAY` | `pokesearch.andrestheperez.com` | Friendly target name shown in the UI and the PDF |
+| `PPROF_ADDR` | `127.0.0.1:6060` | Loopback-only pprof listener. Set `off` to disable; a non-loopback address is refused, not bound |
 
-Acceptance matrix (needs a running Courier and the pinned target):
-`go test -tags acceptance ./internal/acceptance/ -v`
+Container:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+The base file publishes `${APP_PORT:-8084}:8080`; the dev overlay points the container
+at a host-side target via `host.docker.internal` (see `NOTE.md` N31 for the Compose
+deep-merge and firewalld caveats).
+
+## Tests
+
+```bash
+go vet ./...
+go test -race ./...
+go build ./...
+```
+
+That is what CI runs on every push and pull request to `main`, plus a `go mod tidy`
+cleanliness gate and the Docker image build.
+
+The admission-budget simulator drives the 10% duty-cycle proof:
+
+```bash
+go test ./internal/budget/ -run Sim
+```
+
+The acceptance matrix is build-tagged and needs a running Courier and target:
+
+```bash
+go test -tags acceptance ./internal/acceptance/ -v -timeout 20m
+```
+
+It reads `COURIER_URL` (default `http://127.0.0.1:8084`), plus `STUB_URL` and
+`STUB_TARGET_URL` for the stub-target cases.
+
+## License
+
+[MIT](LICENSE) © 2026 Andres Perez.
+
+Postman is a trademark of Postman, Inc.; Courier is an independent project, not
+affiliated with or endorsed by Postman, Inc.
+
+The live demo exercises a Pokémon TCG search target and therefore displays Pokémon card
+data. Pokémon and Pokémon character names are trademarks of Nintendo, Creatures Inc.,
+and GAME FREAK inc.; card data comes from the `pokemon-tcg-data` dataset. This project
+is unaffiliated with those companies and is non-commercial.
