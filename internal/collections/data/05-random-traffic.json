@@ -1,0 +1,28 @@
+{
+  "id": "random-traffic",
+  "name": "05 - Randomized Traffic",
+  "description": "Requests whose params use template variables: {{randomWord}} draws a generic English word (misses and fuzzy matches included - that is what real traffic looks like), {{randomPokemon}} draws a species name the index always answers. Both resolve to a fresh word for EVERY dispatched request - in a performance run each worker iteration queries something different. Note the loose assertions: an exact total like the curated searches assert would be meaningless here, which is the point - assertions are per-request choices, editable in the Request tab.",
+  "requests": [
+    {
+      "id": "random-word",
+      "name": "01 - Random Word Search",
+      "endpoint": "search",
+      "params": { "q": "{{randomWord}}" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "latency", "op": "lt", "value": 150 }
+      ]
+    },
+    {
+      "id": "random-pokemon",
+      "name": "02 - Random Pokemon Search",
+      "endpoint": "search",
+      "params": { "q": "{{randomPokemon}}" },
+      "assertions": [
+        { "type": "status", "op": "eq", "value": 200 },
+        { "type": "latency", "op": "lt", "value": 150 },
+        { "type": "json", "path": "$.total", "op": "gt", "value": 0 }
+      ]
+    }
+  ]
+}
