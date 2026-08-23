@@ -1,0 +1,30 @@
+# Build context hygiene. The Dockerfile does `COPY . .`, so anything not excluded
+# here is shipped to the daemon on every build — 4.7 MB of which 3.1 MB was .git.
+#
+# The build needs exactly: go.mod, go.sum, cmd/, internal/, web/. Two of those
+# carry embedded assets that MUST reach the builder — web/ (index.html, styles.css,
+# knee.svg, js/*.js) and internal/collections/data/*.json. Never exclude them;
+# `go:embed` fails the build loudly, but only after you have wondered why.
+
+# Version control and agent scaffolding
+.git
+.gitignore
+.github
+.superpowers
+.mex
+
+# Docs and images — none are embedded, all are heavy
+docs
+*.md
+
+# Compose and container definitions are inputs to the build, not part of it
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.dev.yml
+
+# Local build output and editor droppings
+/courier
+/server
+*.pdf
+.DS_Store

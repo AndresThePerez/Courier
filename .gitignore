@@ -3,3 +3,6 @@
 *.pdf
 .DS_Store
 /.superpowers/
+# Plan docs carry workstation paths and internal process notes; this repo is public.
+# A plan doc tracked here once already had to be rewritten out of history.
+/docs/superpowers/
