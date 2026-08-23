@@ -132,6 +132,14 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// skippedResult builds the row for an entry the walk never dispatched.
+//
+// r is deliberately left unexpanded: a skipped template row reports the literal
+// q={{randomPokemon}} while dispatched rows show the word that was actually
+// sent. That visible seam is the honest reading — a request that never fired
+// drew no word — and hoisting template.Expand above the skip branches to even it
+// out would report a word Courier never sent, the phantom-reporting bug the
+// aborted-dispatch rule exists to prevent.
 func skippedResult(i int, r sandbox.Request, ex *Executor) report.RequestResult {
 	return report.RequestResult{
 		Index:      i,
