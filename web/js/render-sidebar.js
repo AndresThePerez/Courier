@@ -33,6 +33,11 @@ export function init(h) {
 function setDrawer(open) {
   const drawer = byId('panel-sidebar');
   const hidden = window.matchMedia('(max-width: 900px)').matches && !open;
+  // Moving focus before inert, because inert on an element that holds
+  // document.activeElement drops focus to body and costs a keyboard visitor
+  // their place. The toggle is the drawer's own control and is only visible
+  // below 900px, which is the only width at which hidden is ever true.
+  if (hidden && drawer.contains(document.activeElement)) byId('sidebar-toggle').focus();
   drawer.inert = hidden;
   if (hidden) drawer.setAttribute('aria-hidden', 'true');
   else drawer.removeAttribute('aria-hidden');

@@ -30,6 +30,18 @@ let lastRunId = null;
 let lastRowSignature = null;
 let lastReport = null;
 
+// Throttle state for the summary, which is the page's one live region. A
+// performance run emits a progress event every 250ms (internal/runner/perf.go),
+// and a polite queue cannot drain announcements at that rate: the reader speaks
+// numbers over everything else and keeps going after the run ends. So the
+// summary's DOM is replaced the moment the run's state changes and otherwise at
+// most once every SummaryThrottleMs while a performance run is still running.
+// The functional path is untouched: it ticks once per result row.
+const SummaryThrottleMs = 5000;
+let lastSummaryRunId = null;
+let lastSummaryStatus = null;
+let lastSummaryAt = 0;
+
 export function render(state) {
   const rep = state.report;
   const run = state.run;
@@ -88,6 +100,8 @@ function renderSummary(state, rep, run, mode) {
 
   if (!mode) {
     replace(node, []);
+    lastSummaryRunId = null;
+    lastSummaryStatus = null;
     pdf.hidden = true;
     return;
   }
@@ -114,14 +128,27 @@ function renderSummary(state, rep, run, mode) {
     else if (state.progress) bits.push(`${state.progress.requests} requests`);
   }
 
-  replace(node, [
-    el('div', { class: 'results-title' }, [
-      el('span', { text: `${mode} run` }),
-      el('span', { class: `pill ${statusClass(status)}`, text: status }),
-      state.spectator && el('span', { class: 'badge', text: 'spectating' }),
-    ]),
-    el('div', { class: 'results-meta mono', text: bits.filter(Boolean).join('  ·  ') }),
-  ]);
+  // A new run id or a new status (started, completed, cancelled, expired) is
+  // announced straight away; a run that is merely still running waits out the
+  // interval. Nothing here leaves the module, so no store state is involved.
+  const stateChanged = id !== lastSummaryRunId || status !== lastSummaryStatus;
+  const now = Date.now();
+  const throttled =
+    mode === 'performance' && status === 'running' && !stateChanged && now - lastSummaryAt < SummaryThrottleMs;
+
+  if (!throttled) {
+    lastSummaryRunId = id;
+    lastSummaryStatus = status;
+    lastSummaryAt = now;
+    replace(node, [
+      el('div', { class: 'results-title' }, [
+        el('span', { text: `${mode} run` }),
+        el('span', { class: `pill ${statusClass(status)}`, text: status }),
+        state.spectator && el('span', { class: 'badge', text: 'spectating' }),
+      ]),
+      el('div', { class: 'results-meta mono', text: bits.filter(Boolean).join('  ·  ') }),
+    ]);
+  }
 
   // The button points at the route shape the PDF renderer serves.
   pdf.hidden = !rep;

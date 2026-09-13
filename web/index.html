@@ -151,10 +151,10 @@
       <div id="panel-results" class="panel" role="tabpanel" aria-labelledby="tab-results">
        <div class="panel-inner">
         <div class="results-head">
-          <!-- The summary and the live counters are the two nodes a screen reader
-               should hear during a run. The row list is deliberately silent: a
-               fifty-row run would read out fifty times, and the summary already
-               carries the count. -->
+          <!-- The summary is the one live region: it announces at most every five
+               seconds during a run and immediately on every state change. The
+               counters tick four times a second and stay visual only; the row list
+               is silent because a fifty-row run would read out fifty times. -->
           <div id="results-summary" class="results-summary" role="status" aria-live="polite" aria-atomic="false"></div>
           <!-- target=_blank so a visitor who clicks it does not lose the page
                they are reading, and no download attribute because the route
@@ -175,7 +175,7 @@
               <span id="perf-rps" class="gauge-value mono">0</span>
             </div>
           </div>
-          <p id="perf-counters" class="note mono" aria-live="polite"></p>
+          <p id="perf-counters" class="note mono"></p>
           <p class="note">
             Percentiles are computed once, after the run, over the samples the aggregator owns
             &mdash; there are deliberately none mid-run.
