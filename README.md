@@ -218,11 +218,11 @@ Container:
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-## License
-
 ## Author
 
 Built and hosted by [Andres Perez](https://andrestheperez.com), a senior backend engineer focused on API design and platform services in Go and PHP. Courier is the API test runner and load tester I run against my own services; the [portfolio](https://andrestheperez.com) and [resume](https://andrestheperez.com/resume.html) carry the rest.
+
+## License
 
 [MIT](LICENSE) © 2026 Andres Perez.
 
