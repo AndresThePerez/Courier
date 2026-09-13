@@ -372,7 +372,7 @@ function renderVerdict(rep, perf) {
       ...(perf.verdict_reasons || []).map((reason) => el('p', { class: 'verdict-reason', text: reason })),
       partial && el('p', {
         class: 'note',
-        text: 'The numbers below are still real - they are descriptive. Only the pass/fail judgement is withheld, because the SLOs describe a run that finished.',
+        text: 'The numbers below are descriptive and still real. Only the pass-or-fail judgement is withheld; the reason above says why.',
       }),
       !partial && el('p', {
         class: 'note',

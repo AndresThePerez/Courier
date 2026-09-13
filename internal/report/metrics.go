@@ -310,6 +310,28 @@ func Histogram(sorted []float64) []Bucket {
 	return out
 }
 
+// IsCalibrated reports whether a run dispatched the sequence the SLO constants
+// were measured against. Order does not matter and a subset is not enough: the
+// gate was derived from the whole five-request mix, and a subset of it measures
+// a different workload, which is exactly how a PASS and a FAIL came to sit
+// side by side on one host at one concurrency.
+func IsCalibrated(entries []Entry) bool {
+	if len(entries) != len(CalibrationEntries) {
+		return false
+	}
+	want := make(map[string]int, len(CalibrationEntries))
+	for _, n := range CalibrationEntries {
+		want[n]++
+	}
+	for _, e := range entries {
+		want[e.Name]--
+		if want[e.Name] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // Verdict is a pure PASS/FAIL function of the numbers: p95 within budget AND an
 // error rate under the gate.
 //
@@ -318,12 +340,30 @@ func Histogram(sorted []float64) []Bucket {
 // seconds into thirty has not measured what these SLOs describe — the
 // percentiles, histogram, and throughput still render, only the judgement is
 // withheld.
-func Verdict(s Stats) (string, []string) {
+//
+// It judges the calibrated workload and withholds otherwise. The constants
+// describe one specific sequence, so a run that dispatched a different one is
+// not judged at all: the caller passes the sequence fact in and an
+// uncalibrated run renders VerdictNA with a reason naming the workload the
+// gate was measured against.
+func Verdict(s Stats, calibrated bool) (string, []string) {
 	var reasons []string
 
 	judged := s.Requests - s.Aborted
 	if judged <= 0 {
 		return VerdictFail, []string{"no dispatches completed — there is nothing to judge"}
+	}
+
+	if !calibrated {
+		// The honest answer to a question nobody calibrated. The percentiles,
+		// the ladder, the histogram and the throughput all still render and are
+		// all still true: only the pass-or-fail judgement is withheld, the same
+		// way a cancelled run's is, because the gate was derived from one
+		// specific five-request mix and this run dispatched something else.
+		return VerdictNA, []string{
+			fmt.Sprintf("no verdict: the gate was calibrated on %s against the %s sequence, and this run dispatched a different one",
+				CalibrationDate, CalibrationSequence),
+		}
 	}
 
 	if s.Latency.P95 > VerdictP95Ms {

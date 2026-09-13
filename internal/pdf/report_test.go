@@ -74,7 +74,7 @@ func fixturePerformanceReport() *report.Report {
 	overall.AddAborted()
 
 	stats := report.ComputeStats(-1, "overall", overall, 30*time.Second)
-	verdict, reasons := report.Verdict(stats)
+	verdict, reasons := report.Verdict(stats, true)
 
 	var one report.Tally
 	for i := range 450 {
@@ -160,7 +160,7 @@ func TestRenderEmptyEdgeCases(t *testing.T) {
 	t.Run("zero-request performance run", func(t *testing.T) {
 		rep := fixturePerformanceReport()
 		stats := report.ComputeStats(-1, "overall", report.Tally{}, 0)
-		verdict, reasons := report.Verdict(stats)
+		verdict, reasons := report.Verdict(stats, true)
 		rep.Performance = &report.Performance{
 			Verdict: verdict, VerdictReasons: reasons, Overall: stats, PerRequest: nil,
 		}
