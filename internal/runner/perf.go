@@ -122,6 +122,8 @@ func RunPerformance(ctx context.Context, ex *Executor, rr sandbox.RunRequest, em
 		perf.OverrunMs = over.Milliseconds()
 	}
 
+	perf.SLO = report.DemoSLO()
+
 	status := perfStatus(ctx)
 	if status == report.StatusCompleted {
 		perf.Verdict, perf.VerdictReasons = report.Verdict(perf.Overall)

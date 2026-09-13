@@ -291,14 +291,27 @@ func (d *doc) performance() {
 	// A1 keeps the ladder, as text rows: no bars to draw, and the numbers are
 	// the point.
 	d.section("SLA ladder")
+	// A report stored before the gate was recorded has a zero SLO. Print the
+	// provenance only when there is provenance to print, rather than a row of
+	// zeros that would read as a real gate.
+	if p.SLO.P95Ms > 0 && p.SLO.CalibrationDate != "" {
+		d.line(muted, 7.5, fmt.Sprintf("Gate: p95 under %.0fms and error rate under %.2f%%, calibrated %s against the %s sequence.",
+			p.SLO.P95Ms, 100*p.SLO.MaxErrorRate, p.SLO.CalibrationDate, p.SLO.CalibrationSequence))
+	}
 	d.line(muted, 7.5, "Share of completed responses at or under each tier. Aborted dispatches are not in the denominator.")
+	// The tiers the run was judged by, not the tiers this build happens to
+	// define. An older stored report carries none, so fall back to the constants.
+	tiers := p.SLO.LadderMs
+	if len(tiers) != 3 {
+		tiers = []float64{report.SLATier1Ms, report.SLATier2Ms, report.SLATier3Ms}
+	}
 	for _, t := range []struct {
 		label string
 		pct   float64
 	}{
-		{"under 50ms", o.SLA.Under50},
-		{"under 150ms", o.SLA.Under150},
-		{"under 300ms", o.SLA.Under300},
+		{fmt.Sprintf("under %.0fms", tiers[0]), o.SLA.Under50},
+		{fmt.Sprintf("under %.0fms", tiers[1]), o.SLA.Under150},
+		{fmt.Sprintf("under %.0fms", tiers[2]), o.SLA.Under300},
 	} {
 		if !d.room(rowH) {
 			break
@@ -315,7 +328,11 @@ func (d *doc) performance() {
 
 	d.section("Apdex")
 	a := o.Apdex
-	d.line(ink, 9, fmt.Sprintf("Apdex (T=%.0fms)  %.3f  %s", report.ApdexTMs, a.Score, a.Rating))
+	apdexT := p.SLO.ApdexTMs
+	if apdexT == 0 {
+		apdexT = report.ApdexTMs
+	}
+	d.line(ink, 9, fmt.Sprintf("Apdex (T=%.0fms)  %.3f  %s", apdexT, a.Score, a.Rating))
 	d.line(muted, 8, fmt.Sprintf("satisfied %d  -  tolerating %d  -  frustrated %d",
 		a.Satisfied, a.Tolerating, a.Frustrated))
 	d.y += 3

@@ -30,6 +30,41 @@ const (
 	ApdexTMs = 50.0 // tolerating <= 4T = 200ms
 )
 
+// What the constants above were measured against. They live here rather than
+// only in the comment so a stored report can carry them: the provenance of a
+// judgement is part of the judgement, and a report that cannot say which gate
+// applied is a report a future recalibrated build would produce identically.
+const (
+	CalibrationDate     = "2026-08-22"
+	CalibrationSequence = "search-basics"
+)
+
+// CalibrationEntries is that sequence by the names the curated collection
+// gives its requests, which is what a stored report records. The sequence
+// check reads this; nothing else should hard-code the list.
+var CalibrationEntries = []string{
+	"01 - Basic Text Search",
+	"02 - Exact Card By ID",
+	"03 - Browse (No Query)",
+	"04 - Fuzzy Match On A Typo",
+	"05 - Facets Scope To The Query",
+}
+
+// DemoSLO is the gate this build judges with, as data rather than as six
+// package constants a caller has to know about. The name matches the one the
+// standalone-app plan reserves for the same value, so that work inherits this
+// shape rather than inventing a second one.
+func DemoSLO() SLO {
+	return SLO{
+		P95Ms:               VerdictP95Ms,
+		MaxErrorRate:        VerdictMaxErrorRate,
+		LadderMs:            []float64{SLATier1Ms, SLATier2Ms, SLATier3Ms},
+		ApdexTMs:            ApdexTMs,
+		CalibrationSequence: CalibrationSequence,
+		CalibrationDate:     CalibrationDate,
+	}
+}
+
 // Sample is one completed HTTP response. Transport failures produce none.
 type Sample struct {
 	Ms float64

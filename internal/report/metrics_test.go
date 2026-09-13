@@ -409,3 +409,21 @@ func TestDispatchAccountingInvariant(t *testing.T) {
 		})
 	}
 }
+
+// A stored report has to say which gate judged it, because a future
+// recalibrated build would otherwise produce a byte-identical artifact.
+func TestDemoSLORecordsTheConstantsAndTheirProvenance(t *testing.T) {
+	s := DemoSLO()
+	if s.P95Ms != VerdictP95Ms || s.MaxErrorRate != VerdictMaxErrorRate || s.ApdexTMs != ApdexTMs {
+		t.Errorf("DemoSLO = %+v, want the package constants", s)
+	}
+	if len(s.LadderMs) != 3 || s.LadderMs[1] != SLATier2Ms {
+		t.Errorf("LadderMs = %v, want the three tier constants", s.LadderMs)
+	}
+	if s.CalibrationSequence == "" || s.CalibrationDate == "" {
+		t.Error("the gate must carry what it was calibrated against")
+	}
+	if len(CalibrationEntries) != 5 {
+		t.Errorf("CalibrationEntries has %d names, want the five of the calibrated collection", len(CalibrationEntries))
+	}
+}
