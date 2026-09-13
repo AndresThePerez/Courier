@@ -49,7 +49,7 @@ Courier's own cost stays out of the measurement: **engine overhead is ~1.8 µs p
 dispatch** (measured: perf-mode dispatch vs a bare `http.Client` baseline), the fan-in
 aggregator records a result in **115 ns with zero allocations**, and the sustained-load
 ceiling is **provably 10% duty cycle at maximum concurrency** — an executable proof, not
-a promise (see below). The full benchmark table is in [docs/design.md#engine-overhead](docs/design.md#engine-overhead).
+a promise. The full benchmark table is in [docs/design.md#engine-overhead](docs/design.md#engine-overhead).
 
 **And when the target died mid-run, the run finished cleanly and the accounting
 held to the dispatch:** 974,606 dispatches as 5,910 ok plus 968,696 errors plus 0
@@ -211,6 +211,8 @@ curl -s localhost:8084/healthz    # -> {"status":"ok"}
 | `TARGET_URL` | `http://127.0.0.1:8081` | Base URL of the target under test. Fixed at startup — never client-supplied |
 | `TARGET_DISPLAY` | `pokesearch.andrestheperez.com` | Friendly target name shown in the UI and the PDF |
 | `PPROF_ADDR` | `127.0.0.1:6060` | Loopback-only pprof listener. Set `off` to disable; a non-loopback address is refused, not bound |
+
+Container:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build

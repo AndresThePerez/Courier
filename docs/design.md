@@ -3,7 +3,10 @@
 The stories behind the load budget, the sandbox, and the metrics model: what was
 designed, what was falsified, and what replaced it. Every claim here links to an
 in-repo proof — a test, a benchmark, or a measured number — so the arc is
-claim → mechanism → proof without needing anything outside this repository.
+claim → mechanism → proof without needing anything outside this repository. Two
+sections are operational rather than design: **Try it in 60 seconds** and
+**Running locally** carry the walkthrough and the local-run notes the README
+summarises, and the walkthrough begins at the live demo.
 
 ---
 
@@ -172,7 +175,7 @@ recalibrated every judgment surface against measured reality:
 - Histogram buckets **0–5 / 5–10 / 10–25 / 25–50 / 50–100 / 100+ ms**.
 
 The calibration then ran a second time, by design, at deploy (the spec's Deployment
-step 5): the deploy host is a 4-core Ryzen 3 2200G with Elasticsearch capped at 1 GB,
+step 5): the deploy host is a 4-core Ryzen 3 2200G, then running Elasticsearch capped at 1 GB,
 and its measured series (p95 38.6 → 407.9 ms across 1 → 50 workers) sat entirely above
 the dev-calibrated gate — a verdict that could never *pass* there, the same defect
 mirrored. The shipped constants are re-derived from the deploy measurement to keep the
@@ -348,6 +351,17 @@ reader to notice.
 Server-enforced regardless of client input. Structural violations are **rejected**;
 numeric knobs are **clamped**.
 
+The split turns on whether the request can still mean something. A structural
+violation — an unknown mode, a sequence longer than the cap, a payload over the size
+limit — leaves nothing to honour, because there is no smaller request the caller can
+be assumed to have meant; it is rejected, and the error names the offending field. A
+numeric knob out of range does still carry an intent — a caller asking for more
+concurrency than Courier allows wants as much as it will give — and the nearest legal
+value means exactly that, so the knob is clamped and the run proceeds. The clamp is
+not silent: a report's `config` is the knobs as actually honoured, so the response
+says what was clamped rather than echoing what was asked for. Both halves are
+[`internal/sandbox/validate.go`](../internal/sandbox/validate.go).
+
 The table of values stays in [the README](../README.md#caps).
 
 ---
@@ -425,8 +439,6 @@ the run as a load test rather than a functional one.
 
 Any free port works; these examples use `8084` to match the port the Compose files
 publish.
-
-Container:
 
 The base file publishes `${APP_PORT:-8084}:8080`; the dev overlay points the container
 at a host-side target via `host.docker.internal` (see [docs/deviations.md](deviations.md) N31 for the Compose
