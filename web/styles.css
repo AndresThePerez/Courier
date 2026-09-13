@@ -590,4 +590,8 @@ code, .mono { font-family: var(--mono); }
   }
   #app.sidebar-open #panel-sidebar { transform: translateX(0); }
   #panel-rail { border-left: 0; border-top: 1px solid var(--line); max-height: 45vh; }
+  /* The claim-sized 22px heading pushes the worker table below an 844px
+     viewport at 390 wide; 18px keeps the claim as the panel's largest text
+     and returns the table above the fold. */
+  #knee-panel .block-heading { font-size: 18px; }
 }
