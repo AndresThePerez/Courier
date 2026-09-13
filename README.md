@@ -37,12 +37,38 @@ workers, which is the point of having one. The same series on the dev workstatio
 5800X: knee ~25, peak 692 req/s), the raw data, run ids, and methodology are in
 [docs/knee.md](docs/knee.md). Reproduce any point in one click from the UI's
 **Find the breaking point** panel.
+The target is [Pokesearch](https://github.com/AndresThePerez/PokeSearch), an
+Elasticsearch search engine for a 20,324-card Pokemon TCG corpus, also built
+here: Courier load-tested it and found its knee at ten workers, which is the
+number above.
 
 Courier's own cost stays out of the measurement: **engine overhead is ~1.8 µs per
 dispatch** (measured: perf-mode dispatch vs a bare `http.Client` baseline), the fan-in
 aggregator records a result in **115 ns with zero allocations**, and the sustained-load
 ceiling is **provably 10% duty cycle at maximum concurrency** — an executable proof, not
 a promise (see below).
+
+**And when the target died mid-run, the run finished cleanly and the accounting
+held to the dispatch:** 974,606 dispatches as 5,910 ok plus 968,696 errors plus 0
+aborted, every failure attributed to the transport rather than to the target, no
+phantom aborts and no wedged lock. The drill, the stored report and the rendered
+dashboard are in [what happens when the target dies](#what-happens-when-the-target-dies).
+
+## Tests and CI
+
+214 test functions and 16 benchmarks, per-package coverage of **86.5% to 100%
+on every package that carries logic**, and the **race detector** on every push.
+The two packages where a defect would cost the most are the two highest:
+`internal/report`, the accounting maths, at 95.9%, and `internal/sandbox`, the
+security boundary, at 96.8%. CI runs `go vet`, `go test -race`, `go build`, a
+`go mod tidy` cleanliness gate, `gofmt`, `staticcheck`, `govulncheck`, a coverage
+floor, and the Docker image build. The load-budget proof and the PDF's
+byte-determinism are tests, so both re-run on every push.
+
+The coverage range is stated rather than badged on purpose: `cmd/server` carries
+no test file of its own and the end-to-end acceptance matrix is build-tagged, so
+one repository-wide number would read lower than the floor every package that
+carries logic actually clears.
 
 ## Try it in 60 seconds
 
@@ -51,9 +77,12 @@ Open the [live demo](https://courier.andrestheperez.com), then:
 1. Expand **01 — Search Basics** in the sidebar and click **Add all to run**, then
    **Start Run** — watch functional results stream in live, row by row, each with its
    assertion outcomes.
-2. Switch the mode to **Performance**, set 50 workers × 10s (or click a point in the
-   **Find the breaking point** panel), start it, and watch the live counters — then the
-   verdict, SLA ladder, Apdex, and histogram render from the finished report.
+2. Switch the mode to **Performance** and press **10 workers - the knee** in the
+   **Find the breaking point** panel, which loads the same five-request sequence
+   the table above was measured with. Start it and watch the live counters, then
+   the verdict, SLA ladder, Apdex and histogram render from the finished report.
+   Then climb to 25 or 50 workers and watch the verdict flip: that is the knee,
+   and the flip is the point of having a gate at all.
 3. Open any request in the editor, change a parameter, and **Send** it. Try an illegal
    value (`page_size=abc`) — the field-naming `400` that comes back is the target's
    strict contract, surfaced verbatim. Courier's own sandbox sits in front of it:
