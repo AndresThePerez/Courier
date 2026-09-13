@@ -376,10 +376,21 @@ function renderVerdict(rep, perf) {
       }),
       !partial && el('p', {
         class: 'note',
-        text: 'Verdict SLOs are fixed server-side constants: p95 within 150ms and an error rate under 1%, calibrated against this target on this hardware rather than borrowed from generic web-latency advice.',
+        text: verdictNote(perf.slo),
       }),
     ]),
   ]);
+}
+
+// The gate the run was judged by, read from the report rather than repeated
+// here. The sequence is the word the old copy was missing: the thresholds are
+// calibrated against one specific five-request collection, and the app applies
+// them to whatever a visitor assembles.
+function verdictNote(slo) {
+  if (!slo || !slo.p95_ms) {
+    return 'Verdict SLOs are fixed server-side constants, calibrated against this target on this hardware rather than borrowed from generic web-latency advice.';
+  }
+  return `Verdict SLOs are fixed server-side constants: p95 within ${slo.p95_ms}ms and an error rate under ${(100 * slo.max_error_rate).toFixed(0)}%, calibrated on ${slo.calibration_date} against this target, this hardware, and the ${slo.calibration_sequence} sequence.`;
 }
 
 function renderLadder(sla) {

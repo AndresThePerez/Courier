@@ -100,13 +100,29 @@ type RequestResult struct {
 	BodyTruncated bool             `json:"body_truncated"`
 }
 
+// SLO is the gate a performance run was judged by, recorded on the report so
+// the stored artifact is self-describing. The thresholds are this build's
+// constants; the sequence and the date are what they were measured against.
+type SLO struct {
+	P95Ms               float64   `json:"p95_ms"`
+	MaxErrorRate        float64   `json:"max_error_rate"`
+	LadderMs            []float64 `json:"ladder_ms"`
+	ApdexTMs            float64   `json:"apdex_t_ms"`
+	CalibrationSequence string    `json:"calibration_sequence"`
+	CalibrationDate     string    `json:"calibration_date"`
+}
+
 // Performance is the result of a worker-pool load run.
 type Performance struct {
 	Verdict        string   `json:"verdict"`
 	VerdictReasons []string `json:"verdict_reasons"`
-	Overall        Stats    `json:"overall"`
-	PerRequest     []Stats  `json:"per_request"`
-	OverrunMs      int64    `json:"overrun_ms"`
+	// SLO is additive on the wire. The acceptance matrix and the PDF renderer
+	// both assert against this shape and the polling fallback synthesises
+	// envelopes from it, so fields may be added here and never renamed.
+	SLO        SLO     `json:"slo"`
+	Overall    Stats   `json:"overall"`
+	PerRequest []Stats `json:"per_request"`
+	OverrunMs  int64   `json:"overrun_ms"`
 }
 
 // Stats is one scope's computed numbers — the whole run, or one entry in it.
