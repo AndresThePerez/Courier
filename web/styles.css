@@ -464,6 +464,18 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
 }
 .knee > .note { margin: 0.2rem 0 0; max-width: 72ch; }
 
+/* The hero is the one place the page makes a claim, so it gets the one size
+   that reads as one. 22px is the step .gauge-value already uses, so this
+   reuses the ladder rather than extending it, and the uppercase tracking
+   stays because the heading is still a section label, not a headline. */
+#knee-panel .block-heading {
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  margin-bottom: 0.55rem;
+}
+#knee-panel > .note { font-size: 13px; }
+
 /* Chart left, numbers right: the curve is the argument and the table is the
    evidence, and on a wide pane they belong side by side. The 340px floor is
    the knee table's min-content width (310px measured) plus slack, so the
