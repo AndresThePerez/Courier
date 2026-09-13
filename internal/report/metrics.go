@@ -16,7 +16,7 @@ import (
 // dev-calibrated gate (p95 ≤ 50ms, tiers 25/50/100, T=25) was measured on a
 // Ryzen 5800X where the internal-network series read p95 20→128ms across
 // 1→50 workers; the deploy host (4-core Ryzen 3 2200G, ES capped at 1g,
-// co-hosted with the portfolio site) measured p95 38.6 / 118.8 / 262.2 /
+// co-hosted with other services) measured p95 38.6 / 118.8 / 262.2 /
 // 407.9ms at 1/10/25/50 workers. These constants reproduce the same
 // falsifiable shape there: PASS at 1 and 10 workers, FAIL at 25 and 50.
 const (

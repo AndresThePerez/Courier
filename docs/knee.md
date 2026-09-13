@@ -12,7 +12,7 @@ shows and what the shipped SLO constants are calibrated to) and the earlier
 
 | | |
 |---|---|
-| Host | 4-core Ryzen 3 2200G, Elasticsearch capped at 1 GB, co-hosted with the portfolio site |
+| Host | 4-core Ryzen 3 2200G, Elasticsearch capped at 1 GB, co-hosted with other services |
 | Path | Courier container → internal Docker network (`demo-net` alias) → PokéSearch container |
 | Target | PokéSearch `milestone-3`, commit `6bbceb9`, 20,324 documents |
 | Sequence / mode / duration | the curated `search-basics` collection · performance · 10s per point |
@@ -30,7 +30,7 @@ measurement run; the shipped build scores with the deploy-calibrated T=50ms.
 **The knee is at ~10 workers here.** 10 workers deliver 88% of the peak; 10→25 buys +8%
 throughput for +110% p50; 25→50 buys +5% for +91% p50. Roughly the 3× latency the
 PokéSearch session predicted for this hardware (their e2e `q=charizard` ≈ 73ms local vs
-~25ms on the workstation). During the 50-worker pass the co-hosted portfolio site was
+~25ms on the workstation). During the 50-worker pass a co-hosted service was
 monitored from outside the box: p95 260ms over the tunnel, no degradation, so the
 50-worker cap stays. These figures drove the deploy SLO recalibration (verdict
 p95 ≤ 150ms, ladder 50/150/300, Apdex T=50, buckets to 400+) — see `internal/report`

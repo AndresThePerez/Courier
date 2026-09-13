@@ -15,7 +15,7 @@
 //   - A latency bound must be able to fail. Real responses land in 1-30ms, so
 //     "latency lt 300" is decoration, not a test. Search asserts 150ms and
 //     suggest/healthz 100ms — roughly 4x headroom over the measured numbers,
-//     leaving room for the slower home server.
+//     leaving room for the slower deploy host.
 package collections
 
 import (
