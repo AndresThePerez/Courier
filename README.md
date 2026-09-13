@@ -9,7 +9,7 @@
 
 Courier is a Postman-style API test runner and load tester that ships as **one Go binary**: an embedded three-pane UI, curated request collections, a sequential **Functional** runner with declarative assertions, and a worker-pool **Performance** engine with fan-in aggregation. Results stream live over **SSE with reconnect replay and a polling fallback**, aggregate load is priced against a **token-bucket admission budget**, and any report exports as a single-page PDF rendered in pure Go. Stdlib everywhere, one direct dependency (the PDF writer), no frontend build step.
 
-The interesting constraint is that it is *public*. A load tester exposed to the internet is a DDoS cannon with a nice UI unless the design forbids it, so the server never accepts a URL from the client — a run payload is `{endpoint_id, params, assertions}` against a target fixed at startup and a closed server-side endpoint catalog. Sustained load is bounded by a budget whose 10% duty cycle is proven by an in-repo simulator rather than asserted. Run state is owned by exactly one goroutine (no atomics, no mutexes, no torn snapshots), and Courier publishes its own per-dispatch overhead so you can see it is not part of the measurement.
+The interesting constraint is that it is *public*. A load tester exposed to the internet is a DDoS cannon with a nice UI unless the design forbids it, so the server never accepts a URL from the client — a run payload is `{endpoint_id, params, assertions}` against a target fixed at startup and a closed server-side endpoint catalog. Sustained load is bounded in concurrency-seconds by a token-bucket budget whose 10% duty cycle is proven by an in-repo simulator rather than asserted; request volume is bounded only in proportion to target latency, because a dead target and a healthy one are charged the same worker-seconds and the dead one dispatches far more requests for them. Run state is owned by exactly one goroutine (no atomics, no mutexes, no torn snapshots), and Courier publishes its own per-dispatch overhead so you can see it is not part of the measurement.
 
 ![Courier's three-pane UI: collections sidebar, the Find the breaking point panel with the measured knee curve, and the run configuration pane](docs/hero.png)
 
@@ -36,7 +36,10 @@ gracefully rather than falling over), and the SLO verdict flips *between* 10 and
 workers, which is the point of having one. The same series on the dev workstation (a
 5800X: knee ~25, peak 692 req/s), the raw data, run ids, and methodology are in
 [docs/knee.md](docs/knee.md). Reproduce any point in one click from the UI's
-**Find the breaking point** panel.
+**Find the breaking point** panel. The table prints p50 and p95; every run's report
+carries the whole ladder, min, avg, p50, p90, p95, p99 and max, taken nearest-rank so a
+published p99 is a latency some request actually experienced rather than an
+interpolation between two that did not.
 The target is [Pokesearch](https://github.com/AndresThePerez/PokeSearch), an
 Elasticsearch search engine for a 20,324-card Pokemon TCG corpus, also built
 here: Courier load-tested it and found its knee at ten workers, which is the
@@ -56,10 +59,10 @@ dashboard are in [what happens when the target dies](#what-happens-when-the-targ
 
 ## Tests and CI
 
-214 test functions and 16 benchmarks, per-package coverage of **86.5% to 100%
+214 test functions and 16 benchmarks, per-package coverage of **87.0% to 100%
 on every package that carries logic**, and the **race detector** on every push.
 The two packages where a defect would cost the most are the two highest:
-`internal/report`, the accounting maths, at 95.9%, and `internal/sandbox`, the
+`internal/report`, the accounting maths, at 96.4%, and `internal/sandbox`, the
 security boundary, at 96.8%. CI runs `go vet`, `go test -race`, `go build`, a
 `go mod tidy` cleanliness gate, `gofmt`, `staticcheck`, `govulncheck`, a coverage
 floor, and the Docker image build. The load-budget proof and the PDF's
@@ -97,7 +100,7 @@ Open the [live demo](https://courier.andrestheperez.com), then:
    curated searches pin: assertions are per-request choices, editable in the
    Request tab.
 
-![A functional run streaming its results live over SSE, row by row, then completing 9/9 against the pinned corpus](docs/sse-run.gif)
+![A hand-assembled functional sequence streaming its results live over SSE, one row per request as each response lands, every row carrying its own assertion outcomes](docs/sse-run.gif)
 
 ## Architecture
 
@@ -120,6 +123,10 @@ Browser (vanilla ES modules, embedded in the binary — no build step)
 
 Routes are registered with method-scoped patterns, so the verb is part of the contract.
 `pprof` is deliberately *not* on this mux — it gets its own loopback-only listener.
+`SIGINT` and `SIGTERM` start a graceful shutdown whose order is the whole trick: the
+in-flight run is cancelled first, which bounds the drain by one request instead of a
+whole run and releases the SSE handlers, and only then does the HTTP server stop, since
+a live stream is an active handler by design and would otherwise hold it open forever.
 
 On the live deployment the target is Pokesearch. Requests display as
 `pokesearch.andrestheperez.com`; Courier executes them over the internal container
@@ -140,7 +147,10 @@ before the budget — are in [docs/design.md](docs/design.md). The short list:
   **10.0% duty cycle** under every adversarial shape; the in-repo simulator
   (`go test ./internal/budget/ -run Sim`) measures 10.03% for max-runs, cancel-spam,
   and interleaved traffic, and **0.75%** for the curated happy path. Cancels cost
-  exactly what they consumed; honest visitors never leave the 5s floor.
+  exactly what they consumed; honest visitors never leave the 5s floor. This is the
+  admission control layer, and it sits in one place: a run is admitted only when the
+  bucket can pay for the worker-seconds it asks for, and is refused with its
+  `cooldown_until` when it cannot.
 - **Walk me through the concurrency:** two contexts per run (the dispatch deadline
   never cancels an in-flight request — that would turn honest tail latency into fake
   transport errors); N workers fan results into one channel; **a single aggregator
@@ -150,12 +160,20 @@ before the budget — are in [docs/design.md](docs/design.md). The short list:
   cancel/deadline/shutdown are attributed to Courier, never to the target — so a
   visitor pressing Cancel cannot manufacture a failing verdict. Cancelled and expired
   runs render **"N/A — partial data"** instead of a verdict computed from a truncated
-  sample. The invariant `requests == ok + errors + aborted` is tested.
+  sample, and a completed run whose sequence is not the calibrated five-request
+  `search-basics` collection renders a plain N/A with a reason naming that calibration,
+  withholding only the judgement. The invariant `requests == ok + errors + aborted` is
+  tested.
 - **Live updates degrade, never lie.** SSE first (2s heartbeat, a 512-entry replay log
-  on subscribe — a reconnect or mid-run spectator repaints complete state); a slow
-  subscriber is disconnected and self-heals via replay rather than silently losing
-  rows; past the 100-subscriber cap the server answers `503 {"poll":true}` and the
-  client falls back to 500ms polling of the same report shape. Both transports feed one
+  on subscribe, so a mid-run spectator repaints complete state from the replay log); a
+  slow subscriber is disconnected and self-heals via replay rather than silently losing
+  rows; past the 100-subscriber cap the server answers `503 {"poll":true}`. Both of
+  those are backpressure, and both put the cost on the reader: a subscriber that cannot
+  keep up, or one subscriber too many, never slows the run or bends its numbers. A
+  transport error then hands the run to 500ms polling of the same report shape for the
+  rest of the run, because the shipped client routes every `EventSource` error to the
+  fallback and closes the source; the replay log is what the server guarantees a fresh
+  subscriber, not a reconnect the browser performs. Both transports feed one
   reducer — no render code knows which is active. SSE meets the Cloudflare tunnel at
   deploy; the fallback exists because buffering there would otherwise kill live
   results outright.
@@ -166,10 +184,6 @@ before the budget — are in [docs/design.md](docs/design.md). The short list:
 - **One direct dependency** (`go-pdf/fpdf`), stdlib for everything else — including
   the SSE broadcaster, the token bucket, the histogram, and the frontend (vanilla ES
   modules served from `embed.FS`).
-- **Self-telemetry with a sandbox posture:** `/metrics` is a curated expvar map (no
-  `cmdline`, no `memstats` — a public demo should not hand out its own command line);
-  pprof binds loopback-only and **refuses** any other address rather than quietly
-  publishing process memory.
 
 ## Sandbox model
 
@@ -182,6 +196,24 @@ its own ordered parameter allowlist, and that allowlist is the single source of 
 unknown keys are rejected, values are truncated to the length bound, and curated and
 visitor-edited requests go through identical validation. Any code path that would let a
 run payload influence the host is a design violation, not a bug.
+
+## Observability
+
+Courier instruments itself, not only its target. `/metrics` is a curated expvar
+map (no `cmdline`, no `memstats`: a public demo should not hand out its own
+command line), and pprof binds loopback-only and **refuses** any other address
+rather than quietly publishing process memory. Every engine log line is
+structured JSON carrying an `event` name and a `run_id`, so one `jq` filter
+returns a single run's complete story including the admission decision and the
+budget arithmetic behind its cooldown. Requests that arrive through the edge log
+its request id, so a visitor's report can be joined to a server log line.
+
+What is deliberately absent, since the honest version of an observability story
+includes its limits: no metrics history (every counter resets on redeploy and the
+twenty-run history ring is in memory), no Prometheus exposition format, no
+scrape target, no tracing, and no alerting. For a single binary with one direct
+dependency that is the right amount; it is named here rather than left for a
+reader to notice.
 
 ## Caps
 
@@ -242,8 +274,9 @@ running the tester next to the target spends a tenth of a core and twenty megaby
 
 ## What happens when the target dies
 
-Evidence, not claims: during a 10-worker 15-second run the target process was SIGKILLed
-at the 5-second mark, on purpose. The run **completed cleanly at its full duration** —
+Evidence, not claims, because reliability asserted is reliability unmeasured. This is a
+chaos drill: during a 10-worker 15-second run the target process was SIGKILLed at the
+5-second mark, on purpose. The run **completed cleanly at its full duration** —
 974,606 dispatches accounted as 5,910 ok + 968,696 errors + 0 aborted (the invariant
 holds), every failure attributed as a `connection` error with status `0 (transport
 error)`, Apdex 0.006, verdict FAIL at a 99.39% error rate. No phantom aborts, no wedged
@@ -298,6 +331,13 @@ The base file publishes `${APP_PORT:-8084}:8080`; the dev overlay points the con
 at a host-side target via `host.docker.internal` (see `NOTE.md` N31 for the Compose
 deep-merge and firewalld caveats).
 
+The runtime stage is distroless (`gcr.io/distroless/static-debian12:nonroot`, pinned by
+digest and running as uid 65532): no shell, no package manager, nothing to exec into.
+The static binary it copies in measures **11.8 MB** here
+(`CGO_ENABLED=0 go build -trimpath -o /tmp/courier-size ./cmd/server` on the dev
+workstation), so the image is that plus the distroless base, which is the honest way to
+state it when nothing in this repository measures an image.
+
 ## Tests
 
 ```bash
@@ -306,8 +346,9 @@ go test -race ./...
 go build ./...
 ```
 
-That is what CI runs on every push and pull request to `main`, plus a `go mod tidy`
-cleanliness gate and the Docker image build.
+CI runs those three on every push to every branch and on every pull request, alongside
+the rest of the gate described in [Tests and CI](#tests-and-ci) above and a separate job
+that builds the Docker image.
 
 The admission-budget simulator drives the 10% duty-cycle proof:
 
