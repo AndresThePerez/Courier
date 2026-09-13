@@ -860,3 +860,45 @@ real sandbox story. The likely shape when this happens: client-side-only
 evaluation (a Web Worker with no DOM, feeding outcomes into the existing
 outcome renderer), with scripted outcomes clearly labeled as evaluated in the
 browser, never stored in run history.
+
+## N35 — The verdict is scoped to the sequence it was calibrated for (Task 22)
+
+**Plan says:** the verdict is a pure function of the numbers, `Verdict(s Stats) (string, []string)`:
+PASS when aggregate p95 is within budget and the error rate is under the gate, applied to
+whatever sequence a run happened to dispatch.
+
+**What we do instead:** `Verdict` takes the sequence fact as well,
+`Verdict(s Stats, calibrated bool)`. A run that dispatched anything other than the calibrated
+sequence renders `VerdictNA` with a reason naming the calibration date and workload, the same
+way a cancelled or expired run's judgement is already withheld. `report.IsCalibrated` decides
+it by comparing a run's entries against `report.CalibrationEntries`: order does not matter, a
+subset is not enough, and a substituted entry is a different workload. The percentiles, the
+ladder, the histogram and the throughput all still render and are all still true. Only the
+pass-or-fail judgement is withheld.
+
+**The SLO constants are unchanged and this is not a recalibration.** `VerdictP95Ms`,
+`VerdictMaxErrorRate`, the SLA ladder and the Apdex target are exactly what they were. What
+changed is the scope of the claim: the report used to say "this run met the gate" and now says
+"this run met the gate the gate was calibrated for". A run of some other sequence gets no
+verdict rather than a verdict nobody calibrated.
+
+**Why:** two of the curated collections showed the same defect from opposite sides.
+
+- **Collection 04 (`error-handling`) is a structural FAIL against a correct target.** Most of
+  its requests assert a 400, which is Pokesearch honouring its own error contract, and the
+  gate counts every one of them as an error. A red verdict there measures the collection, not
+  the target.
+- **Collection 03 (`suggest-health`) is an unfalsifiable green against a healthy one.**
+  Suggest and healthz are the cheapest endpoints the target has, and this package's own
+  comment records real responses landing in 1 to 30ms, so a 150ms p95 budget there cannot
+  fail whatever the target does. The design notes already argue that an unfalsifiable green
+  is worse than no verdict and that an unfalsifiable red is the same defect mirrored; this
+  applies that argument to the sequence dimension the notes never considered.
+
+A one-entry subset of the calibrated collection could also flip a PASS into a FAIL on the same
+host at the same concurrency, which is the same failure in miniature.
+
+This consumes the calibration record Task 21 stored on the report (`CalibrationEntries`,
+`CalibrationDate`, `CalibrationSequence`). The app's partial-verdict note now leans on the
+reason lines the server sends instead of restating one of them, because a withheld verdict has
+two possible causes rather than one.

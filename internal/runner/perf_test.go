@@ -123,8 +123,18 @@ func TestPerfTargetDownProducesAnAllErrorReport(t *testing.T) {
 	if p.Overall.Requests == 0 || p.Overall.Errors != p.Overall.Requests {
 		t.Errorf("target-down run = %+v, want every request counted as an error", p.Overall)
 	}
-	if p.Verdict != report.VerdictFail || p.Overall.StatusCounts[0] == 0 {
-		t.Errorf("verdict %q, status 0 count %d — transport errors must land under status 0", p.Verdict, p.Overall.StatusCounts[0])
+	if p.Overall.StatusCounts[0] == 0 {
+		t.Errorf("status 0 count %d: transport errors must land under status 0", p.Overall.StatusCounts[0])
+	}
+	// The sequence here is one synthetic request rather than the calibrated
+	// collection, so the run itself gets no verdict. What the gate would say
+	// about these numbers is still the thing worth asserting: an all-error
+	// run fails it.
+	if p.Verdict != report.VerdictNA {
+		t.Errorf("verdict %q, want %q: a one-request sequence is not the calibrated workload", p.Verdict, report.VerdictNA)
+	}
+	if v, _ := report.Verdict(p.Overall, true); v != report.VerdictFail {
+		t.Errorf("gate verdict on an all-error run = %q, want %q", v, report.VerdictFail)
 	}
 	// Transport failures contribute no samples, so the distribution is empty.
 	// An all-error report with a confident p95 would be a fabricated number.

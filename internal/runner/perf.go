@@ -126,7 +126,7 @@ func RunPerformance(ctx context.Context, ex *Executor, rr sandbox.RunRequest, em
 
 	status := perfStatus(ctx)
 	if status == report.StatusCompleted {
-		perf.Verdict, perf.VerdictReasons = report.Verdict(perf.Overall)
+		perf.Verdict, perf.VerdictReasons = report.Verdict(perf.Overall, report.IsCalibrated(Entries(ex, seq)))
 	} else {
 		// A run stopped two seconds into thirty has not measured what the SLOs
 		// describe. The percentiles, histogram, and throughput still render —

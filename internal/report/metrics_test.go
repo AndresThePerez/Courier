@@ -221,7 +221,7 @@ func TestAbortedDispatchesAreNotErrors(t *testing.T) {
 	}
 	// The regression this rule exists for: without it the run above reads as
 	// a 5% error rate and the verdict FAILs because someone pressed Cancel.
-	if v, _ := Verdict(st); v != "PASS" {
+	if v, _ := Verdict(st, true); v != "PASS" {
 		t.Errorf("verdict = %q, want PASS — the cancel itself must not fail the run", v)
 	}
 }
@@ -230,11 +230,11 @@ func TestVerdictAtRecalibratedSLOs(t *testing.T) {
 	// Measured on the deploy host: 10 workers -> p95 118.8ms (PASS);
 	// 25 workers -> p95 262.2ms (FAIL).
 	fast := ComputeStats(-1, "overall", okTally(repeat(118.8, 1000)...), time.Second)
-	if v, _ := Verdict(fast); v != "PASS" {
+	if v, _ := Verdict(fast, true); v != "PASS" {
 		t.Errorf("p95 118.8ms verdict = %q, want PASS", v)
 	}
 	slow := ComputeStats(-1, "overall", okTally(repeat(262.2, 1000)...), time.Second)
-	v, reasons := Verdict(slow)
+	v, reasons := Verdict(slow, true)
 	if v != "FAIL" || len(reasons) == 0 {
 		t.Errorf("p95 262.2ms verdict = %q reasons %v, want FAIL with a reason", v, reasons)
 	}
@@ -246,7 +246,7 @@ func TestVerdictAtRecalibratedSLOs(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		tal.AddResponse(503, 2, 10)
 	}
-	if v, _ := Verdict(ComputeStats(-1, "overall", tal, time.Second)); v != "FAIL" {
+	if v, _ := Verdict(ComputeStats(-1, "overall", tal, time.Second), true); v != "FAIL" {
 		t.Errorf("5%% errors must FAIL, got %q", v)
 	}
 }
@@ -359,7 +359,7 @@ func TestApdexRatings(t *testing.T) {
 // A judgement with no data behind it is the "permanently green verdict" the
 // SLO recalibration exists to prevent.
 func TestVerdictWithNoDispatches(t *testing.T) {
-	v, reasons := Verdict(ComputeStats(-1, "overall", newTally(), time.Second))
+	v, reasons := Verdict(ComputeStats(-1, "overall", newTally(), time.Second), true)
 	if v != "FAIL" || len(reasons) == 0 {
 		t.Errorf("verdict on an empty run = %q %v, want FAIL with a reason", v, reasons)
 	}
@@ -462,5 +462,39 @@ func TestPerformanceJSONCarriesTheGate(t *testing.T) {
 	}
 	if len(slo) != len(want) {
 		t.Errorf("the slo object has %d keys, want exactly the %d its readers name: %v", len(slo), len(want), want)
+	}
+}
+
+// The gate was derived from one five-request mix, so a run of anything else
+// gets no judgement rather than a judgement nobody calibrated.
+func TestVerdictIsWithheldForAnUncalibratedSequence(t *testing.T) {
+	fast := okTally(10, 10, 10)
+	st := ComputeStats(-1, "overall", fast, time.Second)
+
+	if v, _ := Verdict(st, true); v != VerdictPass {
+		t.Fatalf("calibrated verdict = %q, want PASS on a fast run", v)
+	}
+	v, reasons := Verdict(st, false)
+	if v != VerdictNA {
+		t.Errorf("uncalibrated verdict = %q, want %q", v, VerdictNA)
+	}
+	if len(reasons) == 0 {
+		t.Error("a withheld verdict must say why")
+	}
+}
+
+func TestIsCalibratedRecognisesTheSequenceAndRejectsASubset(t *testing.T) {
+	full := make([]Entry, 0, len(CalibrationEntries))
+	for i, n := range CalibrationEntries {
+		full = append(full, Entry{Index: i, Name: n})
+	}
+	if !IsCalibrated(full) {
+		t.Error("the calibration sequence must be recognised")
+	}
+	if IsCalibrated(full[:1]) {
+		t.Error("a one-entry subset is a different workload and must not be recognised")
+	}
+	if IsCalibrated(append(full[:4:4], Entry{Index: 4, Name: "something else"})) {
+		t.Error("a substituted entry is a different workload and must not be recognised")
 	}
 }

@@ -102,6 +102,6 @@ func BenchmarkVerdict(b *testing.B) {
 	s := ComputeStats(-1, "overall", tallyOf(18_000), 10*time.Second)
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = Verdict(s)
+		_, _ = Verdict(s, true)
 	}
 }
