@@ -559,7 +559,11 @@ code, .mono { font-family: var(--mono); }
 
 @media (max-width: 900px) {
   #sidebar-toggle { display: inline-block; }
-  #panes { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  /* The first track is the content's own height, not the viewport remainder.
+     1fr handed the main pane everything left over regardless of how little it
+     held, which put a band of empty background between the runner's content
+     and the rail on any viewport taller than that content. */
+  #panes { grid-template-columns: 1fr; grid-template-rows: minmax(0, auto) auto; align-content: start; }
   #panel-sidebar {
     position: fixed; top: 41px; bottom: 0; left: 0; width: 280px; max-width: 85vw;
     z-index: 20; transform: translateX(-100%); transition: transform 0.15s ease-out;
