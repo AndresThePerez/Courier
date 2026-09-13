@@ -238,7 +238,12 @@ function resultRow(r, finished) {
     }),
   ]);
 
-  const details = el('details', { class: `res-row${r.passed && !r.skipped ? '' : ' is-off'}` }, [
+  // Three states, three edges. A pass has none, a failure takes --fail, and a
+  // skipped row takes the muted line colour: it shared is-off with a failure
+  // until now, which painted a skip in the failure's red and contradicted the
+  // copy five lines down insisting a skip is never counted as a failure.
+  const edge = r.skipped ? ' is-skipped' : (r.passed ? '' : ' is-off');
+  const details = el('details', { class: `res-row${edge}` }, [
     head,
     el('div', { class: 'res-detail' }, [
       r.skipped && el('p', {
