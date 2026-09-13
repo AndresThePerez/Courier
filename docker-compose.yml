@@ -18,6 +18,19 @@ services:
       - TARGET_DISPLAY=${TARGET_DISPLAY:-pokesearch.andrestheperez.com}
     restart: unless-stopped
     mem_limit: 256m
+    # The README measures a maximum run at about 10% of one core. This is that
+    # claim as a limit rather than a hope, with headroom for the rest of the
+    # process. A healthcheck belongs here too and cannot be written yet: the
+    # image has no shell and the binary has no self-probe mode.
+    cpus: "0.5"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     networks:
       demo: {}
 
