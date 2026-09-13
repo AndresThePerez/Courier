@@ -1,18 +1,18 @@
-# NOTE — deviations from the Implementation Plan
+# Deviations
 
-Running log of places where the code intentionally differs from
-`Implementation Plan.md` / `Implementation Plan Addendum — Employer Appeal.md`,
-and why. Each entry names the task it affects so the next agent can pick it up.
+A running log of the places where this implementation intentionally departs
+from its original design, and why. Each entry is numbered, append-only, and
+kept so a decision never has to be rediscovered the hard way.
 
 ---
 
 ## N1 — Dev target port is 8081, not 8085 (Task 1, Task 21)
 
 **Plan says:** "Local environment facts" documents the local Pokesearch target on
-`APP_PORT=8085`, brought up with `docker compose up -d` from `~/Repositories/pokesearch`.
+`APP_PORT=8085`, brought up with `docker compose up -d` from the Pokesearch checkout.
 
 **What we do instead:** the documented dev target is `http://127.0.0.1:8081`, and
-`docker compose` is never run from `~/Repositories/pokesearch`.
+`docker compose` is never run from the Pokesearch checkout.
 
 **Why:** parallel sessions share this workstation. Another session's live containers are
 keyed to that compose project directory, so `docker compose up` there would recreate
@@ -36,7 +36,7 @@ collection asserts graceful degradation rather than 400s.
 deployed** — the live public server still serves the old, lenient build.
 
 **Why:** the parallel Pokesearch work changes the contract Courier is written against,
-and the coordinator's instruction is to encode the new contract rather than the live
+and the decision recorded at the time is to encode the new contract rather than the live
 server's current behaviour. Error-case behaviour must **not** be verified against the
 live server; it would still answer with the old build.
 
@@ -457,9 +457,9 @@ and the `debug=1` query inspector.
 
 The task says to run every curated request against local Pokesearch and require zero
 assertion failures. That is deliberately skipped here, for the reason N1 and N2 give: the
-only reachable target is the shared dev instance on 8081, which another session rebuilds at
+only reachable target is the shared dev instance on 8081, which is rebuilt out of band at
 task boundaries and which still serves a **partial** M3 contract, and
-`docker compose` must not be run from `~/Repositories/pokesearch`. Verifying against it
+`docker compose` must not be run from the Pokesearch checkout. Verifying against it
 would produce a false red (or, worse, a false green on the old lenient build).
 
 Every value in the curated set comes from the plan's verified fixture table and the spec's
@@ -688,7 +688,7 @@ the service named `courier` rather than `app`.
 **`TARGET_URL` in the dev file is `host.docker.internal:8081`, not the plan's 8085** —
 that is N1, not a new deviation, and it is a `${TARGET_URL:-...}` default either way.
 
-**Verification footnote for whoever runs this next on this workstation:** firewalld
+**Verification footnote:** firewalld
 here rejects container-to-host connections to unpublished host ports, so a stub bound
 on the host is unreachable at `host.docker.internal` from inside the container
 (`connection refused`, from every bridge, including docker0 whose zone target is
@@ -702,7 +702,7 @@ or the compose files works around this; it is a host firewall fact.
 ## N32 — What the acceptance matrix actually runs, and the three items the plan could not have (Task 20)
 
 **Plan says:** Task 20 step 1 brings the target up with `APP_PORT=8085 docker compose up -d`
-from `~/Repositories/pokesearch`; step 2 lists the E2E matrix; step 4 is a target-down
+from the Pokesearch checkout; step 2 lists the E2E matrix; step 4 is a target-down
 drill that stops Elasticsearch and then the app container.
 
 **What we do instead:** `internal/acceptance/acceptance_test.go` (build tag `acceptance`,
@@ -752,7 +752,7 @@ correct as written.
 
 The plan's step 2 metrics item says "stop Elasticsearch but leave Pokesearch's app up",
 and step 4 stops the app container. Neither is available: the target is a shared instance
-another session owns and `docker compose` must never be run from `~/Repositories/pokesearch`
+that is not this project's to restart, and `docker compose` must never be run from the Pokesearch checkout
 (N1). Breaking it to test Courier would break it for everyone.
 
 So `STUB_URL` names a *second* Courier whose target is a scratch stub with a `/__mode`

@@ -328,7 +328,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
 The base file publishes `${APP_PORT:-8084}:8080`; the dev overlay points the container
-at a host-side target via `host.docker.internal` (see `NOTE.md` N31 for the Compose
+at a host-side target via `host.docker.internal` (see [docs/deviations.md](docs/deviations.md) N31 for the Compose
 deep-merge and firewalld caveats).
 
 The runtime stage is distroless (`gcr.io/distroless/static-debian12:nonroot`, pinned by

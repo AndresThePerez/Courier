@@ -179,7 +179,7 @@ export function openLive(runId, handlers) {
       poller = null;
     }
     // Saying so is not optional: the idle status poll is gated on the
-    // transport (NOTE.md N27), so a transport that detaches quietly leaves the
+    // transport (docs/deviations.md N27), so a transport that detaches quietly leaves the
     // page with neither a stream nor a poll.
     kind = 'idle';
     h.transport('idle');

@@ -264,7 +264,7 @@ func TestRenderPerformanceBody(t *testing.T) {
 
 func TestRenderFunctionalCountsComeFromResults(t *testing.T) {
 	rep := fixtureFunctionalReport()
-	// The struct counters are json:"-" (NOTE.md N6), so a report that came back
+	// The struct counters are json:"-" (docs/deviations.md N6), so a report that came back
 	// through JSON has them zeroed. The page must still be right.
 	rep.Functional.Total, rep.Functional.Passed = 0, 0
 	rep.Functional.Failed, rep.Functional.Skipped = 0, 0

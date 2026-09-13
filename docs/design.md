@@ -82,7 +82,7 @@ worker-seconds/second against `R = 5`, matching the design claim to three
 figures. Run it with `go test ./internal/budget/ -run Sim -v`.
 
 Two implementation notes that matter to the proof (details in
-[`NOTE.md`](../NOTE.md), entries N10/N10a/N20): refill accrues **continuously,
+[`docs/deviations.md`](deviations.md), entries N10/N10a/N20): refill accrues **continuously,
 including while a run is in flight** — that is the reading under which the
 convergence claim is exactly true (a no-in-run-refill model converges to 4.55,
 not 5.0) — and `/api/send` **debits the bucket but never opens a cooldown
@@ -123,7 +123,7 @@ deliberately does not expose `cmdline`/`memstats` (a public demo should not
 hand out its own command line), and pprof lives on a **loopback-only listener
 that refuses to bind anywhere else** — `PPROF_ADDR=0.0.0.0:6060` fails loudly
 instead of quietly publishing process memory
-([`internal/api`](../internal/api), NOTE.md N25).
+([`internal/api`](../internal/api), docs/deviations.md N25).
 
 ---
 
@@ -148,7 +148,7 @@ Courier, never to the target. In functional mode the same rule renders an
 aborted entry as `skipped`, and a cancelled or expired run's verdict is
 **"N/A — partial data"** rather than a PASS/FAIL computed from a truncated
 sample. Classification handles both shapes `net/http` produces for a cancelled
-request (NOTE.md N14), and a test pins that foreign cancellations are *not*
+request (docs/deviations.md N14), and a test pins that foreign cancellations are *not*
 laundered into aborts.
 
 **Coordinated omission, disclosed.** Courier is a closed-loop tester — workers
@@ -183,7 +183,7 @@ falsifiable shape (PASS at 1 and 10 workers, FAIL at 25 and 50): verdict gate
 
 The principle: **an unfalsifiable green is worse than no verdict**. The same
 principle shows up at the edges — `Verdict` fails a run with zero dispatches
-rather than vacuously passing it (NOTE.md N7), and curated assertion values
+rather than vacuously passing it (docs/deviations.md N7), and curated assertion values
 come from a pinned, measured fixture corpus, not estimates.
 
 ---
@@ -211,7 +211,7 @@ Details live in the code; the shape is worth stating:
   than silently starved; over the subscriber cap the stream endpoint answers
   `503 {"poll": true}` and the client falls back to 500ms polling of the same
   report shape; both transports feed one reducer, so the UI cannot tell them
-  apart ([`internal/sse`](../internal/sse), `web/js/api.js`, NOTE.md N22/N28).
+  apart ([`internal/sse`](../internal/sse), `web/js/api.js`, docs/deviations.md N22/N28).
   `run_finished` publishes only after the report is stored, so fetch-on-finish
   is race-free by construction (N12) — and there is a test that pins it.
 
@@ -220,7 +220,7 @@ Details live in the code; the shape is worth stating:
 ## Where the deviations live
 
 Every place the implementation deliberately differs from the written plan is a
-numbered entry in [`NOTE.md`](../NOTE.md) — what the plan said, what the code
+numbered entry in [`docs/deviations.md`](deviations.md) — what the plan said, what the code
 does, and why, from N1 (dev-target port) through the budget reading (N10),
 SSE wire decisions (N22), and the PDF's determinism mechanics (N30). The log
 exists so no future session rediscovers a decision the hard way.
