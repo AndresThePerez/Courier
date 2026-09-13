@@ -272,7 +272,7 @@ func searchSequence(t *testing.T) []sandbox.Request {
 
 // TestCuratedCollectionsRunClean is the item the whole file exists for.
 //
-// NOTE.md N24 deferred exactly this: every curated fixture was measured by hand
+// docs/deviations.md N24 deferred exactly this: every curated fixture was measured by hand
 // against the pinned 20,324-card index but never re-run end to end, and the
 // error-handling collection's 400 assertions were written against a contract
 // document rather than a running server. This runs all four collections through

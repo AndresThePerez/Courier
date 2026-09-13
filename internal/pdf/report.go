@@ -195,7 +195,7 @@ func (d *doc) metaPair(x, w float64, label, value string) {
 }
 
 // verdict is the coloured band. A cancelled or expired run gets the neutral
-// N/A band (NOTE.md N15): those numbers are real, but they do not describe what
+// N/A band (docs/deviations.md N15): those numbers are real, but they do not describe what
 // the SLOs measure, so the page withholds the judgement rather than colouring
 // one in.
 func (d *doc) verdict() {
@@ -474,7 +474,7 @@ type counts struct {
 }
 
 // tally counts the results array rather than reading Functional's counters.
-// Those carry json:"-" (NOTE.md N6), so a report that came back through JSON
+// Those carry json:"-" (docs/deviations.md N6), so a report that came back through JSON
 // has them zeroed — and the results array is the single source of truth either
 // way.
 func tally(f *report.Functional) counts {

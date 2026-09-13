@@ -15,7 +15,7 @@ The drill and what it produced. The narrative version is in the README and in
 | Artefacts | [`report.json`](report.json) (the stored report, verbatim) · [`dashboard.png`](dashboard.png) (the rendered report) |
 
 **Why a stub and not the real Pokesearch.** The only Pokesearch instance reachable from here
-is a shared dev target other work depends on (NOTE.md N1). Killing it to prove a point about
+is a shared dev target other work depends on (docs/deviations.md N1). Killing it to prove a point about
 Courier would break it for everyone, so this drill kills something disposable that speaks the
 same protocol. Nothing about the behaviour under test is target-specific: Courier sees TCP
 connections refused either way.

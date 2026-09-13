@@ -105,7 +105,7 @@ function renderSummary(state, rep, run, mode) {
 
   if (mode === 'functional') {
     const c = counts(state.results);
-    // The report's own counters are json:"-" (NOTE.md N6) — they are derivable
+    // The report's own counters are json:"-" (docs/deviations.md N6) — they are derivable
     // from the results array, and one source of truth beats two.
     bits.push(`${c.passed} passed / ${c.failed} failed / ${c.skipped} skipped of ${c.total}`);
   } else {

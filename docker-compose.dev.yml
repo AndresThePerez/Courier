@@ -11,7 +11,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml config
 #
 # TARGET_URL points at the host rather than a sibling container. The plan says
-# 8085; the dev target on this workstation is 8081 (NOTE.md N1), and either way
+# 8085; the dev target on this workstation is 8081 (docs/deviations.md N1), and either way
 # it is an override away.
 services:
   courier:

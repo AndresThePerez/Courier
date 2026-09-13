@@ -14,7 +14,7 @@ const TABS = ['runner', 'editor', 'results'];
 
 // StatusPollMs is stated once, here, so N idle tabs share one cadence instead
 // of each inventing their own. The Design Spec sets it at 3s; a competing 5s
-// figure was not adopted, because the spec is authoritative (see NOTE.md N26).
+// figure was not adopted, because the spec is authoritative (see docs/deviations.md N26).
 const StatusPollMs = 3000;
 
 function currentTab() {
@@ -79,7 +79,7 @@ function attach(runId) {
   const stop = api.openLive(runId, {
     event: onLiveEvent,
     transport: (kind) => {
-      // NOTE.md N27: the idle status poll is gated on state.transport, so the
+      // docs/deviations.md N27: the idle status poll is gated on state.transport, so the
       // reset back to 'idle' is what lets the page start polling status again
       // once the run is over.
       if (kind === 'idle' && live && live.runId === runId) live = null;
@@ -144,7 +144,7 @@ function runShape(id, data) {
 // finishRun fetches the finished report the moment the run says it is done.
 //
 // That is race-free because the manager publishes run_finished *after* the
-// report is stamped, stored, and charged to the budget (NOTE.md N12) — without
+// report is stamped, stored, and charged to the budget (docs/deviations.md N12) — without
 // that ordering this fetch could read `status: running` from a run it was just
 // told had ended. The report is also where the body previews live: a partial
 // report fetched mid-run carries none, so the rows are re-seeded from it.
