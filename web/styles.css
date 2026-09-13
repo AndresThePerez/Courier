@@ -46,7 +46,10 @@ html, body {
   flex: 0 0 auto;
 }
 
-#brand { color: var(--accent); font-weight: 600; letter-spacing: 0.04em; }
+/* #brand is an h1 for the document outline. The explicit size and zero
+   margin are what keep it looking like the topbar wordmark it is, because a
+   bare h1 would take the user agent's 2em and its block margins. */
+#brand { color: var(--accent); font-weight: 600; letter-spacing: 0.04em; font-size: 14px; margin: 0; }
 #target-label, #run-state { color: var(--muted); font-size: 12px; }
 #run-state.is-live { color: var(--accent); }
 #sidebar-toggle {

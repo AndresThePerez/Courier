@@ -4,14 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Courier</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231a1d24'/%3E%3Cpath d='M3 5.5 8 9l5-3.5M3 5.5v5.6c0 .5.4.9.9.9h8.2c.5 0 .9-.4.9-.9V5.5c0-.5-.4-.9-.9-.9H3.9c-.5 0-.9.4-.9.9z' fill='none' stroke='%237aa2f7' stroke-width='1.2'/%3E%3C/svg%3E">
+<meta name="description" content="A Postman-style API test runner and load tester in a single Go binary: curated collections, declarative assertions, a worker-pool load engine with SLO verdicts, live results over SSE, and pure-Go PDF reports.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Courier">
+<meta property="og:description" content="Find the breaking point: a measured saturation curve, live results over SSE, and SLO verdicts, from a load tester that never accepts a target URL from the client.">
+<meta property="og:url" content="https://courier.andrestheperez.com/">
+<!-- The card image is the repository's own hero shot. It is referenced rather
+     than embedded because the binary serves only the four assets web/embed.go
+     names, and half a megabyte of PNG is not worth adding to that list for a
+     link preview. -->
+<meta property="og:image" content="https://raw.githubusercontent.com/AndresThePerez/Courier/main/docs/hero.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231a1d26'/%3E%3Cpath d='M3 5.5 8 9l5-3.5M3 5.5v5.6c0 .5.4.9.9.9h8.2c.5 0 .9-.4.9-.9V5.5c0-.5-.4-.9-.9-.9H3.9c-.5 0-.9.4-.9.9z' fill='none' stroke='%23ff7a45' stroke-width='1.2'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <div id="app">
   <header id="topbar">
     <button id="sidebar-toggle" type="button" aria-label="Toggle sidebar">&#9776;</button>
-    <span id="brand">Courier</span>
+    <h1 id="brand">Courier</h1>
     <span id="target-label"></span>
     <span id="run-state"></span>
   </header>
@@ -43,7 +54,7 @@
       </p>
     </aside>
 
-    <section id="panel-main">
+    <main id="panel-main">
       <nav id="tabs" class="tabs">
         <button id="tab-runner" type="button" class="tab">Runner</button>
         <button id="tab-editor" type="button" class="tab">Request</button>
@@ -214,7 +225,7 @@
         </div>
        </div>
       </div>
-    </section>
+    </main>
 
     <aside id="panel-rail">
       <section class="rail-section">
