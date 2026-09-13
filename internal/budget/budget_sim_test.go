@@ -125,7 +125,15 @@ func drive(t *testing.T, b *Bucket, c *clock, horizon time.Duration, next func(i
 		c.Advance(a.dur)
 		cost := float64(a.workers) * a.dur.Seconds()
 		res.consumed += cost
-		b.Spend(cost)
+		// A gated attempt is a run and charges Spend, which opens the cooldown.
+		// An ungated attempt is an /api/send and charges Debit, which does not.
+		// Charging Spend for both proved the bound against a method the server
+		// never calls on that path.
+		if a.gated {
+			b.Spend(cost)
+		} else {
+			b.Debit(cost)
+		}
 	}
 
 	res.elapsed = c.t.Sub(start)

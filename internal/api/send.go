@@ -15,6 +15,10 @@ import (
 // for stored history, wrong for the one response a visitor is actively
 // inspecting. 256KB covers every catalog endpoint's largest honest answer while
 // still bounding a hostile target.
+//
+// It is the response-preview cap and is deliberately the same number as
+// MaxBodyBytes, the request-body cap in this package: two limits that mean
+// different things and happen to share a value, not one limit written twice.
 const SendBodyMax = 256 << 10
 
 // sendResult is the editor's Send response: one request, one response, and the

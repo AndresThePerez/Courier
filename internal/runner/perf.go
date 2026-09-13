@@ -80,6 +80,15 @@ func RunPerformance(ctx context.Context, ex *Executor, rr sandbox.RunRequest, em
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
+			// Defers run last-in-first-out, so this recovers before wg.Done
+			// reports the worker finished. A panicking worker used to take the
+			// process down, because the recover in manager.execute covers only
+			// the run goroutine. The run continues with one fewer worker and
+			// nothing synthetic enters the tally: a failure the target never
+			// caused must not appear in its numbers.
+			defer func() {
+				_ = recover()
+			}()
 			// Worker w starts at its own offset and advances round-robin, so a
 			// two-request sequence still spreads load across both.
 			i := w % len(seq)
