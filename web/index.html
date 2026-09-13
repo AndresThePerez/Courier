@@ -22,7 +22,7 @@
 <div id="app">
   <a class="skip-link" href="#panel-main">Skip to the runner</a>
   <header id="topbar">
-    <button id="sidebar-toggle" type="button" aria-label="Toggle sidebar">&#9776;</button>
+    <button id="sidebar-toggle" type="button" aria-label="Toggle sidebar" aria-expanded="false" aria-controls="panel-sidebar">&#9776;</button>
     <h1 id="brand">Courier</h1>
     <span id="target-label"></span>
     <span id="run-state"></span>
@@ -32,7 +32,7 @@
     <aside id="panel-sidebar">
       <section class="rail-section">
         <h2 class="rail-heading">Collections</h2>
-        <nav id="collections-tree" class="tree"></nav>
+        <nav id="collections-tree" class="tree" aria-label="Curated collections"></nav>
       </section>
 
       <section class="rail-section">
@@ -56,13 +56,13 @@
     </aside>
 
     <main id="panel-main" tabindex="-1">
-      <nav id="tabs" class="tabs">
-        <button id="tab-runner" type="button" class="tab">Runner</button>
-        <button id="tab-editor" type="button" class="tab">Request</button>
-        <button id="tab-results" type="button" class="tab">Results</button>
+      <nav id="tabs" class="tabs" role="tablist" aria-label="Panels">
+        <button id="tab-runner" type="button" class="tab" role="tab" aria-selected="true" aria-controls="panel-runner">Runner</button>
+        <button id="tab-editor" type="button" class="tab" role="tab" aria-selected="false" aria-controls="panel-editor">Request</button>
+        <button id="tab-results" type="button" class="tab" role="tab" aria-selected="false" aria-controls="panel-results">Results</button>
       </nav>
 
-      <div id="panel-runner" class="panel">
+      <div id="panel-runner" class="panel" role="tabpanel" aria-labelledby="tab-runner">
        <div class="panel-inner">
         <section id="knee-panel" class="knee">
           <h3 class="block-heading">Find the breaking point</h3>
@@ -97,7 +97,7 @@
        </div>
       </div>
 
-      <div id="panel-editor" class="panel">
+      <div id="panel-editor" class="panel" role="tabpanel" aria-labelledby="tab-editor">
        <div class="panel-inner">
         <p id="editor-empty" class="note">Pick a request in the sidebar to open it here.</p>
 
@@ -148,10 +148,14 @@
        </div>
       </div>
 
-      <div id="panel-results" class="panel">
+      <div id="panel-results" class="panel" role="tabpanel" aria-labelledby="tab-results">
        <div class="panel-inner">
         <div class="results-head">
-          <div id="results-summary" class="results-summary"></div>
+          <!-- The summary and the live counters are the two nodes a screen reader
+               should hear during a run. The row list is deliberately silent: a
+               fifty-row run would read out fifty times, and the summary already
+               carries the count. -->
+          <div id="results-summary" class="results-summary" role="status" aria-live="polite" aria-atomic="false"></div>
           <!-- The renderer and its route arrive in Task 19; the link points at
                the route that task specifies. target=_blank so a visitor who
                clicks it early does not lose the page they are reading, and no
@@ -173,7 +177,7 @@
               <span id="perf-rps" class="gauge-value mono">0</span>
             </div>
           </div>
-          <p id="perf-counters" class="note mono"></p>
+          <p id="perf-counters" class="note mono" aria-live="polite"></p>
           <p class="note">
             Percentiles are computed once, after the run, over the samples the aggregator owns
             &mdash; there are deliberately none mid-run.
