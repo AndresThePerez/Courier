@@ -45,6 +45,9 @@ var requiredIDs = []string{
 	"start-run", "cancel-run", "watch-run", "start-note",
 	"run-status-banner", "cooldown-countdown",
 
+	// load budget ledger in the run rail
+	"ledger", "ledger-fill", "ledger-value", "ledger-note",
+
 	// results — shared header and the live transport's own note
 	"results-empty", "results-summary", "download-pdf", "transport-note",
 

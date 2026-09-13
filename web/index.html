@@ -299,7 +299,7 @@
         <p id="ledger-note" class="note mono"></p>
         <p class="note">
           Every run is priced in worker-seconds and charged to this bucket, which
-          refills at 5 per second and holds at most 1500, exactly one maximum run.
+          refills at 5 per second and holds at most 1500, exactly one nominal maximum run.
           Sustained load therefore cannot exceed 5 of 50 worker-seconds per second,
           a 10% duty cycle, under any traffic shape: that bound is proven by a
           simulator in the repository rather than asserted here. This is admission
