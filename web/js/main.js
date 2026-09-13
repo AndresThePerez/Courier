@@ -13,8 +13,8 @@ import * as results from './render-results.js';
 const TABS = ['runner', 'editor', 'results'];
 
 // StatusPollMs is stated once, here, so N idle tabs share one cadence instead
-// of each inventing their own. The Design Spec sets it at 3s; a competing 5s
-// figure was not adopted, because the spec is authoritative (see docs/deviations.md N26).
+// of each inventing their own. 3s is the documented figure; a competing 5s
+// figure was not adopted, because the documented one is authoritative (see docs/deviations.md N26).
 const StatusPollMs = 3000;
 
 function currentTab() {
