@@ -42,6 +42,11 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Vet and compile the tagged acceptance matrix
+        run: |
+          go vet -tags acceptance ./...
+          go test -c -tags acceptance -o /dev/null ./internal/acceptance/
+
       - name: Test (race detector)
         run: go test -race ./...
 
