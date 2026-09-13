@@ -3,7 +3,7 @@
   --bg: #12141a;
   --panel: #1a1d26;
   --panel-2: #20242f;
-  --line: #2a2f3d;
+  --line: #626e88;   /* lifted to clear WCAG 1.4.11's 3:1 for component borders against --panel; same blue-grey family as the rest of the ramp */
   --text: #e6e8ef;
   --muted: #9aa1b4;
   --accent: #ff7a45;
