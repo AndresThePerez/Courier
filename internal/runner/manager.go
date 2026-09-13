@@ -235,6 +235,12 @@ func (m *Manager) Start(ctx context.Context, rr sandbox.RunRequest) (string, err
 // A panic must never wedge the lock. Every exit path — normal, cancelled,
 // expired, panicking — reaches m.finish, which is what keeps the lock, the
 // history ring, and the cooldown from drifting apart.
+//
+// The claim covers the run goroutine. A panicking performance worker is
+// recovered in perf.go, so it costs the run one worker rather than the whole
+// process. A panic in the aggregator goroutine still ends the process, and
+// that is deliberate: recovering there would mean handing back synthetic
+// tallies to unblock the run, publishing numbers nothing measured.
 func (m *Manager) execute(ctx context.Context, id string, clean sandbox.RunRequest) (res Result) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -340,10 +346,14 @@ func (m *Manager) Cancel(id string) error {
 // Status reports the lifecycle plus the budget's view of when a run may next
 // start.
 func (m *Manager) Status() Status {
+	// The bucket is read under the same lock as the lifecycle, not after it.
+	// Composing a locked read with two unlocked ones let a run finishing in the
+	// window report running:true beside a cooldown finish had already set,
+	// which is exactly the torn /api/status read this type's own comment
+	// promises not to produce.
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	st := m.st
-	m.mu.Unlock()
-
 	st.BudgetBalance = m.bucket.Balance()
 	if until := m.bucket.CooldownUntil(); until.After(m.now()) {
 		st.CooldownUntil = &until
