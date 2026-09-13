@@ -224,3 +224,217 @@ numbered entry in [`docs/deviations.md`](deviations.md) — what the plan said, 
 does, and why, from N1 (dev-target port) through the budget reading (N10),
 SSE wire decisions (N22), and the PDF's determinism mechanics (N30). The log
 exists so no future session rediscovers a decision the hard way.
+
+---
+
+## Try it in 60 seconds
+
+*The README keeps a four-step summary of this walkthrough; "the table above" is its
+[numbers table](../README.md#the-numbers).*
+
+Open the [live demo](https://courier.andrestheperez.com), then:
+
+1. Expand **01 — Search Basics** in the sidebar and click **Add all to run**, then
+   **Start Run** — watch functional results stream in live, row by row, each with its
+   assertion outcomes.
+2. Switch the mode to **Performance** and press **10 workers - the knee** in the
+   **Find the breaking point** panel, which loads the same five-request sequence
+   the table above was measured with. Start it and watch the live counters, then
+   the verdict, SLA ladder, Apdex and histogram render from the finished report.
+   Then climb to 25 or 50 workers and watch the verdict flip: that is the knee,
+   and the flip is the point of having a gate at all.
+3. Open any request in the editor, change a parameter, and **Send** it. Try an illegal
+   value (`page_size=abc`) — the field-naming `400` that comes back is the target's
+   strict contract, surfaced verbatim. Courier's own sandbox sits in front of it:
+   param *keys* are chosen from each endpoint's server-provided allowlist, and anything
+   outside it is refused before a byte reaches the target. Editing a built-in request
+   forks a private copy into **My Workspace** (fork-on-write; the curated tree never
+   mutates).
+4. Expand **05 — Randomized Traffic**: those params are template variables —
+   `{{randomWord}}` and `{{randomPokemon}}` resolve to a fresh random value for
+   every dispatched request, so a performance run queries something different
+   each iteration. Note their loose assertions next to the exact totals the
+   curated searches pin: assertions are per-request choices, editable in the
+   Request tab.
+
+---
+
+## Architecture
+
+Routes are registered with method-scoped patterns, so the verb is part of the contract.
+`pprof` is deliberately *not* on this mux — it gets its own loopback-only listener.
+`SIGINT` and `SIGTERM` start a graceful shutdown whose order is the whole trick: the
+in-flight run is cancelled first, which bounds the drain by one request instead of a
+whole run and releases the SSE handlers, and only then does the HTTP server stop, since
+a live stream is an active handler by design and would otherwise hold it open forever.
+
+---
+
+## Design decisions
+
+- **The server never accepts a URL from the client.** A run payload is
+  `{endpoint_id, params, assertions}`; the target is fixed at startup and paths come
+  from a closed server-side catalog with per-endpoint parameter allowlists. Curated and
+  visitor-edited requests pass identical validation. A load tester that takes a target
+  URL from the browser is a DDoS cannon with a nice UI — this one physically cannot be.
+- **The cooldown is a load budget** — a token bucket in worker-seconds (refill 5/s,
+  burst 1500, 5s floor). Sustained load provably converges to `R / max_workers` = a
+  **10.0% duty cycle** under every adversarial shape; the in-repo simulator
+  (`go test ./internal/budget/ -run Sim`) measures 10.03% for max-runs, cancel-spam,
+  and interleaved traffic, and **0.75%** for the curated happy path. Cancels cost
+  exactly what they consumed; honest visitors never leave the 5s floor. This is the
+  admission control layer, and it sits in one place: a run is admitted only when the
+  bucket can pay for the worker-seconds it asks for, and is refused with its
+  `cooldown_until` when it cannot.
+- **Walk me through the concurrency:** two contexts per run (the dispatch deadline
+  never cancels an in-flight request — that would turn honest tail latency into fake
+  transport errors); N workers fan results into one channel; **a single aggregator
+  goroutine owns all run state** — no atomics, no mutexes, no torn snapshots. Share
+  memory by communicating, one owner per piece of state.
+- **Aborted is a category, not an error.** Requests killed by Courier's own
+  cancel/deadline/shutdown are attributed to Courier, never to the target — so a
+  visitor pressing Cancel cannot manufacture a failing verdict. Cancelled and expired
+  runs render **"N/A — partial data"** instead of a verdict computed from a truncated
+  sample, and a completed run whose sequence is not the calibrated five-request
+  `search-basics` collection renders a plain N/A with a reason naming that calibration,
+  withholding only the judgement. The invariant `requests == ok + errors + aborted` is
+  tested.
+- **Live updates degrade, never lie.** SSE first (2s heartbeat, a 512-entry replay log
+  on subscribe, so a mid-run spectator repaints complete state from the replay log); a
+  slow subscriber is disconnected and self-heals via replay rather than silently losing
+  rows; past the 100-subscriber cap the server answers `503 {"poll":true}`. Both of
+  those are backpressure, and both put the cost on the reader: a subscriber that cannot
+  keep up, or one subscriber too many, never slows the run or bends its numbers. A
+  transport error then hands the run to 500ms polling of the same report shape for the
+  rest of the run, because the shipped client routes every `EventSource` error to the
+  fallback and closes the source; the replay log is what the server guarantees a fresh
+  subscriber, not a reconnect the browser performs. Both transports feed one
+  reducer — no render code knows which is active. SSE meets the Cloudflare tunnel at
+  deploy; the fallback exists because buffering there would otherwise kill live
+  results outright.
+- **The transport is tuned for measurement:** `MaxIdleConnsPerHost` ≥ worker count
+  (Go's default of 2 would thrash connections and distort latency), every body drained
+  to `io.Discard` so connections are reused, latency measured to end-of-body in both
+  modes so the numbers are comparable with `hey`.
+- **One direct dependency** (`go-pdf/fpdf`), stdlib for everything else — including
+  the SSE broadcaster, the token bucket, the histogram, and the frontend (vanilla ES
+  modules served from `embed.FS`).
+
+---
+
+## Observability
+
+Courier instruments itself, not only its target. `/metrics` is a curated expvar
+map (no `cmdline`, no `memstats`: a public demo should not hand out its own
+command line), and pprof binds loopback-only and **refuses** any other address
+rather than quietly publishing process memory. Every engine log line for a run
+that started is structured JSON carrying an `event` name and a `run_id`, so one
+`jq` filter returns a single run's complete story including the admission
+decision and the budget arithmetic behind its cooldown. Requests that arrive
+through the edge log its request id, so a visitor's report can be joined to a
+server log line.
+
+What is deliberately absent, since the honest version of an observability story
+includes its limits: no metrics history (every counter resets on redeploy and the
+twenty-run history ring is in memory), no Prometheus exposition format, no
+scrape target, no tracing, and no alerting. For a single binary with one direct
+dependency that is the right amount; it is named here rather than left for a
+reader to notice.
+
+---
+
+## Caps
+
+Server-enforced regardless of client input. Structural violations are **rejected**;
+numeric knobs are **clamped**.
+
+The table of values stays in [the README](../README.md#caps).
+
+---
+
+## Engine overhead
+
+Courier measures a target, so its own cost has to be small enough not to be part of
+the measurement. `go test -bench` numbers on a Ryzen 5800X:
+
+| Operation | Cost | Allocations |
+|---|---|---|
+| Per-dispatch engine overhead, performance mode (`DispatchDrain` − bare-client baseline) | **~1.8 µs** | +11 |
+| Fan-in aggregator, record one result | 115 ns | 0 |
+| JSON path lookup, shallow (`$.total`) | 132 ns | 1 |
+| JSON path lookup, deep (`$.results[23].attacks[0].cost[3]`) | 661 ns | 3 |
+| Assertion evaluation, `status` / `latency` | 131 / 143 ns | 2 / 4 |
+| Assertion evaluation, `json` ops | 245–511 ns | 4–7 |
+| Assertion evaluation, `body_contains` (body folded once at decode) | 284 ns | 4 |
+| Decode + fold one 36KB search response (`NewTarget`) | 438 µs | 5,998 |
+| **Full functional request: decode + 20 assertions at the cap** | **452 µs** | 6,141 |
+| Percentile over 1k / 18k / 100k samples | 1.7 ns (O(1)) | 0 |
+| `ComputeStats` over 18k samples (sort + percentiles + ladder + Apdex + histogram) | 1.06 ms | 6 |
+| Record one response into a `Tally` | 31 ns | 0 |
+
+Reading them: a functional request costs ~452 µs of Courier against 1–30 ms of network
+and target time. **Performance mode does none of that work** — no assertion evaluation,
+bodies straight to `io.Discard` — which is what the 1.8 µs figure measures, about
+0.007% of a real 25ms request at 50 workers.
+
+**Whole-process footprint during a maximum run** (50 workers × 30s, 20,624 requests
+against the live target, measured from `/proc`): **3.3 CPU-seconds — about 10% of one
+core** (~160 µs of total process CPU per request, kernel networking and SSE included)
+and a **peak RSS of 20 MB**. That is the co-hosting cost the Host decision discloses:
+running the tester next to the target spends a tenth of a core and twenty megabytes.
+
+---
+
+## What happens when the target dies
+
+Evidence, not claims, because reliability asserted is reliability unmeasured. This is a
+chaos drill: during a 10-worker 15-second run the target process was SIGKILLed at the
+5-second mark, on purpose. The run **completed cleanly at its full duration** —
+974,606 dispatches accounted as 5,910 ok + 968,696 errors + 0 aborted (the invariant
+holds), every failure attributed as a `connection` error with status `0 (transport
+error)`, Apdex 0.006, verdict FAIL at a 99.39% error rate. No phantom aborts, no wedged
+lock (`/api/status` returned `running:false` immediately after), history intact, and the
+next run — target restored — passed at 100% 2xx without restarting Courier. The saved
+report, the rendered dashboard screenshot, and the drill notes are in
+[docs/failure-story/](failure-story/).
+
+---
+
+## Closed-loop honesty note
+
+Courier is a **closed-loop** tester: workers wait for each response before issuing the
+next, like `hey`, not open-loop fixed-rate like `vegeta`. Under saturation this
+understates tail latency (coordinated omission). That is a fine trade for this
+demonstration, and it is stated plainly here and in the report footer rather than
+quietly assumed. Tester and target also share one host over the internal network —
+Courier's per-request work is measured above precisely so that contention stays
+disclosed rather than hidden in the target's numbers.
+
+---
+
+## Running locally
+
+*The commands these notes annotate stay in the README's
+[Running locally](../README.md#running-locally) section.*
+
+Courier needs a target to point at. Any HTTP service that serves the endpoint catalog's
+paths will do — the live demo uses PokéSearch. Note that the curated collections'
+assertions are pinned to the 20,324-card PokéSearch index, so against a different target
+the app runs fine but those assertions will fail; edit them in the Request tab, or read
+the run as a load test rather than a functional one.
+
+Any free port works; these examples use `8084` to match the port the Compose files
+publish.
+
+Container:
+
+The base file publishes `${APP_PORT:-8084}:8080`; the dev overlay points the container
+at a host-side target via `host.docker.internal` (see [docs/deviations.md](deviations.md) N31 for the Compose
+deep-merge and firewalld caveats).
+
+The runtime stage is distroless (`gcr.io/distroless/static-debian12:nonroot`, pinned by
+digest and running as uid 65532): no shell, no package manager, nothing to exec into.
+The static binary it copies in measures **11.8 MB** here
+(`CGO_ENABLED=0 go build -trimpath -o /tmp/courier-size ./cmd/server` on the dev
+workstation), so the image is that plus the distroless base, which is the honest way to
+state it when nothing in this repository measures an image.
