@@ -149,7 +149,7 @@ func (s *Server) routes(static fs.FS) {
 	s.mux.HandleFunc("GET /api/runs/{id}/stream", s.handleStream)
 	s.mux.HandleFunc("GET /api/runs/{id}/report.pdf", s.handleReportPDF)
 
-	s.mux.Handle("GET /", http.FileServerFS(static))
+	s.mux.Handle("GET /", newStaticHandler(static))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
