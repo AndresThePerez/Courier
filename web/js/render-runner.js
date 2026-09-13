@@ -75,6 +75,7 @@ let sequenceNote = '';
 let startNote = '';
 let starting = false;
 let cancelling = false;
+let startedRunId = '';
 let ticker = null;
 let lastPhase = null;
 let kneeNote = '';
@@ -318,6 +319,7 @@ async function start() {
 function applyStartOutcome(outcome, mode) {
   if (outcome.ok) {
     startNote = '';
+    startedRunId = outcome.runId;
     adoptStatus({
       running: true,
       run_id: outcome.runId,
@@ -597,10 +599,16 @@ function renderControls(state) {
 
   const cancelBtn = byId('cancel-run');
   // Any visitor may cancel, spectators included: cancelling only ever reduces
-  // load, and a visitor watching a run they cannot stop is the worse of the two.
+  // load, and a visitor watching a run they cannot stop is the worse of the
+  // two. What changes here is only the presentation, because the button said
+  // nothing about whose measurement it ends.
+  const mine = Boolean(runId) && runId === startedRunId;
   cancelBtn.hidden = phase !== 'running' || !runId;
   cancelBtn.disabled = cancelling;
-  cancelBtn.title = runId ? `Stop run ${runId}` : '';
+  setText(cancelBtn, mine ? 'Cancel run' : 'Cancel this run');
+  cancelBtn.title = !runId ? ''
+    : mine ? `Stop run ${runId}`
+    : `Stop run ${runId}, which another visitor started`;
 
   const banner = byId('run-status-banner');
   const bannerText = bannerFor(state, phase);
