@@ -20,6 +20,7 @@
 </head>
 <body>
 <div id="app">
+  <a class="skip-link" href="#panel-main">Skip to the runner</a>
   <header id="topbar">
     <button id="sidebar-toggle" type="button" aria-label="Toggle sidebar">&#9776;</button>
     <h1 id="brand">Courier</h1>
@@ -54,7 +55,7 @@
       </p>
     </aside>
 
-    <main id="panel-main">
+    <main id="panel-main" tabindex="-1">
       <nav id="tabs" class="tabs">
         <button id="tab-runner" type="button" class="tab">Runner</button>
         <button id="tab-editor" type="button" class="tab">Request</button>
