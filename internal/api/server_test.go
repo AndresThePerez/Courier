@@ -91,3 +91,28 @@ func TestServesEmbeddedIndex(t *testing.T) {
 		t.Fatalf("index: status %d, %d bytes", rec.Code, rec.Body.Len())
 	}
 }
+
+// The README says the verb is part of the contract. It was, for /api/runs and
+// not for /api/send, which fell through to the file server and answered 404.
+func TestWrongVerbOnAnAPIPathAnswers405(t *testing.T) {
+	cases := []struct{ method, path, allow string }{
+		{http.MethodGet, "/api/send", "POST"},
+		{http.MethodPost, "/api/status", "GET, HEAD"},
+		{http.MethodPut, "/api/runs", "GET, HEAD, POST"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		testServer(t).ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s = %d, want 405", c.method, c.path, rec.Code)
+		}
+		if got := rec.Header().Get("Allow"); got != c.allow {
+			t.Errorf("%s %s Allow = %q, want %q", c.method, c.path, got, c.allow)
+		}
+	}
+	rec := httptest.NewRecorder()
+	testServer(t).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/nope", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /api/nope = %d, want 404", rec.Code)
+	}
+}

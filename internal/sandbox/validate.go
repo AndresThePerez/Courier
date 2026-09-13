@@ -18,8 +18,9 @@ const (
 // Payload caps. These bound what a *request body* may contain and are enforced
 // regardless of what the client sends.
 //
-// Lifecycle constants (the 120s functional deadline, the 10s cooldown floor)
-// belong to internal/runner, and the SLO constants belong to internal/report.
+// Lifecycle constants live with their behaviour, not here: the 120s functional
+// deadline is runner.FunctionalDeadline and the 5s cooldown floor is
+// budget.MinCooldown. The SLO constants belong to internal/report.
 // Each cap lives where its behaviour lives; this is not a grab-bag.
 const (
 	MaxSequence      = 50
@@ -126,7 +127,9 @@ func ValidateRequest(r Request) (Request, error) {
 	}
 
 	out := Request{
-		ID:       r.ID,
+		// ID is client-chosen and never read server-side, but the caps table
+		// says every string in a payload is bounded, so this one is too.
+		ID:       truncate(r.ID, MaxNameLen),
 		Name:     truncate(r.Name, MaxNameLen),
 		Endpoint: ep.ID,
 	}
