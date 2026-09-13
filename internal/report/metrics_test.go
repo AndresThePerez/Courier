@@ -363,3 +363,49 @@ func TestVerdictWithNoDispatches(t *testing.T) {
 		t.Errorf("verdict on an empty run = %q %v, want FAIL with a reason", v, reasons)
 	}
 }
+
+// The invariant README.md and docs/design.md both claim is tested: every
+// dispatch lands in exactly one of ok, error or aborted, so the three always
+// sum to the dispatch count. It was asserted only inside the build-tagged
+// acceptance matrix, which `go test ./...` skips, while this suite pinned the
+// components and never the sum.
+func TestDispatchAccountingInvariant(t *testing.T) {
+	cases := []struct {
+		name                              string
+		ok2xx, non2xx, transport, aborted int
+	}{
+		{"all clean", 100, 0, 0, 0},
+		{"non-2xx only", 0, 40, 0, 0},
+		{"transport only", 0, 0, 25, 0},
+		{"aborted only", 0, 0, 0, 12},
+		{"all four at once", 80, 10, 5, 5},
+		{"nothing dispatched", 0, 0, 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tal := newTally()
+			for i := 0; i < c.ok2xx; i++ {
+				tal.AddResponse(200, 10, 100)
+			}
+			for i := 0; i < c.non2xx; i++ {
+				tal.AddResponse(503, 4, 50)
+			}
+			for i := 0; i < c.transport; i++ {
+				tal.AddTransportFailure("timeout")
+			}
+			for i := 0; i < c.aborted; i++ {
+				tal.AddAborted()
+			}
+			st := ComputeStats(-1, "overall", tal, time.Second)
+
+			want := c.ok2xx + c.non2xx + c.transport + c.aborted
+			if st.Requests != want {
+				t.Fatalf("Requests = %d, want %d", st.Requests, want)
+			}
+			if got := st.OK + st.Errors + st.Aborted; got != st.Requests {
+				t.Errorf("ok + errors + aborted = %d (%d + %d + %d), want Requests = %d",
+					got, st.OK, st.Errors, st.Aborted, st.Requests)
+			}
+		})
+	}
+}
