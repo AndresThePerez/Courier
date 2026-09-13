@@ -9,7 +9,7 @@
 
 Courier is a Postman-style API test runner and load tester that ships as **one Go binary**: an embedded three-pane UI, curated request collections, a sequential **Functional** runner with declarative assertions, and a worker-pool **Performance** engine with fan-in aggregation. Results stream live over **SSE with reconnect replay and a polling fallback**, aggregate load is priced against a **token-bucket admission budget**, and any report exports as a single-page PDF rendered in pure Go. Stdlib everywhere, one direct dependency (the PDF writer), no frontend build step.
 
-The interesting constraint is that it is *public*. A load tester exposed to the internet is a DDoS cannon with a nice UI unless the design forbids it, so the server never accepts a URL from the client — a run payload is `{endpoint_id, params, assertions}` against a target fixed at startup and a closed server-side endpoint catalog. Sustained load is bounded in concurrency-seconds by a token-bucket budget whose 10% duty cycle is proven by an in-repo simulator rather than asserted; request volume is bounded only in proportion to target latency, because a dead target and a healthy one are charged the same worker-seconds and the dead one dispatches far more requests for them. Run state is owned by exactly one goroutine (no atomics, no mutexes, no torn snapshots), and Courier publishes its own per-dispatch overhead so you can see it is not part of the measurement.
+The interesting constraint is that it is *public*. A load tester exposed to the internet is a DDoS cannon with a nice UI unless the design forbids it, so the server never accepts a URL from the client — a run payload is `{endpoint_id, params, assertions}` against a target fixed at startup and a closed server-side endpoint catalog. Sustained load is bounded in worker-seconds by a token-bucket budget whose 10% duty cycle is proven by an in-repo simulator rather than asserted; request volume is bounded only in proportion to target latency, because a dead target and a healthy one are charged the same worker-seconds and the dead one dispatches far more requests for them. Run state is owned by exactly one goroutine (no atomics, no mutexes, no torn snapshots), and Courier publishes its own per-dispatch overhead so you can see it is not part of the measurement.
 
 ![Courier's three-pane UI: collections sidebar, the Find the breaking point panel with the measured knee curve, and the run configuration pane](docs/hero.png)
 
@@ -202,11 +202,12 @@ run payload influence the host is a design violation, not a bug.
 Courier instruments itself, not only its target. `/metrics` is a curated expvar
 map (no `cmdline`, no `memstats`: a public demo should not hand out its own
 command line), and pprof binds loopback-only and **refuses** any other address
-rather than quietly publishing process memory. Every engine log line is
-structured JSON carrying an `event` name and a `run_id`, so one `jq` filter
-returns a single run's complete story including the admission decision and the
-budget arithmetic behind its cooldown. Requests that arrive through the edge log
-its request id, so a visitor's report can be joined to a server log line.
+rather than quietly publishing process memory. Every engine log line for a run
+that started is structured JSON carrying an `event` name and a `run_id`, so one
+`jq` filter returns a single run's complete story including the admission
+decision and the budget arithmetic behind its cooldown. Requests that arrive
+through the edge log its request id, so a visitor's report can be joined to a
+server log line.
 
 What is deliberately absent, since the honest version of an observability story
 includes its limits: no metrics history (every counter resets on redeploy and the

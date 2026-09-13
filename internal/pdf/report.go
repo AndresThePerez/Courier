@@ -4,8 +4,8 @@
 // and fpdf's core Helvetica is the only typeface it uses. That is the whole
 // reason the one dependency in go.mod is worth having.
 //
-// Scope is Amendment A1: one page, always. Header, verdict, summary stats,
-// latency percentiles, and the SLA ladder as text rows. No histogram bars, no
+// Scope is one page, always. Header, verdict, summary stats, latency
+// percentiles, and the SLA ladder as text rows. No histogram bars, no
 // per-request performance breakdown, no second page — every list is truncated
 // with an "and N more" line rather than allowed to flow. Auto page breaks are
 // switched off, so the room checks in this file are the layout, not a hint.
@@ -288,7 +288,7 @@ func (d *doc) performance() {
 	}, ink, "", 9)
 	d.y += 3
 
-	// A1 keeps the ladder, as text rows: no bars to draw, and the numbers are
+	// The ladder stays, as text rows: no bars to draw, and the numbers are
 	// the point.
 	d.section("SLA ladder")
 	// A report stored before the gate was recorded has a zero SLO. Print the
