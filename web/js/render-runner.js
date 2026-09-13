@@ -653,6 +653,7 @@ function renderLedger(state) {
   const note = byId('ledger-note');
   if (balance === null) {
     fill.style.width = '0%';
+    fill.className = 'bar-fill';
     setText(value, '-');
     setText(note, 'Waiting for the server to report the balance.');
     return;
