@@ -13,8 +13,30 @@ export function init(h) {
 
   byId('reset-workspace').addEventListener('click', showResetConfirm);
   byId('sidebar-toggle').addEventListener('click', () => {
-    byId('app').classList.toggle('sidebar-open');
+    const open = byId('app').classList.toggle('sidebar-open');
+    setDrawer(open);
   });
+  // The drawer starts closed. Above 900px it is a pane rather than a drawer,
+  // so the media query is read rather than assumed, and it is re-read on a
+  // change so a rotation or a resize cannot leave the panel inert while it is
+  // visible.
+  window.matchMedia('(max-width: 900px)').addEventListener('change', () => {
+    setDrawer(byId('app').classList.contains('sidebar-open'));
+  });
+  setDrawer(false);
+}
+
+// setDrawer keeps the off-screen drawer out of the tab order and the toggle's
+// aria-expanded truthful. Below 900px a closed drawer is translated fully off
+// the left edge but still in the document, so without inert a keyboard or
+// switch user walks eleven invisible controls before reaching the tabs.
+function setDrawer(open) {
+  const drawer = byId('panel-sidebar');
+  const hidden = window.matchMedia('(max-width: 900px)').matches && !open;
+  drawer.inert = hidden;
+  if (hidden) drawer.setAttribute('aria-hidden', 'true');
+  else drawer.removeAttribute('aria-hidden');
+  byId('sidebar-toggle').setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 // showResetConfirm renders an inline two-step confirm. Deliberately not
