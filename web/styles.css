@@ -113,7 +113,7 @@ html, body {
 .collection > summary::-webkit-details-marker { display: none; }
 .collection-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge {
-  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
   border: 1px solid var(--line); border-radius: 3px; padding: 0 0.25rem; color: var(--muted);
 }
 .collection-body { padding: 0 0.35rem 0.35rem; display: flex; flex-direction: column; gap: 0.1rem; }
@@ -498,8 +498,11 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
    rails plus padding narrower: at 1440px the pane is 812px, the first width
    where the curve still gets 450px - 80% of its native 560 - after the table
    takes its floor. Below that the chart shrinks to an unreadable stamp, so
-   the single-column flow narrow screens already had is the better layout. */
-@media (max-width: 1440px) {
+   the single-column flow narrow screens already had is the better layout.
+   max-width is inclusive, so the bound is 1439 and not 1440: the width the
+   arithmetic above picks out is the first one that gets both columns, not the
+   last one that loses them. docs/hero.png shows that arrangement. */
+@media (max-width: 1439px) {
   .knee-grid { grid-template-columns: 1fr; }
   .knee-curve { max-width: 560px; }
   #knee-table { max-width: 560px; }
