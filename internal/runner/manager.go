@@ -192,7 +192,7 @@ func (m *Manager) Start(ctx context.Context, rr sandbox.RunRequest) (string, err
 	case sandbox.ModeFunctional:
 		rep.Functional = &report.Functional{Total: len(clean.Sequence), Results: []report.RequestResult{}}
 	default:
-		rep.Performance = &report.Performance{Verdict: report.VerdictNA, PerRequest: []report.Stats{}}
+		rep.Performance = &report.Performance{Verdict: report.VerdictNA, PerRequest: []report.Stats{}, SLO: report.DemoSLO()}
 	}
 
 	runCtx, abort := context.WithCancelCause(ctx)
