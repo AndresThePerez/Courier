@@ -57,10 +57,14 @@ type Options struct {
 // Server is Courier's http.Handler. It owns the executor, the run manager, and
 // the SSE broadcaster, so a process has exactly one of each.
 type Server struct {
-	mux  *http.ServeMux
-	opts Options
-	log  *slog.Logger
-	now  func() time.Time
+	mux *http.ServeMux
+	// handler is the mux with its middleware already wrapped around it, built
+	// once at construction. ServeHTTP is the only entry point, so this is the
+	// whole composition point for anything that has to see every route.
+	handler http.Handler
+	opts    Options
+	log     *slog.Logger
+	now     func() time.Time
 
 	ex  *runner.Executor
 	bus *sse.Broadcaster
@@ -121,6 +125,7 @@ func New(static fs.FS, opts Options) *Server {
 	s.metrics = newMetrics()
 	s.mgr = runner.NewManagerAt(ex, opts.TargetDisplay, meteredBus{bus, s.metrics}, log, now)
 	s.routes(static)
+	s.handler = secureHeaders(s.mux)
 	return s
 }
 
@@ -147,7 +152,7 @@ func (s *Server) routes(static fs.FS) {
 	s.mux.Handle("GET /", http.FileServerFS(static))
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 // Manager exposes the run manager for wiring and tests. Handlers reach it
 // directly; nothing outside this package needs it for anything else.
