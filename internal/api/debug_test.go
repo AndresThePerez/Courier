@@ -39,7 +39,7 @@ func TestPprofRefusesToBindOffTheBox(t *testing.T) {
 	for _, addr := range []string{
 		"0.0.0.0:0",     // every interface, the mistake this guard exists for
 		":0",            // the same mistake, in the shape a copied snippet has
-		"192.0.2.10:0",   // a real LAN address
+		"192.0.2.10:0",  // a non-loopback address (RFC 5737 documentation range)
 		"example.com:0", // a name that is not localhost
 		"garbage",       // not host:port at all
 	} {
