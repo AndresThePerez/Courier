@@ -390,8 +390,13 @@ function renderLadder(sla) {
   ]);
 }
 
+// The middle rung is the verdict's own gate, so it carries the warn hue, and
+// the 300ms rung is past it. The 50ms rung is the satisfied band and stays on
+// the accent.
+const LadderTone = { 'under 50ms': '', 'under 150ms': ' is-warn', 'under 300ms': ' is-fail' };
+
 function ladderBar(label, pct) {
-  const fill = el('div', { class: 'bar-fill' });
+  const fill = el('div', { class: `bar-fill${LadderTone[label] || ''}` });
   fill.style.width = `${clampPct(pct)}%`;
   return el('div', { class: 'bar-row' }, [
     el('span', { class: 'bar-label', text: label }),
@@ -410,7 +415,7 @@ function renderApdex(apdex) {
   replace(byId('apdex-block'), [
     el('div', { class: 'apdex-head' }, [
       el('span', { class: 'apdex-score mono', text: (apdex.score || 0).toFixed(3) }),
-      el('span', { class: 'apdex-rating', text: apdex.rating || '-' }),
+      el('span', { class: `apdex-rating${apdexTone(apdex.rating)}`, text: apdex.rating || '-' }),
     ]),
     el('p', {
       class: 'note mono',
@@ -421,6 +426,23 @@ function renderApdex(apdex) {
       text: 'Satisfied at or under 50ms, tolerating at or under 200ms. Every non-2xx and every transport failure counts as frustrated however fast it was; dispatches Courier aborted are not counted at all.',
     }),
   ]);
+}
+
+// The five rating words come from report.ApdexRating, so the mapping lives
+// here rather than being re-derived from the score.
+function apdexTone(rating) {
+  switch (rating) {
+    case 'Excellent':
+    case 'Good':
+      return ' is-good';
+    case 'Fair':
+      return ' is-fair';
+    case 'Poor':
+    case 'Unacceptable':
+      return ' is-poor';
+    default:
+      return '';
+  }
 }
 
 const LatencyKeys = [
@@ -444,7 +466,11 @@ function renderLatency(latency) {
 function renderHistogram(buckets) {
   const max = buckets.reduce((m, b) => Math.max(m, b.count || 0), 0);
   replace(byId('histogram'), buckets.map((b) => {
-    const fill = el('div', { class: 'bar-fill' });
+    // A bucket that straddles the gate is a warning and one entirely past it
+    // is a failure. to === 0 is the unbounded top bucket.
+    const gate = 150;
+    const tone = (b.to === 0 || b.from >= gate) ? ' is-fail' : (b.to > gate ? ' is-warn' : '');
+    const fill = el('div', { class: `bar-fill${tone}` });
     fill.style.width = `${max > 0 ? (100 * (b.count || 0)) / max : 0}%`;
     return el('div', { class: 'bar-row' }, [
       el('span', { class: 'bar-label mono', text: b.label }),
