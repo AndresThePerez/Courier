@@ -383,6 +383,7 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
   background: var(--panel); overflow: hidden;
 }
 .res-row.is-off { border-left: 2px solid var(--fail); }
+.res-row.is-skipped { border-left: 2px solid var(--line); }
 .res-head {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
   padding: 0.35rem 0.5rem; cursor: pointer; list-style: none;
