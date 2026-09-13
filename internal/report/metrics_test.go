@@ -363,6 +363,13 @@ func TestVerdictWithNoDispatches(t *testing.T) {
 	if v != "FAIL" || len(reasons) == 0 {
 		t.Errorf("verdict on an empty run = %q %v, want FAIL with a reason", v, reasons)
 	}
+	// The guard order is load-bearing and N7 rests on it: a run
+	// with nothing to judge fails before the calibration check is reached, so
+	// an empty uncalibrated run is still a FAIL and not a withheld N/A.
+	// Swapping the two branches fails here.
+	if v, reasons := Verdict(ComputeStats(-1, "overall", newTally(), time.Second), false); v != VerdictFail || len(reasons) == 0 {
+		t.Errorf("uncalibrated empty run = %q %v, want %q with a reason: the no-dispatch guard runs first", v, reasons, VerdictFail)
+	}
 }
 
 // The invariant README.md and docs/design.md both claim is tested: every

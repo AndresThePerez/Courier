@@ -355,26 +355,32 @@ function renderDashboard(rep) {
   renderErrors(overall, perf.overrun_ms);
 }
 
+// Two different things send a verdict to N/A, and the badge must not confuse
+// them. A truncated run (cancelled or expired) has partial data: it stopped
+// early, so the marker line and the 'partial data' label belong to it alone. A
+// completed run of an uncalibrated sequence has complete data that no gate
+// describes, so its badge is a plain N/A and the server's reason says why.
 function renderVerdict(rep, perf) {
-  const partial = rep.status === 'cancelled' || rep.status === 'expired' || perf.verdict === 'N/A';
-  const verdict = partial ? 'N/A - partial data' : perf.verdict || 'N/A';
-  const tone = partial ? 'is-na' : (perf.verdict === 'PASS' ? 'is-pass' : 'is-fail');
+  const truncated = rep.status === 'cancelled' || rep.status === 'expired';
+  const withheld = truncated || perf.verdict === 'N/A';
+  const verdict = truncated ? 'N/A - partial data' : perf.verdict || 'N/A';
+  const tone = withheld ? 'is-na' : (perf.verdict === 'PASS' ? 'is-pass' : 'is-fail');
 
   const node = byId('verdict-badge');
   node.className = `verdict ${tone}`;
   replace(node, [
     el('div', { class: 'verdict-badge', text: verdict }),
     el('div', { class: 'verdict-body' }, [
-      partial && el('p', {
+      truncated && el('p', {
         class: 'verdict-marker',
         text: `${rep.status} after ${Math.round((rep.duration_ms || 0) / 1000)}s`,
       }),
       ...(perf.verdict_reasons || []).map((reason) => el('p', { class: 'verdict-reason', text: reason })),
-      partial && el('p', {
+      withheld && el('p', {
         class: 'note',
         text: 'The numbers below are descriptive and still real. Only the pass-or-fail judgement is withheld; the reason above says why.',
       }),
-      !partial && el('p', {
+      !withheld && el('p', {
         class: 'note',
         text: verdictNote(perf.slo),
       }),

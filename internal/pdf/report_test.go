@@ -296,6 +296,33 @@ func TestRenderWithholdsVerdictForPartialRuns(t *testing.T) {
 	}
 }
 
+// N35: a completed run of an uncalibrated sequence has complete numbers and no
+// judgement. The "partial data" label belongs to a truncated run, so putting it
+// on this band would contradict the reason printed right beside it.
+func TestRenderWithheldVerdictIsNotLabelledPartialData(t *testing.T) {
+	rep := fixturePerformanceReport()
+	rep.Status = report.StatusCompleted
+	rep.Performance.Verdict = report.VerdictNA
+	rep.Performance.VerdictReasons = []string{
+		"no verdict: the gate was calibrated on " + report.CalibrationDate +
+			" against the " + report.CalibrationSequence + " sequence, and this run dispatched a different one",
+	}
+
+	body := text(t, rep)
+	if !strings.Contains(body, "N/A") {
+		t.Error("a withheld verdict must still render the neutral N/A band")
+	}
+	if strings.Contains(body, "partial data") {
+		t.Error("a completed run's data is not partial; only the judgement is withheld")
+	}
+	if !strings.Contains(body, report.CalibrationSequence) {
+		t.Errorf("the withheld verdict must carry its reason, naming the %s sequence", report.CalibrationSequence)
+	}
+	if strings.Contains(body, "VERDICT: PASS") || strings.Contains(body, "VERDICT: FAIL") {
+		t.Error("an uncalibrated run rendered a PASS/FAIL verdict it did not earn")
+	}
+}
+
 func TestRenderFunctionalVerdict(t *testing.T) {
 	rep := fixtureFunctionalReport()
 	if body := text(t, rep); !strings.Contains(body, "VERDICT: FAIL") {
