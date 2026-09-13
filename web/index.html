@@ -288,6 +288,24 @@
         <p id="cooldown-countdown" class="countdown" hidden></p>
         <p id="start-note" class="note" hidden></p>
       </section>
+
+      <section class="rail-section" id="ledger">
+        <h2 class="rail-heading">Load budget</h2>
+        <div class="bar-row">
+          <span class="bar-label">Balance</span>
+          <div class="bar-track"><div id="ledger-fill" class="bar-fill"></div></div>
+          <span id="ledger-value" class="bar-value mono">-</span>
+        </div>
+        <p id="ledger-note" class="note mono"></p>
+        <p class="note">
+          Every run is priced in worker-seconds and charged to this bucket, which
+          refills at 5 per second and holds at most 1500, exactly one maximum run.
+          Sustained load therefore cannot exceed 5 of 50 worker-seconds per second,
+          a 10% duty cycle, under any traffic shape: that bound is proven by a
+          simulator in the repository rather than asserted here. This is admission
+          control, not a sleep.
+        </p>
+      </section>
     </aside>
   </div>
 </div>

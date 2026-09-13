@@ -449,6 +449,7 @@ export function render(state) {
   renderSequence(state);
   renderConfig(state);
   renderControls(state);
+  renderLedger(state);
 }
 
 function setText(node, value) {
@@ -633,6 +634,36 @@ function renderControls(state) {
     || (phase === 'idle' && selected === 0 ? 'Check at least one request to enable Start.' : '');
   note.hidden = !noteText;
   setText(note, noteText);
+}
+
+// Ledger. The three numbers are already public on /api/status and /metrics, so
+// drawing them changes nothing about exposure and a great deal about what a
+// visitor understands: the cooldown stops reading as a sleep and starts reading
+// as a balance. The two constants mirror internal/budget, the same way the
+// sequence caps above mirror internal/sandbox; the server is authoritative and
+// the page only has to draw what it was told.
+const BudgetRefill = 5;
+const BudgetBurst = 1500;
+
+function renderLedger(state) {
+  const s = state.status || {};
+  const balance = typeof s.budget_balance === 'number' ? s.budget_balance : null;
+  const fill = byId('ledger-fill');
+  const value = byId('ledger-value');
+  const note = byId('ledger-note');
+  if (balance === null) {
+    fill.style.width = '0%';
+    setText(value, '-');
+    setText(note, 'Waiting for the server to report the balance.');
+    return;
+  }
+  const pct = Math.min(Math.max((100 * balance) / BudgetBurst, 0), 100);
+  fill.style.width = `${pct}%`;
+  // Below zero the bucket is in debt and the next run waits for it to refill,
+  // which is the state the countdown above is already counting through.
+  fill.className = `bar-fill${balance <= 0 ? ' is-fail' : (pct < 25 ? ' is-warn' : '')}`;
+  setText(value, `${Math.round(balance)} w-s`);
+  setText(note, `${Math.round(balance)} of ${BudgetBurst} worker-seconds, refilling ${BudgetRefill}/s`);
 }
 
 function bannerFor(state, phase) {
