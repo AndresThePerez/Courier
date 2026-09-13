@@ -1,0 +1,17 @@
+# Two ecosystems, because the drift this file exists to stop happened in both:
+# the workflow's actions went three majors stale while the module's single
+# direct dependency sat unchecked. Grouped so a week of bumps is one pull
+# request rather than four.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"

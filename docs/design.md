@@ -65,9 +65,10 @@ rather than packet forwarding. It fixes all three failures at once:
 
 **The proof is executable and in-repo:** [`internal/budget/budget_sim_test.go`](../internal/budget/budget_sim_test.go)
 ports the adversarial simulation into a Go test **against the real budget
-implementation, not a model of it**, over a simulated ≥24-hour horizon per
-shape (simulated clock; it runs in normal CI time). Measured sustained duty
-cycles against the derived 10.0% bound:
+implementation, not a model of it**, driving the bucket through both of its
+charge paths (`Spend` for a run, `Debit` for a send), over a simulated
+≥24-hour horizon per shape (simulated clock; it runs in normal CI time).
+Measured sustained duty cycles against the derived 10.0% bound:
 
 | Traffic shape | Measured duty cycle |
 |---|---|

@@ -23,11 +23,19 @@ import (
 // MaxBodyBytes caps a request body. A run payload is 50 requests x 20
 // assertions of small JSON; a quarter of a megabyte is generous for that and
 // still bounds what an anonymous visitor can make the decoder allocate.
+//
+// It is the request-body cap and is deliberately the same number as
+// SendBodyMax, the response-preview cap in send.go: de-duplicating the two
+// would couple a request limit to a response limit.
 const MaxBodyBytes = 256 << 10
 
 // Log event names this package writes, in the same "event" + "run_id"
 // vocabulary internal/runner uses, so one jq filter reads the whole trail.
 const (
+	// EventRequestReceived carries the edge's own request id, so a visitor's
+	// report can be joined to a log line.
+	EventRequestReceived = "request_received"
+
 	// EventSendExecuted is one editor Send, with what it cost the ledger.
 	EventSendExecuted = "send_executed"
 
@@ -57,10 +65,14 @@ type Options struct {
 // Server is Courier's http.Handler. It owns the executor, the run manager, and
 // the SSE broadcaster, so a process has exactly one of each.
 type Server struct {
-	mux  *http.ServeMux
-	opts Options
-	log  *slog.Logger
-	now  func() time.Time
+	mux *http.ServeMux
+	// handler is the mux with its middleware already wrapped around it, built
+	// once at construction. ServeHTTP is the only entry point, so this is the
+	// whole composition point for anything that has to see every route.
+	handler http.Handler
+	opts    Options
+	log     *slog.Logger
+	now     func() time.Time
 
 	ex  *runner.Executor
 	bus *sse.Broadcaster
@@ -121,6 +133,7 @@ func New(static fs.FS, opts Options) *Server {
 	s.metrics = newMetrics()
 	s.mgr = runner.NewManagerAt(ex, opts.TargetDisplay, meteredBus{bus, s.metrics}, log, now)
 	s.routes(static)
+	s.handler = secureHeaders(s.withRequestID(s.mux))
 	return s
 }
 
@@ -144,10 +157,40 @@ func (s *Server) routes(static fs.FS) {
 	s.mux.HandleFunc("GET /api/runs/{id}/stream", s.handleStream)
 	s.mux.HandleFunc("GET /api/runs/{id}/report.pdf", s.handleReportPDF)
 
-	s.mux.Handle("GET /", http.FileServerFS(static))
+	// Every GET on an /api/ path that no method-scoped pattern above matched.
+	// Without this a GET /api/send falls through to the file server and answers
+	// 404, while /api/runs answers 405 with an Allow header, so the verb
+	// contract the README claims held unevenly. The pattern is GET-scoped
+	// because a method-less "/api/" conflicts with "GET /" and makes the mux
+	// panic at registration; a wrong non-GET verb on a GET-only path never needs
+	// it, because the mux answers that 405 itself with an Allow header it
+	// computes. Go's mux prefers the more specific pattern, so the
+	// method-scoped routes above still win for their own verbs.
+	s.mux.HandleFunc("GET /api/", s.handleAPIFallback)
+
+	s.mux.Handle("GET /", newStaticHandler(static))
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+// apiAllow is the verb contract for the fixed API paths. The catalogue is
+// closed and small, so a request that reaches the fallback on a known path is
+// a wrong verb rather than a wrong path, and Allow is what the client needs.
+var apiAllow = map[string]string{
+	"/api/send":        "POST",
+	"/api/status":      "GET, HEAD",
+	"/api/collections": "GET, HEAD",
+	"/api/runs":        "GET, HEAD, POST",
+}
+
+func (s *Server) handleAPIFallback(w http.ResponseWriter, r *http.Request) {
+	if allow, ok := apiAllow[r.URL.Path]; ok {
+		w.Header().Set("Allow", allow)
+		writeError(w, http.StatusMethodNotAllowed, "", "method %s is not allowed on %s", r.Method, r.URL.Path)
+		return
+	}
+	writeError(w, http.StatusNotFound, "", "no such endpoint %q", r.URL.Path)
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 // Manager exposes the run manager for wiring and tests. Handlers reach it
 // directly; nothing outside this package needs it for anything else.

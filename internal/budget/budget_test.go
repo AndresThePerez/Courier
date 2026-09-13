@@ -182,12 +182,19 @@ func TestSendDebitsWithoutBeingGated(t *testing.T) {
 	}
 
 	before := b.CooldownUntil()
-	ch := b.Spend(1 * 2) // a two-second send, admitted regardless
+	ch := b.Debit(1 * 2) // a two-second send, admitted regardless of the balance
 	if ch.After >= deep {
 		t.Error("a send must still debit the bucket")
 	}
-	if !ch.CooldownUntil.After(before) {
-		t.Error("a send's debit must push the cooldown later, which is why the UI re-reads it")
+	if ch.CooldownUntil.After(before) {
+		t.Error("Debit must not open a cooldown window: pressing Send should not put the Start button into a five-second wait")
+	}
+	// The intent the header comment states, measured the way the production path
+	// delivers it: the send lowered the balance, so the *next run's* Spend
+	// derives its cooldown from the deeper deficit and the window moves then.
+	next := b.Spend(1 * 2)
+	if !next.CooldownUntil.After(before) {
+		t.Errorf("the run after a send must push the cooldown later: %v is not after %v", next.CooldownUntil, before)
 	}
 }
 

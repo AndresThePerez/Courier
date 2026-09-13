@@ -484,7 +484,9 @@ func TestRunIDShape(t *testing.T) {
 	if !strings.HasPrefix(id, "run-20260822-141233-") || len(id) != len("run-20260822-141233-")+4 {
 		t.Errorf("run id = %q, want run-20060102-150405-<4 hex>", id)
 	}
-	if newRunID(time.Now()) == newRunID(time.Now()) {
+	now := time.Now()
+	a, b := newRunID(now), newRunID(now)
+	if a == b {
 		t.Error("two run ids in the same second must still differ")
 	}
 }
