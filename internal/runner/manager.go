@@ -511,8 +511,8 @@ func newRunID(now time.Time) string {
 	return "run-" + now.UTC().Format("20060102-150405") + "-" + hex.EncodeToString(b[:])
 }
 
-// nopPublisher lets the manager run without an SSE layer, which is exactly the
-// state Phase 3 is in and exactly what a unit test wants.
+// nopPublisher lets the manager run without an SSE layer, which is exactly what
+// a unit test wants.
 type nopPublisher struct{}
 
 func (nopPublisher) Publish(Event)   {}

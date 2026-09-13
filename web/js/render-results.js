@@ -15,9 +15,8 @@
 import { el, replace, byId, fmtMs, fmtBytes, fmtTime } from './dom.js';
 import { jsonView } from './json-view.js';
 
-// The filter is the plan's All/Passed/Failed/Skipped as four plain buttons.
-// Addendum A3 defers filter-tab chrome, so this is a button row and nothing
-// more.
+// The filter is All/Passed/Failed/Skipped as four plain buttons. Filter-tab
+// chrome is deliberately absent, so this is a button row and nothing more.
 const Filters = ['all', 'passed', 'failed', 'skipped'];
 
 // Module-local view state: what this module has last painted and what the
@@ -124,8 +123,7 @@ function renderSummary(state, rep, run, mode) {
     el('div', { class: 'results-meta mono', text: bits.filter(Boolean).join('  ·  ') }),
   ]);
 
-  // The route lands with the PDF renderer in Task 19; the button is the one the
-  // plan asks this task for, pointed at the route shape Task 19 specifies.
+  // The button points at the route shape the PDF renderer serves.
   pdf.hidden = !rep;
   if (rep) {
     pdf.href = `/api/runs/${encodeURIComponent(rep.id)}/report.pdf`;

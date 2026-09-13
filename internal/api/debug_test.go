@@ -93,7 +93,7 @@ func TestPprofServesProfilesOnLoopback(t *testing.T) {
 	q.Close()
 }
 
-// Addendum Task 31's counter list, end to end. A run that is started and then
+// The run lifecycle counter list, end to end. A run that is started and then
 // cancelled must show up as started, cancelled, and aborted — the three numbers
 // that describe how the load budget is actually being spent.
 func TestMetricsCountsTheRunLifecycle(t *testing.T) {

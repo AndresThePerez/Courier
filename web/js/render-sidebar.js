@@ -79,7 +79,7 @@ function requestRow(request, selectedId) {
       title: request.name || request.id,
       on: { click: () => hooks.select(request) },
     }, [
-      // Plain-text method, per Addendum A3 — no coloured method badges.
+      // Plain-text method, deliberately: no coloured method badges.
       el('span', { class: 'method', text: 'GET' }),
       ' ',
       el('span', { text: request.name || request.id }),
@@ -179,7 +179,7 @@ export function render(state) {
   }
 
   const hist = byId('history-list');
-  // Addendum A4: the five most recent runs, list and click-to-reopen only.
+  // The five most recent runs, list and click-to-reopen only.
   const recent = state.history.slice(0, 5);
   if (recent.length === 0) {
     replace(hist, [el('div', { class: 'tree-empty', text: 'No runs yet.' })]);

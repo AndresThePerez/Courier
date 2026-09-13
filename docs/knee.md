@@ -1,8 +1,8 @@
 # The measured saturation series
 
-Raw data behind the **"Find the breaking point"** panel (`web/knee.svg`, Addendum Task 33).
-This file is the data, not the prose — the README's numbers-first first screen (Task 35)
-and `docs/design.md` (Task 29) quote from here.
+Raw data behind the **"Find the breaking point"** panel (`web/knee.svg`).
+This file is the data, not the prose — the README's numbers-first first screen
+and `docs/design.md` quote from here.
 
 Two series live here: the **deploy-host series** (first — it is what the live panel
 shows and what the shipped SLO constants are calibrated to) and the earlier

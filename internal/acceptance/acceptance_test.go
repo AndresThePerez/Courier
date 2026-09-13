@@ -1,6 +1,6 @@
 //go:build acceptance
 
-// Courier's end-to-end acceptance matrix (Implementation Plan, Task 20).
+// Courier's end-to-end acceptance matrix.
 //
 // It drives a *running* Courier over HTTP — no httptest, no injected clocks, no
 // package internals — and asserts the behaviour the Design Spec promises a
@@ -314,7 +314,7 @@ func TestCuratedCollectionsRunClean(t *testing.T) {
 				}
 				failed++
 				// The detail is the deliverable here: a bare count would not
-				// tell the next agent whether a fixture drifted or an operator
+				// tell the reader whether a fixture drifted or an operator
 				// is wrong.
 				t.Errorf("%s (%s?%s): status %d in %.1fms, err=%q kind=%q",
 					r.Name, r.Endpoint, r.Query, r.Status, r.LatencyMs, r.Error, r.ErrorKind)
@@ -1081,7 +1081,7 @@ func setStubMode(t *testing.T, mode string, extra string) {
 }
 
 // TestMetricsAccountingAgainstA503 is the regression test for the accounting
-// bug that forced the Task 6 rewrite: a non-2xx response is a *response*. It
+// bug that forced the metrics rewrite: a non-2xx response is a *response*. It
 // contributes one dispatch, one sample in the histogram, one error, and one
 // frustrated Apdex band — never two of anything, and never zero.
 func TestMetricsAccountingAgainstA503(t *testing.T) {

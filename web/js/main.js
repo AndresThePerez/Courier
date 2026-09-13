@@ -13,8 +13,8 @@ import * as results from './render-results.js';
 const TABS = ['runner', 'editor', 'results'];
 
 // StatusPollMs is stated once, here, so N idle tabs share one cadence instead
-// of each inventing their own. The Design Spec sets it at 3s; the plan's
-// Task 17 said 5s and the spec is authoritative (see NOTE.md N26).
+// of each inventing their own. The Design Spec sets it at 3s; a competing 5s
+// figure was not adopted, because the spec is authoritative (see NOTE.md N26).
 const StatusPollMs = 3000;
 
 function currentTab() {
@@ -173,8 +173,8 @@ async function finishRun(runId, data) {
   await Promise.all([refreshStatus(), refreshHistory()]);
 }
 
-// openRun reopens a stored run from the history rail. Addendum A4 keeps history
-// to the five most recent runs, list and click-to-reopen only.
+// openRun reopens a stored run from the history rail. History is kept to the
+// five most recent runs, list and click-to-reopen only.
 async function openRun(id) {
   showTab('results');
   if (live) {

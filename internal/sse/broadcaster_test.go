@@ -285,9 +285,8 @@ func TestConcurrentPublishAndSubscribe(t *testing.T) {
 	}
 }
 
-// Addendum Task 30: a subscriber connecting and disconnecting is part of the
-// run's log trail, in the same "event" + "run_id" vocabulary internal/runner
-// uses.
+// A subscriber connecting and disconnecting is part of the run's log trail, in
+// the same "event" + "run_id" vocabulary internal/runner uses.
 func TestSubscriberLifecycleIsLogged(t *testing.T) {
 	var buf bytes.Buffer
 	b := New(slog.New(slog.NewJSONHandler(&buf, nil)))

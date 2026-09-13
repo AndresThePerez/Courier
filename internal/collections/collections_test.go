@@ -12,15 +12,16 @@ import (
 // invalid the demo opens broken, so validation is a build-time guarantee rather
 // than something discovered live.
 //
-// The bounds started as Addendum amendment A2: 15-18 requests across 3-4
+// The bounds started as an earlier budget: 15-18 requests across 3-4
 // collections. One collection per kind is enough signal, and every request cut
 // is one fewer hand-verified fixture coupled to the index snapshot.
 //
-// The upper bounds are now 5 and 20, for the one collection A2 could not have
-// budgeted: 05-random-traffic demonstrates the template variables, and its two
-// requests carry no hand-verified fixture at all — their assertions are loose
-// on purpose, because the query changes on every dispatch. The A2 reasoning
-// (fixtures cost verification) does not price them, so it does not bound them.
+// The upper bounds are now 5 and 20, for the one collection that budget could
+// not have covered: 05-random-traffic demonstrates the template variables, and
+// its two requests carry no hand-verified fixture at all — their assertions are
+// loose on purpose, because the query changes on every dispatch. That budget's
+// reasoning (fixtures cost verification) does not price them, so it does not
+// bound them.
 func TestEveryCuratedRequestPassesTheSandbox(t *testing.T) {
 	all := All()
 	if len(all) < 3 || len(all) > 5 {
