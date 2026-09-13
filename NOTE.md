@@ -876,6 +876,11 @@ subset is not enough, and a substituted entry is a different workload. The perce
 ladder, the histogram and the throughput all still render and are all still true. Only the
 pass-or-fail judgement is withheld.
 
+This supersedes N7's closing claim that `Verdict` returns only PASS or FAIL and that `N/A`
+remains the assembler's job: `Verdict` now returns `VerdictNA` itself for an uncalibrated
+sequence, while the assembler still owns the cancelled and expired case. N7 itself is left
+exactly as written: entries are appended and superseded in place of being edited.
+
 **The SLO constants are unchanged and this is not a recalibration.** `VerdictP95Ms`,
 `VerdictMaxErrorRate`, the SLA ladder and the Apdex target are exactly what they were. What
 changed is the scope of the claim: the report used to say "this run met the gate" and now says

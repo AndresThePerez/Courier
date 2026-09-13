@@ -544,7 +544,9 @@ func latencyText(r report.RequestResult) string {
 func verdictOf(r *report.Report) (string, string, rgb) {
 	headline := headlineOf(r)
 
-	// A partial run is never judged, whatever the numbers say.
+	// A partial run is never judged, whatever the numbers say. The "partial
+	// data" half of the label belongs to truncation alone, which is why it is
+	// decided here, from the status, rather than from the verdict string.
 	if r.Status == report.StatusCancelled || r.Status == report.StatusExpired {
 		return report.VerdictNA + " - partial data", headline, neutral
 	}
@@ -557,7 +559,11 @@ func verdictOf(r *report.Report) (string, string, rgb) {
 		case report.VerdictFail:
 			return report.VerdictFail, headline, fail
 		default:
-			return report.VerdictNA + " - partial data", headline, neutral
+			// Withheld, not truncated: the status check above already took the
+			// stopped runs, so this run finished and its numbers are complete.
+			// Only the judgement is missing, and calling that partial data would
+			// contradict the reason printed beside it.
+			return report.VerdictNA, headline, neutral
 		}
 
 	case r.Functional != nil:

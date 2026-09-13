@@ -18,8 +18,9 @@ const (
 	StatusExpired   = "expired"
 )
 
-// Verdicts. VerdictNA is what a cancelled or expired run renders: the numbers
-// are real but they do not describe what the SLOs measure.
+// Verdicts. VerdictNA is what a cancelled or expired run renders, or a
+// completed run of an uncalibrated sequence: the numbers are real but they do
+// not describe what the SLOs measure.
 const (
 	VerdictPass = "PASS"
 	VerdictFail = "FAIL"

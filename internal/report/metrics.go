@@ -332,8 +332,10 @@ func IsCalibrated(entries []Entry) bool {
 	return true
 }
 
-// Verdict is a pure PASS/FAIL function of the numbers: p95 within budget AND an
-// error rate under the gate.
+// Verdict judges the calibrated workload and withholds otherwise: PASS when p95
+// is within budget AND the error rate is under the gate, FAIL when it is not,
+// and VerdictNA when the run dispatched a sequence the gate was never measured
+// against.
 //
 // It deliberately knows nothing about run status. A cancelled or expired run's
 // report is overridden to VerdictNA by the assembler, because a run stopped two
@@ -341,11 +343,10 @@ func IsCalibrated(entries []Entry) bool {
 // percentiles, histogram, and throughput still render, only the judgement is
 // withheld.
 //
-// It judges the calibrated workload and withholds otherwise. The constants
-// describe one specific sequence, so a run that dispatched a different one is
-// not judged at all: the caller passes the sequence fact in and an
-// uncalibrated run renders VerdictNA with a reason naming the workload the
-// gate was measured against.
+// The constants describe one specific sequence, so a run that dispatched a
+// different one is not judged at all: the caller passes the sequence fact in
+// and an uncalibrated run renders VerdictNA with a reason naming the workload
+// the gate was measured against.
 func Verdict(s Stats, calibrated bool) (string, []string) {
 	var reasons []string
 
