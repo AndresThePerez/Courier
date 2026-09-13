@@ -308,3 +308,39 @@ func TestRenderFunctionalVerdict(t *testing.T) {
 		t.Error("a functional run with no failures must render PASS")
 	}
 }
+
+// Every other test in this file renders a fixture that records no SLO, which
+// is the shape of a report stored before the gate was recorded, so all of them
+// exercise the fallback. A run from this build carries its gate, and the page
+// it produces is the one a visitor downloads: the provenance has to be printed
+// on it, the ladder labels have to come from the tiers the run was judged by,
+// and the page has to still be one page.
+func TestRenderPrintsTheRecordedGate(t *testing.T) {
+	rep := fixturePerformanceReport()
+	rep.Performance.SLO = report.DemoSLO()
+
+	if got := build(rep, true).pdf.PageCount(); got != 1 {
+		t.Errorf("a report carrying its gate rendered %d pages, want exactly 1", got)
+	}
+
+	body := text(t, rep)
+	for _, want := range []string{
+		"Gate: p95 under 150ms and error rate under 1.00%",
+		"calibrated 2026-08-22 against the search-basics sequence.",
+		"under 50ms", "under 150ms", "under 300ms",
+		"T=50ms",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the rendered page never says %q", want)
+		}
+	}
+
+	// The provenance is report data, so it cannot be the thing that makes two
+	// renders of one report differ.
+	first, second := renderOK(t, rep), renderOK(t, rep)
+	if !bytes.Equal(first, second) {
+		t.Errorf("two renders of a report carrying its gate differ (%d vs %d bytes); "+
+			"the provenance line must be formatted from the report and from nothing that varies",
+			len(first), len(second))
+	}
+}

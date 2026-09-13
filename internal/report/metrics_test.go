@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -425,5 +426,41 @@ func TestDemoSLORecordsTheConstantsAndTheirProvenance(t *testing.T) {
 	}
 	if len(CalibrationEntries) != 5 {
 		t.Errorf("CalibrationEntries has %d names, want the five of the calibrated collection", len(CalibrationEntries))
+	}
+}
+
+// The stored report is the artifact and the JSON is how it travels. The
+// acceptance matrix, the PDF renderer and the polling fallback all read this
+// object, so its field set is a contract: a key may be added and none may be
+// renamed or dropped. The slo object is pinned the same way, because the app
+// reads these six names to write the verdict note.
+func TestPerformanceJSONCarriesTheGate(t *testing.T) {
+	b, err := json.Marshal(Performance{SLO: DemoSLO()})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(b, &envelope); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	for _, k := range []string{"verdict", "verdict_reasons", "overall", "per_request", "overrun_ms", "slo"} {
+		if _, ok := envelope[k]; !ok {
+			t.Errorf("the performance object on the wire is missing %q", k)
+		}
+	}
+
+	var slo map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["slo"], &slo); err != nil {
+		t.Fatalf("Unmarshal slo: %v", err)
+	}
+	want := []string{"p95_ms", "max_error_rate", "ladder_ms", "apdex_t_ms", "calibration_sequence", "calibration_date"}
+	for _, k := range want {
+		if _, ok := slo[k]; !ok {
+			t.Errorf("the slo object on the wire is missing %q", k)
+		}
+	}
+	if len(slo) != len(want) {
+		t.Errorf("the slo object has %d keys, want exactly the %d its readers name: %v", len(slo), len(want), want)
 	}
 }
