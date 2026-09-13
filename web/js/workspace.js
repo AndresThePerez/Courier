@@ -1,7 +1,7 @@
 // workspace.js — the visitor's own copies of requests, persisted to
 // localStorage, plus fork-on-write.
 //
-// Scope note: Addendum A3 defers fork-on-write beyond "the minimum needed to
+// Scope note: fork-on-write is deliberately limited to "the minimum needed to
 // edit a request". That minimum is exactly this file: a curated request the
 // visitor edits is deep-copied into the workspace with a fresh id and
 // reselected, so the curated tree the next visitor sees is pristine. What is

@@ -41,7 +41,7 @@ const modeNotes = {
 
 // ---------------------------------------------------------------- knee demo
 //
-// KneePoints is the measured saturation series (Addendum Task 33), run through
+// KneePoints is the measured saturation series, run through
 // this API on the DEPLOY host against Pokesearch milestone-3 over the pinned
 // 20,324-document index and the internal Docker network: 1 / 10 / 25 / 50
 // workers, 10s each, measured at deploy calibration (2026-08-22). docs/knee.md
@@ -149,9 +149,10 @@ export function addAll(collection) {
   set({ sequence: [...list, ...taken.map((r) => entryFor(r))] });
 }
 
-// move is the whole reordering story: Addendum A3 defers drag-and-drop, and the
-// arrows were always going to be the accessible path anyway. Focus follows the
-// row by its stable key, so a keyboard visitor can press the same button twice.
+// move is the whole reordering story: drag-and-drop is deliberately absent, and
+// the arrows were always going to be the accessible path anyway. Focus follows
+// the row by its stable key, so a keyboard visitor can press the same button
+// twice.
 function move(index, delta) {
   const list = get().sequence.slice();
   const to = index + delta;

@@ -1,7 +1,7 @@
 # What happens when the target dies
 
-Evidence for Addendum Task 36. The polished prose belongs in the README (Task 35) and
-`docs/design.md` (Task 29); this file is the drill and what it produced.
+The drill and what it produced. The narrative version is in the README and in
+`docs/design.md`.
 
 ## The drill
 
@@ -15,7 +15,7 @@ Evidence for Addendum Task 36. The polished prose belongs in the README (Task 35
 | Artefacts | [`report.json`](report.json) (the stored report, verbatim) · [`dashboard.png`](dashboard.png) (the rendered report) |
 
 **Why a stub and not the real Pokesearch.** The only Pokesearch instance reachable from here
-is a shared dev target another session owns (NOTE.md N1). Killing it to prove a point about
+is a shared dev target other work depends on (NOTE.md N1). Killing it to prove a point about
 Courier would break it for everyone, so this drill kills something disposable that speaks the
 same protocol. Nothing about the behaviour under test is target-specific: Courier sees TCP
 connections refused either way.
@@ -43,7 +43,7 @@ Five things this is evidence of, in the order they matter:
    measurement.
 2. **The errors are attributed correctly.** All 968,696 are `connection`: dispatches that
    never got a response because the socket was refused. **Zero** are `aborted`. That
-   distinction is the accounting rule the Task 6 rewrite exists for — `aborted` means
+   distinction is the accounting rule this model exists for — `aborted` means
    *Courier* killed the dispatch (a cancel, a shutdown, the functional deadline), and
    laundering a real target failure into it, or the reverse, would let a report blame the
    wrong party. Nothing here was cancelled, so nothing here is aborted.

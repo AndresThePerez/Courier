@@ -1,4 +1,4 @@
-// api.js — every fetch call and (from Task 18) the live-update transport.
+// api.js — every fetch call and the live-update transport.
 // Nothing else in the frontend calls fetch.
 
 async function readJSON(res) {
@@ -102,7 +102,7 @@ const PollMs = 500;
 // — comments are consumed by the parser — so "no bytes" is not observable from
 // here. What is observable is "no events since the stream opened", and that is
 // the case this timer is really for: a proxy that buffers the response (the
-// Cloudflare tunnel in Phase 8) accepts the connection and then delivers
+// Cloudflare tunnel) accepts the connection and then delivers
 // nothing, while the server has already replayed run_started into the void. A
 // live run always replays at least run_started on connect, so silence at open
 // means the bytes are not arriving. Once a single event has landed the timer is
@@ -128,9 +128,9 @@ export function onRunStarted(fn) {
 // EventSource is primary and 500ms polling is the fallback, and the whole point
 // of the shape is that the caller cannot tell which one is talking: both paths
 // emit the same four event envelopes, so the reducer upstream has one code path
-// and every render module has none. The fallback exists because SSE first meets
-// the Cloudflare tunnel in Phase 8, and a buffering proxy would otherwise kill
-// live results outright rather than degrade them.
+// and every render module has none. The fallback exists because SSE meets the
+// Cloudflare tunnel, and a buffering proxy would otherwise kill live results
+// outright rather than degrade them.
 //
 // handlers: { event({type, run_id, data}), transport('sse'|'polling'|'idle') }.
 // Returns a stop() function.
