@@ -24,8 +24,14 @@ function currentTab() {
 
 function renderTabs(state) {
   for (const name of TABS) {
-    byId(`tab-${name}`).classList.toggle('is-active', state.activeTab === name);
-    byId(`panel-${name}`).classList.toggle('is-active', state.activeTab === name);
+    const active = state.activeTab === name;
+    const tab = byId(`tab-${name}`);
+    tab.classList.toggle('is-active', active);
+    // aria-selected is the accessible half of is-active. Both are set in one
+    // place so they cannot drift: a tab that looks selected and reports
+    // otherwise is worse than no role at all.
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    byId(`panel-${name}`).classList.toggle('is-active', active);
   }
 }
 
