@@ -3,7 +3,7 @@
 #
 # Two things here are load-bearing and look like style until they bite:
 #
-#   1. The service is `courier`, not `app`. Pokesearch's service is `app`, and
+#   1. The service is `courier`, not `app`. PokéSearch's service is `app`, and
 #      two services with the same name on one shared network is a DNS collision.
 #   2. `networks: demo: {}` is the mapping form, not the list form `[demo]`.
 #      Compose cannot merge a list against a mapping across `-f` files, so the

@@ -42,7 +42,7 @@ const modeNotes = {
 // ---------------------------------------------------------------- knee demo
 //
 // KneePoints is the measured saturation series, run through
-// this API on the DEPLOY host against Pokesearch milestone-3 over the pinned
+// this API on the DEPLOY host against PokéSearch milestone-3 over the pinned
 // 20,324-document index and the internal Docker network: 1 / 10 / 25 / 50
 // workers, 10s each, measured at deploy calibration (2026-08-22). docs/knee.md
 // carries this series plus the earlier dev-workstation one for the hardware

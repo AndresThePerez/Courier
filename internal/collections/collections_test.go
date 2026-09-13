@@ -115,7 +115,7 @@ func TestUnscopedFacetCountsOnlyOnBrowse(t *testing.T) {
 	}
 }
 
-// Pokesearch's Milestone 3 contract, asserted both ways. The old spec item
+// PokéSearch's Milestone 3 contract, asserted both ways. The old spec item
 // "Pokesearch never returns 4xx" is superseded: strict params are now rejected
 // before Elasticsearch is called, while list members, unknown keys, and
 // out-of-range integers stay lenient. A collection that asserted only one half

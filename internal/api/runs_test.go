@@ -40,7 +40,7 @@ func (c *clock) advance(d time.Duration) {
 	c.offset += d
 }
 
-// newTarget stands in for Pokesearch. delay is per request, so a test can make
+// newTarget stands in for PokéSearch. delay is per request, so a test can make
 // a run last long enough to catch it mid-flight.
 func newTarget(t *testing.T, delay time.Duration) string {
 	t.Helper()

@@ -13,7 +13,7 @@ import (
 	"github.com/AndresThePerez/courier/internal/sandbox"
 )
 
-// searchBody is the size of a real Pokesearch search response (34-42KB), so the
+// searchBody is the size of a real PokéSearch search response (34-42KB), so the
 // drain path is benchmarked against the bytes it will actually move.
 var searchBody = `{"total":107,"page":1,"pages":5,"took_ms":9,"results":[` +
 	strings.Repeat(`{"id":"base1-1","name":"Alakazam","supertype":"Pokemon","hp":80},`, 600) +

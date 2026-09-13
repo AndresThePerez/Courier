@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// searchBody builds a payload the shape and size of a real Pokesearch
+// searchBody builds a payload the shape and size of a real PokéSearch
 // /api/search response: 24 cards, five facet groups, ~35-40KB. Benchmarking
 // against a toy document would flatter the decode step, which is the part that
 // actually costs anything.

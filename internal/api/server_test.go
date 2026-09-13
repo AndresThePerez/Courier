@@ -72,7 +72,7 @@ func TestCollectionsEndpointCarriesTheCatalog(t *testing.T) {
 		t.Errorf("search params %v are missing q", search.Params)
 	}
 	// The catalog is the one source of truth for the allowlist, so this asserts
-	// a property rather than a key count: nothing outside Pokesearch's
+	// a property rather than a key count: nothing outside PokéSearch's
 	// documented contract has crept in.
 	if slices.Contains(search.Params, "url") || slices.Contains(search.Params, "target") {
 		t.Errorf("search params %v contain a key that could influence the host", search.Params)

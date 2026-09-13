@@ -1,7 +1,7 @@
 {
   "id": "error-handling",
   "name": "04 - Error Handling & Edge Cases",
-  "description": "Pokesearch's error contract, asserted both ways: strict params (sort, order, supertype, and non-integer hp_min/hp_max/page/page_size) are rejected before Elasticsearch is called, with 400 {\"error\":{\"code\":\"invalid_param\",\"field\":...},\"request_id\":...}; out-of-range integers clamp and comma-list members stay lenient, so those still answer 200.",
+  "description": "PokéSearch's error contract, asserted both ways: strict params (sort, order, supertype, and non-integer hp_min/hp_max/page/page_size) are rejected before Elasticsearch is called, with 400 {\"error\":{\"code\":\"invalid_param\",\"field\":...},\"request_id\":...}; out-of-range integers clamp and comma-list members stay lenient, so those still answer 200.",
   "requests": [
     {
       "id": "strict-sort",

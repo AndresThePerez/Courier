@@ -10,11 +10,11 @@ The drill and what it produced. The narrative version is in the README and in
 | Date | 2026-08-22 |
 | Run | `run-20260822-223241-8e9c`, performance mode, 10 workers x 15s |
 | Sequence | the curated `search-basics` collection, 5 requests |
-| Target | a scratch Pokesearch-shaped stub on `127.0.0.1:8091` |
+| Target | a scratch PokéSearch-shaped stub on `127.0.0.1:8091` |
 | What was killed | the stub process, `SIGKILL`, **5.00 s into the 15 s run** |
 | Artefacts | [`report.json`](report.json) (the stored report, verbatim) · [`dashboard.png`](dashboard.png) (the rendered report) |
 
-**Why a stub and not the real Pokesearch.** The only Pokesearch instance reachable from here
+**Why a stub and not the real PokéSearch.** The only PokéSearch instance reachable from here
 is a shared dev target other work depends on (docs/deviations.md N1). Killing it to prove a point about
 Courier would break it for everyone, so this drill kills something disposable that speaks the
 same protocol. Nothing about the behaviour under test is target-specific: Courier sees TCP

@@ -20,7 +20,7 @@ type Endpoint struct {
 // the contract means editing exactly this literal — no count, no duplicate list
 // in a test, nowhere else to keep in sync.
 //
-// Verified against the Pokesearch source and updated for the Milestone 3
+// Verified against the PokéSearch source and updated for the Milestone 3
 // contract (2026-08-22): `page_size` (1-100, default 24) joins the search
 // allowlist. Match highlighting may later become opt-in via `highlight`, in
 // which case it is one more entry in the search Params slice and nothing else.

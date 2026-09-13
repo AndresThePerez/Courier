@@ -13,8 +13,8 @@ shows and what the shipped SLO constants are calibrated to) and the earlier
 | | |
 |---|---|
 | Host | 4-core Ryzen 3 2200G, Elasticsearch capped at 1 GB, co-hosted with the portfolio site |
-| Path | Courier container → internal Docker network (`demo-net` alias) → Pokesearch container |
-| Target | Pokesearch `milestone-3`, commit `6bbceb9`, 20,324 documents |
+| Path | Courier container → internal Docker network (`demo-net` alias) → PokéSearch container |
+| Target | PokéSearch `milestone-3`, commit `6bbceb9`, 20,324 documents |
 | Sequence / mode / duration | the curated `search-basics` collection · performance · 10s per point |
 
 | workers | req/s | p50 | p95 | p99 | errors | Apdex(T=25*) | verdict (p95 ≤ 150ms) |
@@ -29,7 +29,7 @@ measurement run; the shipped build scores with the deploy-calibrated T=50ms.
 
 **The knee is at ~10 workers here.** 10 workers deliver 88% of the peak; 10→25 buys +8%
 throughput for +110% p50; 25→50 buys +5% for +91% p50. Roughly the 3× latency the
-Pokesearch session predicted for this hardware (their e2e `q=charizard` ≈ 73ms local vs
+PokéSearch session predicted for this hardware (their e2e `q=charizard` ≈ 73ms local vs
 ~25ms on the workstation). During the 50-worker pass the co-hosted portfolio site was
 monitored from outside the box: p95 260ms over the tunnel, no degradation, so the
 50-worker cap stays. These figures drove the deploy SLO recalibration (verdict
@@ -44,7 +44,7 @@ and `docs/design.md`.
 
 | | |
 |---|---|
-| Target | Pokesearch `milestone-3`, commit `9c042d3`, 20,324 documents |
+| Target | PokéSearch `milestone-3`, commit `9c042d3`, 20,324 documents |
 | Sequence | the curated `search-basics` collection, 5 real search requests |
 | Mode | performance (closed loop, assertions not evaluated, bodies drained) |
 | Duration | 10s per point |
@@ -82,9 +82,9 @@ Two other readings worth having:
   workers and fails at 25 and 50. The gate is stricter than the knee, which is the point of
   having one: a system is out of SLO some way before it is out of headroom.
 
-### Against the Pokesearch session's own profiling
+### Against the PokéSearch session's own profiling
 
-The Pokesearch side expected throughput to **peak around 25 workers and fall at 50**, with p50
+The PokéSearch side expected throughput to **peak around 25 workers and fall at 50**, with p50
 roughly doubling. This series reproduces **the knee location and the latency behaviour** and
 **not the fall**:
 
@@ -99,7 +99,7 @@ either contention that gets worse under depth or a resource ceiling this run nev
 Nothing here was tuned, retried, or discarded to get this shape — both series are printed
 below in full.
 
-**Probable cause, from the Pokesearch side (2026-08-22, unproven but specific):** the
+**Probable cause, from the PokéSearch side (2026-08-22, unproven but specific):** the
 pre-M3 build's Elasticsearch client ran on Go's default transport —
 `MaxIdleConnsPerHost = 2` — so 50 concurrent searches thrashed connections to ES, and that
 churn was their leading suspect for the old throughput fall past the knee. Milestone 3

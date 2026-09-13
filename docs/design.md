@@ -109,7 +109,7 @@ all:
   from a server-side endpoint catalog that is a **closed set**
   ([`internal/sandbox/catalog.go`](../internal/sandbox/catalog.go)).
 - Every endpoint carries an ordered **parameter allowlist** — the real,
-  source-verified Pokesearch M3 contract, kept as data in exactly one place.
+  source-verified PokéSearch M3 contract, kept as data in exactly one place.
   Unknown keys are rejected; values are truncated to a length bound.
 - Curated and visitor-edited requests pass through **identical validation**
   ([`internal/sandbox/validate.go`](../internal/sandbox/validate.go)) — the

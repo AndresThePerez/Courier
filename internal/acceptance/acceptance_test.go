@@ -8,7 +8,7 @@
 //
 // # Two target modes, said out loud
 //
-// Most of the matrix runs against a Courier pointed at the real Pokesearch
+// Most of the matrix runs against a Courier pointed at the real PokéSearch
 // Milestone 3 build: that is the only way the curated fixtures get verified,
 // and verifying them is the single most important item in this file.
 //
@@ -21,7 +21,7 @@
 //
 // # Environment
 //
-//	COURIER_URL       base URL of a Courier whose target is real Pokesearch.
+//	COURIER_URL       base URL of a Courier whose target is real PokéSearch.
 //	                  Default http://127.0.0.1:8084.
 //	STUB_URL          base URL of a *second* Courier whose target is the stub.
 //	                  Unset ⇒ the two target-manipulation tests skip.
@@ -857,7 +857,7 @@ func typesOf(fs []sseFrame) string {
 
 // TestStrictParamIsRejectedNamingTheField pins the Milestone 3 error contract
 // end to end, through Courier's own editor path: page_size is in the allowlist
-// (so Courier forwards it), and Pokesearch answers 400 naming the field.
+// (so Courier forwards it), and PokéSearch answers 400 naming the field.
 //
 // The curated error-handling collection asserts the same thing during
 // TestCuratedCollectionsRunClean; this checks it directly so a failure there
@@ -1052,13 +1052,13 @@ func TestCourierStartsWithItsTargetDown(t *testing.T) {
 //
 // Everything below needs a target that misbehaves on command. It runs against
 // a second Courier (STUB_URL) whose target is a scratch stub, never against
-// the shared Pokesearch instance.
+// the shared PokéSearch instance.
 
 func requireStub(t *testing.T) {
 	t.Helper()
 	if stubURL == "" || stubTargetURL == "" {
 		t.Skip("STUB_URL and STUB_TARGET_URL are unset: this item needs a target that can be made to " +
-			"fail on command, and the shared Pokesearch instance must never be that target")
+			"fail on command, and the shared PokéSearch instance must never be that target")
 	}
 	if err := ping(stubURL); err != nil {
 		t.Fatalf("STUB_URL %s is not answering: %v", stubURL, err)

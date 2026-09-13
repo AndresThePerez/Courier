@@ -15,7 +15,7 @@ The interesting constraint is that it is *public*. A load tester exposed to the 
 
 ## The numbers
 
-Measured against the pinned 20,324-document Pokesearch index (Milestone 3 build) on
+Measured against the pinned 20,324-document PokéSearch index (Milestone 3 build) on
 the deploy host, over the internal container network — the numbers the live demo's
 panel shows and its SLOs are calibrated to:
 
@@ -40,7 +40,7 @@ workers, which is the point of having one. The same series on the dev workstatio
 carries the whole ladder, min, avg, p50, p90, p95, p99 and max, taken nearest-rank so a
 published p99 is a latency some request actually experienced rather than an
 interpolation between two that did not.
-The target is [Pokesearch](https://github.com/AndresThePerez/PokeSearch), an
+The target is [PokéSearch](https://github.com/AndresThePerez/PokeSearch), an
 Elasticsearch search engine for a 20,324-card Pokemon TCG corpus, also built
 here: Courier load-tested it and found its knee at ten workers, which is the
 number above.
@@ -128,7 +128,7 @@ in-flight run is cancelled first, which bounds the drain by one request instead 
 whole run and releases the SSE handlers, and only then does the HTTP server stop, since
 a live stream is an active handler by design and would otherwise hold it open forever.
 
-On the live deployment the target is Pokesearch. Requests display as
+On the live deployment the target is PokéSearch. Requests display as
 `pokesearch.andrestheperez.com`; Courier executes them over the internal container
 network, so the numbers measure the target — not Cloudflare's edge, not the tunnel.
 
@@ -299,8 +299,8 @@ disclosed rather than hidden in the target's numbers.
 ## Running locally
 
 Courier needs a target to point at. Any HTTP service that serves the endpoint catalog's
-paths will do — the live demo uses Pokesearch. Note that the curated collections'
-assertions are pinned to the 20,324-card Pokesearch index, so against a different target
+paths will do — the live demo uses PokéSearch. Note that the curated collections'
+assertions are pinned to the 20,324-card PokéSearch index, so against a different target
 the app runs fine but those assertions will fail; edit them in the Request tab, or read
 the run as a load test rather than a functional one.
 

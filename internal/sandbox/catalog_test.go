@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// The Pokesearch Milestone 3 search contract. `requiredSearchParams` are keys
+// The PokéSearch Milestone 3 search contract. `requiredSearchParams` are keys
 // the catalog must expose today; `knownSearchParams` is every key the contract
-// may ever legitimately contain, including `highlight`, which Pokesearch may
+// may ever legitimately contain, including `highlight`, which PokéSearch may
 // yet flip to an opt-in param.
 //
 // These two sets are deliberately not a count and not an exact list: the
@@ -37,7 +37,7 @@ func TestSearchAllowlistMatchesPokesearchContract(t *testing.T) {
 	}
 	for _, p := range ep.Params {
 		if !slices.Contains(knownSearchParams, p) {
-			t.Errorf("search allows %q, which is not part of the Pokesearch contract", p)
+			t.Errorf("search allows %q, which is not part of the PokéSearch contract", p)
 		}
 	}
 	if len(ep.Params) != len(slices.Compact(slices.Sorted(slices.Values(ep.Params)))) {
