@@ -3,6 +3,7 @@ package report
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"testing"
 	"time"
 )
@@ -534,5 +535,165 @@ func TestFunctionalVerdict(t *testing.T) {
 	}
 	if got := FunctionalVerdict(StatusCompleted, nil); got != VerdictNA {
 		t.Errorf("no functional payload: FunctionalVerdict = %q, want %q", got, VerdictNA)
+	}
+}
+
+// ---- bounded samples ----------------------------------------------------
+
+// Every number except the percentiles is counted as it is added, so it stays
+// exact however many responses a run records; only the latency samples the
+// percentiles are read from are bounded.
+func TestTallyIsExactPastTheSampleCap(t *testing.T) {
+	const n = 300_000
+	tal := newTally()
+	var (
+		sum                               float64
+		ok, non2xx                        int
+		satisfied, tolerating, frustrated int
+		under50, under150, under300       int
+		hist                              [6]int
+		bytes                             int64
+	)
+	for i := range n {
+		ms := float64(i%500) + 0.5 // 0.5 .. 499.5, every bucket and band
+		status := 200
+		if i%97 == 0 {
+			status = 503
+		}
+		tal.AddResponse(status, ms, 100+i%7)
+		bytes += int64(100 + i%7)
+		sum += ms
+		if status == 200 {
+			ok++
+			switch {
+			case ms <= ApdexTMs:
+				satisfied++
+			case ms <= 4*ApdexTMs:
+				tolerating++
+			default:
+				frustrated++
+			}
+		} else {
+			non2xx++
+			frustrated++
+		}
+		if ms <= SLATier1Ms {
+			under50++
+		}
+		if ms <= SLATier2Ms {
+			under150++
+		}
+		if ms <= SLATier3Ms {
+			under300++
+		}
+		for b, bk := range buckets {
+			if bk.To == 0 || ms < bk.To {
+				hist[b]++
+				break
+			}
+		}
+	}
+	for range 1234 {
+		tal.AddTransportFailure(KindConnection)
+	}
+	for range 55 {
+		tal.AddAborted()
+	}
+
+	if got := len(tal.Samples); got != MaxSamples {
+		t.Fatalf("retained %d samples, want the cap %d", got, MaxSamples)
+	}
+	s := ComputeStats(-1, "overall", tal, 10*time.Second)
+
+	if s.Requests != n+1234+55 || s.OK != ok || s.Errors != non2xx+1234 || s.Aborted != 55 || s.Bytes != bytes {
+		t.Errorf("counts = req %d ok %d err %d aborted %d bytes %d; want %d %d %d %d %d",
+			s.Requests, s.OK, s.Errors, s.Aborted, s.Bytes, n+1234+55, ok, non2xx+1234, 55, bytes)
+	}
+	if s.StatusCounts[200] != ok || s.StatusCounts[503] != non2xx || s.StatusCounts[0] != 1234 {
+		t.Errorf("status counts = %v", s.StatusCounts)
+	}
+	if s.ErrorKinds[KindNon2xx] != non2xx || s.ErrorKinds[KindConnection] != 1234 {
+		t.Errorf("error kinds = %v", s.ErrorKinds)
+	}
+	if s.Apdex.Satisfied != satisfied || s.Apdex.Tolerating != tolerating || s.Apdex.Frustrated != frustrated+1234 {
+		t.Errorf("apdex bands = %+v, want %d/%d/%d", s.Apdex, satisfied, tolerating, frustrated+1234)
+	}
+	for b := range hist {
+		if s.Histogram[b].Count != hist[b] {
+			t.Errorf("histogram %s = %d, want %d", s.Histogram[b].Label, s.Histogram[b].Count, hist[b])
+		}
+	}
+	want := SLALadder{
+		Under50:  100 * float64(under50) / n,
+		Under150: 100 * float64(under150) / n,
+		Under300: 100 * float64(under300) / n,
+	}
+	if s.SLA != want {
+		t.Errorf("SLA ladder = %+v, want %+v", s.SLA, want)
+	}
+	if s.Latency.Min != 0.5 || s.Latency.Max != 499.5 || s.Latency.Avg != sum/n {
+		t.Errorf("min/avg/max = %v/%v/%v, want 0.5/%v/499.5", s.Latency.Min, s.Latency.Avg, s.Latency.Max, sum/n)
+	}
+	if s.PercentileSamples != MaxSamples {
+		t.Errorf("percentile_samples = %d, want %d", s.PercentileSamples, MaxSamples)
+	}
+}
+
+// Past the cap the percentiles rest on a uniform sample, so they stay within
+// a fraction of a percentile point of the exact value, and every retained
+// sample is a latency some request really had.
+func TestPercentilesPastTheCapStayClose(t *testing.T) {
+	const n = 1_000_000
+	tal := newTally()
+	for i := 1; i <= n; i++ {
+		tal.AddResponse(200, float64(i), 1)
+	}
+	for _, sm := range tal.Samples {
+		if sm.Ms != math.Trunc(sm.Ms) || sm.Ms < 1 || sm.Ms > n {
+			t.Fatalf("retained sample %v is not one of the recorded latencies", sm.Ms)
+		}
+	}
+	s := ComputeStats(-1, "overall", tal, time.Second)
+	for _, tc := range []struct {
+		name string
+		got  float64
+		p    float64
+	}{{"p50", s.Latency.P50, 50}, {"p95", s.Latency.P95, 95}, {"p99", s.Latency.P99, 99}} {
+		lo, hi := (tc.p-0.5)*n/100, (tc.p+0.5)*n/100
+		if tc.got < lo || tc.got > hi {
+			t.Errorf("%s = %v, want within [%v, %v]", tc.name, tc.got, lo, hi)
+		}
+	}
+	if s.Latency.Min != 1 || s.Latency.Max != n {
+		t.Errorf("min/max = %v/%v, want the exact 1/%d", s.Latency.Min, s.Latency.Max, n)
+	}
+}
+
+// Below the cap every sample is kept, so nothing changes for a run that never
+// reaches it, and the sampler is deterministic.
+func TestBelowTheCapEverySampleIsKept(t *testing.T) {
+	a, b := newTally(), newTally()
+	for i := range 1000 {
+		a.AddResponse(200, float64(i), 1)
+		b.AddResponse(200, float64(i), 1)
+	}
+	if len(a.Samples) != 1000 {
+		t.Fatalf("kept %d of 1000 samples below the cap", len(a.Samples))
+	}
+	if s := ComputeStats(-1, "overall", a, time.Second); s.PercentileSamples != 1000 {
+		t.Errorf("percentile_samples = %d, want 1000", s.PercentileSamples)
+	}
+
+	small := Tally{SampleCap: 10}
+	other := Tally{SampleCap: 10}
+	for i := range 1000 {
+		small.AddResponse(200, float64(i), 1)
+		other.AddResponse(200, float64(i), 1)
+	}
+	if len(small.Samples) != 10 {
+		t.Errorf("a tally capped at 10 kept %d samples", len(small.Samples))
+	}
+	if !slices.Equal(small.Samples, other.Samples) {
+		t.Error("two tallies fed the same latencies kept different samples; the sampler must be deterministic")
 	}
 }

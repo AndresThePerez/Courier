@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"math/bits"
 	"slices"
 	"time"
 )
@@ -93,6 +94,11 @@ type Sample struct {
 // past the 1% gate, and stores a report that blames the target for the visitor
 // pressing Cancel. Detection is errors.Is(err, context.Canceled) *with the run's
 // own abort as the cause*; a target-side reset is still a transport failure.
+//
+// Memory is bounded. Every count above, the Apdex bands, the SLA ladder, the
+// histogram, and min, max and average latency are counted as each response is
+// added, so they are exact at any volume. Only Samples, which the percentiles
+// are read from, is capped (see MaxSamples).
 type Tally struct {
 	Requests     int // dispatches
 	Samples      []Sample
@@ -101,18 +107,107 @@ type Tally struct {
 	Bytes        int64
 	StatusCounts map[int]int    // 0 = transport failure; aborted has no key
 	ErrorKinds   map[string]int // timeout | connection | non_2xx
+
+	// SampleCap bounds Samples; 0 means MaxSamples.
+	SampleCap int
+
+	responses, ok                     int
+	sumMs, minMs, maxMs               float64
+	satisfied, tolerating, frustrated int    // responses only; transport adds at compute time
+	under                             [3]int // SLATier1Ms, SLATier2Ms, SLATier3Ms
+	hist                              [6]int // the buckets below
+	rng                               uint64 // the sampler's state; zero is a valid seed
 }
+
+// MaxSamples is how many latencies a run's overall Tally keeps for its
+// percentiles; a per-entry Tally keeps an equal share of it. At 16 bytes a
+// sample that is about 4 MB for the overall scope and as much again across
+// the entries, whatever the run's volume: a microsecond target used to grow a
+// run's samples without bound (4.1M requests took the process from 15 MB to
+// 290 MB). The cap is far above any run against the real target, which
+// measured about 18,000 responses at its knee, so those runs keep every
+// sample. Past it, Samples is a uniform random sample of every latency
+// recorded (Algorithm R), and a percentile read from it is still a latency a
+// request really had. Its rank error is about sqrt(p(1-p)/k): 0.02 percentile
+// points at p99 for k = 262,144.
+const MaxSamples = 1 << 18
 
 // AddResponse records a completed response, 2xx or not.
 func (t *Tally) AddResponse(status int, ms float64, size int) {
 	ok := status >= 200 && status < 300
 	t.Requests++
-	t.Samples = append(t.Samples, Sample{Ms: ms, OK: ok})
 	t.Bytes += int64(size)
 	t.countStatus(status)
 	if !ok {
 		t.countKind(KindNon2xx)
 	}
+
+	t.responses++
+	t.sumMs += ms
+	if t.responses == 1 || ms < t.minMs {
+		t.minMs = ms
+	}
+	if t.responses == 1 || ms > t.maxMs {
+		t.maxMs = ms
+	}
+	switch {
+	case !ok:
+		t.frustrated++ // every non-2xx is frustrated, however fast it was
+	case ms <= ApdexTMs:
+		t.ok++
+		t.satisfied++
+	case ms <= 4*ApdexTMs:
+		t.ok++
+		t.tolerating++
+	default:
+		t.ok++
+		t.frustrated++
+	}
+	if ms <= SLATier3Ms {
+		t.under[2]++
+		if ms <= SLATier2Ms {
+			t.under[1]++
+			if ms <= SLATier1Ms {
+				t.under[0]++
+			}
+		}
+	}
+	t.hist[bucketOf(ms)]++
+	t.keep(Sample{Ms: ms, OK: ok})
+}
+
+// keep is reservoir sampling (Algorithm R): every sample is kept until the
+// cap, and the n-th after that replaces a random kept one with probability
+// cap/n, which leaves Samples a uniform sample of everything recorded. The
+// generator is splitmix64 held in the Tally: deterministic, so a test can
+// reproduce a run's sample, and allocation-free on the per-dispatch path.
+func (t *Tally) keep(s Sample) {
+	limit := t.SampleCap
+	if limit <= 0 {
+		limit = MaxSamples
+	}
+	if len(t.Samples) < limit {
+		t.Samples = append(t.Samples, s)
+		return
+	}
+	t.rng += 0x9e3779b97f4a7c15
+	z := t.rng
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+	z ^= z >> 31
+	if j, _ := bits.Mul64(z, uint64(t.responses)); j < uint64(limit) {
+		t.Samples[j] = s
+	}
+}
+
+// bucketOf is the histogram bucket a latency falls in; see buckets.
+func bucketOf(ms float64) int {
+	for i := range len(buckets) - 1 {
+		if ms < buckets[i].To {
+			return i
+		}
+	}
+	return len(buckets) - 1
 }
 
 // AddTransportFailure records a dispatch that never produced a response.
@@ -172,31 +267,16 @@ func ComputeStats(index int, name string, t Tally, wall time.Duration) Stats {
 	}
 
 	latencies := make([]float64, 0, len(t.Samples))
-	var sum float64
-	satisfied, tolerating, frustrated := 0, 0, 0
 	for _, sample := range t.Samples {
 		latencies = append(latencies, sample.Ms)
-		sum += sample.Ms
-		switch {
-		case !sample.OK:
-			frustrated++ // every non-2xx is frustrated, however fast it was
-		case sample.Ms <= ApdexTMs:
-			satisfied++
-		case sample.Ms <= 4*ApdexTMs:
-			tolerating++
-		default:
-			frustrated++
-		}
-		if sample.OK {
-			s.OK++
-		}
 	}
-	frustrated += t.Transport
 	slices.Sort(latencies)
+	s.PercentileSamples = len(latencies)
+	s.OK = t.ok
 
 	// Aborts are not errors: Courier killed those dispatches, the target did
 	// not fail them.
-	s.Errors = (len(t.Samples) - s.OK) + t.Transport
+	s.Errors = (t.responses - t.ok) + t.Transport
 
 	if denom := t.Requests - t.Aborted; denom > 0 {
 		s.SuccessRatio = 100 * float64(s.OK) / float64(denom)
@@ -205,26 +285,29 @@ func ComputeStats(index int, name string, t Tally, wall time.Duration) Stats {
 		s.RequestsPerSec = float64(t.Requests) / secs
 	}
 
-	s.Latency = percentilesOf(latencies, sum)
-	s.SLA = ladderOf(latencies)
-	s.Apdex = apdexOf(satisfied, tolerating, frustrated)
-	s.Histogram = Histogram(latencies)
+	if t.responses > 0 {
+		s.Latency = Percentiles{
+			Min: t.minMs,
+			Avg: t.sumMs / float64(t.responses),
+			P50: Percentile(latencies, 50),
+			P90: Percentile(latencies, 90),
+			P95: Percentile(latencies, 95),
+			P99: Percentile(latencies, 99),
+			Max: t.maxMs,
+		}
+		n := float64(t.responses)
+		s.SLA = SLALadder{
+			Under50:  100 * float64(t.under[0]) / n,
+			Under150: 100 * float64(t.under[1]) / n,
+			Under300: 100 * float64(t.under[2]) / n,
+		}
+	}
+	s.Apdex = apdexOf(t.satisfied, t.tolerating, t.frustrated+t.Transport)
+	s.Histogram = slices.Clone(buckets)
+	for i := range s.Histogram {
+		s.Histogram[i].Count = t.hist[i]
+	}
 	return s
-}
-
-func percentilesOf(sorted []float64, sum float64) Percentiles {
-	if len(sorted) == 0 {
-		return Percentiles{}
-	}
-	return Percentiles{
-		Min: sorted[0],
-		Avg: sum / float64(len(sorted)),
-		P50: Percentile(sorted, 50),
-		P90: Percentile(sorted, 90),
-		P95: Percentile(sorted, 95),
-		P99: Percentile(sorted, 99),
-		Max: sorted[len(sorted)-1],
-	}
 }
 
 // Percentile is nearest-rank: the smallest value at or below which at least p
@@ -239,23 +322,6 @@ func Percentile(sorted []float64, p float64) float64 {
 	// that silently reads the p96 sample is the kind of bug nobody finds.
 	rank := int(math.Ceil(p * float64(n) / 100))
 	return sorted[min(max(rank-1, 0), n-1)]
-}
-
-func ladderOf(sorted []float64) SLALadder {
-	n := len(sorted)
-	if n == 0 {
-		return SLALadder{}
-	}
-	share := func(tier float64) float64 {
-		count := 0
-		for _, ms := range sorted {
-			if ms <= tier {
-				count++
-			}
-		}
-		return 100 * float64(count) / float64(n)
-	}
-	return SLALadder{Under50: share(SLATier1Ms), Under150: share(SLATier2Ms), Under300: share(SLATier3Ms)}
 }
 
 func apdexOf(satisfied, tolerating, frustrated int) ApdexScore {

@@ -135,21 +135,22 @@ type Performance struct {
 
 // Stats is one scope's computed numbers — the whole run, or one entry in it.
 type Stats struct {
-	Index          int            `json:"index"` // -1 for the overall scope
-	Name           string         `json:"name"`
-	Requests       int            `json:"requests"`
-	OK             int            `json:"ok"`
-	Errors         int            `json:"errors"`
-	Aborted        int            `json:"aborted"`
-	SuccessRatio   float64        `json:"success_ratio"`
-	RequestsPerSec float64        `json:"requests_per_sec"`
-	Bytes          int64          `json:"bytes"`
-	Latency        Percentiles    `json:"latency"`
-	SLA            SLALadder      `json:"sla"`
-	Apdex          ApdexScore     `json:"apdex"`
-	Histogram      []Bucket       `json:"histogram"`
-	StatusCounts   map[int]int    `json:"status_counts"`
-	ErrorKinds     map[string]int `json:"error_kinds"`
+	Index             int            `json:"index"` // -1 for the overall scope
+	Name              string         `json:"name"`
+	Requests          int            `json:"requests"`
+	OK                int            `json:"ok"`
+	Errors            int            `json:"errors"`
+	Aborted           int            `json:"aborted"`
+	SuccessRatio      float64        `json:"success_ratio"`
+	RequestsPerSec    float64        `json:"requests_per_sec"`
+	Bytes             int64          `json:"bytes"`
+	Latency           Percentiles    `json:"latency"`
+	SLA               SLALadder      `json:"sla"`
+	Apdex             ApdexScore     `json:"apdex"`
+	Histogram         []Bucket       `json:"histogram"`
+	StatusCounts      map[int]int    `json:"status_counts"`
+	ErrorKinds        map[string]int `json:"error_kinds"`
+	PercentileSamples int            `json:"percentile_samples"`
 }
 
 // Percentiles is the latency distribution over every completed response.

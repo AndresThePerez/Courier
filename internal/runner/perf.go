@@ -170,6 +170,12 @@ func perfStatus(ctx context.Context) string {
 // tallies[0] is the overall scope; tallies[i+1] is sequence entry i.
 func aggregate(results <-chan dispatch, out chan<- []report.Tally, entries int, start time.Time, emit Emitter) {
 	all := make([]report.Tally, entries+1)
+	// The entries share the run's sample budget, so a long sequence does not
+	// multiply the memory a run may hold.
+	perEntry := (report.MaxSamples + entries - 1) / max(entries, 1)
+	for i := 1; i <= entries; i++ {
+		all[i].SampleCap = perEntry
+	}
 
 	// Running counters for the ticker. ComputeStats is ~1ms over 18k samples —
 	// cheap enough per tick, but these are exact and free, and they keep the

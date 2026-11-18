@@ -460,3 +460,33 @@ func TestBackoffWaitReturnsWhenTheRunStops(t *testing.T) {
 		t.Error("pause reported a stop when its timer fired")
 	}
 }
+
+// A run keeps at most report.MaxSamples latencies overall and a proportional
+// share per entry, so its memory is bounded whatever the target's speed.
+func TestAggregatorBoundsTheSamplesARunKeeps(t *testing.T) {
+	const entries, n = 3, 300_000
+	results := make(chan dispatch, 1024)
+	done := make(chan []report.Tally)
+	go aggregate(results, done, entries, time.Now(), noopEmitter)
+	for i := range n {
+		results <- dispatch{index: i % entries, resp: Response{Status: 200, LatencyMs: float64(i%1000) + 1, Size: 10}}
+	}
+	close(results)
+	all := <-done
+
+	if got := len(all[0].Samples); got != report.MaxSamples {
+		t.Errorf("overall kept %d samples, want %d", got, report.MaxSamples)
+	}
+	perEntry := (report.MaxSamples + entries - 1) / entries
+	for i := 1; i <= entries; i++ {
+		if got := len(all[i].Samples); got != perEntry {
+			t.Errorf("entry %d kept %d samples, want %d", i-1, got, perEntry)
+		}
+		if all[i].Requests != n/entries {
+			t.Errorf("entry %d counted %d requests, want %d", i-1, all[i].Requests, n/entries)
+		}
+	}
+	if all[0].Requests != n {
+		t.Errorf("overall counted %d requests, want %d", all[0].Requests, n)
+	}
+}
