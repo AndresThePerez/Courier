@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1059,9 +1060,17 @@ func TestSynthesizedTerminalEventCarriesTheRunsLastID(t *testing.T) {
 // A run the broadcaster no longer remembers still gets a usable id.
 func TestSynthesizedTerminalEventFallsBackToIDOne(t *testing.T) {
 	s := newServer(t, newTarget(t, 0), nil)
-	e := s.terminalEvent(&report.Report{ID: "run-forgotten", Status: report.StatusCompleted})
-	if e.ID != 1 {
-		t.Errorf("terminal id = %d, want 1 when no id was recorded", e.ID)
+	e, ok := s.terminalEvent(&report.Report{ID: "run-forgotten", Status: report.StatusCompleted})
+	if !ok || e.ID != 1 {
+		t.Errorf("terminal = %+v, %v; want id 1 when no id was recorded", e, ok)
+	}
+}
+
+// A report that is still running never becomes a run_finished.
+func TestNoTerminalEventForARunningReport(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	if e, ok := s.terminalEvent(&report.Report{ID: "run-live", Status: report.StatusRunning}); ok {
+		t.Errorf("terminal event built for a running report: %+v", e)
 	}
 }
 
@@ -1136,7 +1145,8 @@ func TestWireTimesAreUTCAndUnsetOnesAbsent(t *testing.T) {
 	// Past the cooldown, a rebuilt terminal event has no cooldown to report.
 	c.advance(time.Hour)
 	rep, _ := s.mgr.Report(id)
-	terminal, err := json.Marshal(s.terminalEvent(rep))
+	e, _ := s.terminalEvent(rep)
+	terminal, err := json.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1190,5 +1200,251 @@ func TestFunctionalRunsCarryAVerdict(t *testing.T) {
 	last := frames[len(frames)-1]
 	if data, _ := last.data["data"].(map[string]any); data["verdict"] != report.VerdictPass {
 		t.Errorf("run_finished data = %v, want verdict PASS", last.data["data"])
+	}
+}
+
+// ---- a run registered before the broadcaster describes it ---------------
+
+// heldBus is the broadcaster with a Reset that can be held once, keeping a run
+// in the window where /api/status already names it and the broadcaster still
+// describes the run before it (or none).
+type heldBus struct {
+	*sse.Broadcaster
+	mu      sync.Mutex
+	hold    chan struct{}
+	entered chan struct{}
+}
+
+// arm makes the next Reset wait until release is closed.
+func (h *heldBus) arm() (entered, release chan struct{}) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.hold, h.entered = make(chan struct{}), make(chan struct{})
+	return h.entered, h.hold
+}
+
+func (h *heldBus) Reset(id string) {
+	h.mu.Lock()
+	hold, entered := h.hold, h.entered
+	h.hold, h.entered = nil, nil
+	h.mu.Unlock()
+	if hold != nil {
+		close(entered)
+		<-hold
+	}
+	h.Broadcaster.Reset(id)
+}
+
+// A viewer that opens the stream in that window stays attached, then receives
+// exactly the run's own events from run_started to run_finished, then the
+// retry: line and EOF, and gives its slot back.
+func TestStreamOpenedBeforeItsRunIsAnnouncedFollowsTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		earlierRun  bool
+		lastEventID string
+	}{
+		{name: "fresh server"},
+		{name: "after an earlier run", earlierRun: true},
+		{name: "with a Last-Event-ID", earlierRun: true, lastEventID: "2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &clock{}
+			s := newServer(t, newTarget(t, 0), c)
+			bus := &heldBus{Broadcaster: s.bus}
+			s.mgr = runner.NewManagerAt(s.ex, "test-target", bus, nil, c.now)
+			srv := httptest.NewServer(s)
+			defer srv.Close()
+
+			if tc.earlierRun {
+				startRun(t, s, payload(2, 0))
+				waitIdle(t, s)
+				c.advance(10 * time.Second)
+			}
+
+			entered, release := bus.arm()
+			var releaseOnce sync.Once
+			releaseReset := func() { releaseOnce.Do(func() { close(release) }) }
+			defer releaseReset()
+			started := make(chan error, 1)
+			go func() {
+				_, err := s.mgr.Start(s.runCtx, payload(3, 0))
+				started <- err
+			}()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the manager never reached Reset")
+			}
+			id := s.mgr.Status().RunID
+			if id == "" {
+				t.Fatal("no run registered in the window")
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/runs/"+id+"/stream", nil)
+			if tc.lastEventID != "" {
+				req.Header.Set("Last-Event-ID", tc.lastEventID)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("open stream: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("stream = %d, want 200", resp.StatusCode)
+			}
+			// The headers are written after the handler subscribes.
+			if n := s.bus.Subscribers(); n != 1 {
+				t.Errorf("subscribers in the window = %d, want 1", n)
+			}
+
+			releaseReset()
+			if err := <-started; err != nil {
+				t.Fatalf("start: %v", err)
+			}
+
+			type got struct {
+				id     uint64
+				name   string
+				runID  string
+				status string
+			}
+			var frames []got
+			var after []string
+			cur := got{}
+			sc := bufio.NewScanner(resp.Body)
+			sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+			for sc.Scan() {
+				line := sc.Text()
+				if len(frames) > 0 && frames[len(frames)-1].name == runner.EventRunFinished && cur.name == "" {
+					if line != "" {
+						after = append(after, line)
+					}
+					continue
+				}
+				switch {
+				case strings.HasPrefix(line, "id: "):
+					n, err := strconv.ParseUint(strings.TrimPrefix(line, "id: "), 10, 64)
+					if err != nil {
+						t.Fatalf("id line %q", line)
+					}
+					cur.id = n
+				case strings.HasPrefix(line, "event: "):
+					cur.name = strings.TrimPrefix(line, "event: ")
+				case strings.HasPrefix(line, "data: "):
+					var env struct {
+						RunID string `json:"run_id"`
+						Data  struct {
+							Status json.RawMessage `json:"status"`
+						} `json:"data"`
+					}
+					if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &env); err != nil {
+						t.Fatalf("data line %q: %v", line, err)
+					}
+					cur.runID, cur.status = env.RunID, string(env.Data.Status)
+				case line == "" && cur.name != "":
+					frames = append(frames, cur)
+					cur = got{}
+				}
+			}
+			if ctx.Err() != nil {
+				t.Fatalf("the stream did not end: %+v", frames)
+			}
+
+			if len(frames) == 0 || frames[0].name != runner.EventRunStarted {
+				t.Fatalf("frames = %+v, want run_started first", frames)
+			}
+			last := frames[len(frames)-1]
+			if last.name != runner.EventRunFinished || last.status == strconv.Quote(report.StatusRunning) {
+				t.Fatalf("last frame = %+v, want the run's own run_finished", last)
+			}
+			var ids []uint64
+			for i, f := range frames {
+				if f.runID != id {
+					t.Errorf("frame %d belongs to run %q, want %q", i, f.runID, id)
+				}
+				if i > 0 && f.id <= frames[i-1].id {
+					t.Errorf("frame %d id %d does not rise from %d", i, f.id, frames[i-1].id)
+				}
+				ids = append(ids, f.id)
+			}
+			// The broadcaster's own log of the run is the reference: nothing
+			// missing, nothing twice.
+			var want []uint64
+			for _, e := range s.bus.Replay() {
+				if e.RunID == id {
+					want = append(want, e.ID)
+				}
+			}
+			if !slices.Equal(ids, want) {
+				t.Errorf("stream ids = %v, the run published %v", ids, want)
+			}
+			if len(after) != 1 || !strings.HasPrefix(after[0], "retry: ") {
+				t.Errorf("after run_finished the stream sent %q, want one retry: line", after)
+			}
+			waitFor(t, "the viewer to give its slot back", func() bool { return s.bus.Subscribers() == 0 })
+		})
+	}
+}
+
+// Shutdown while a viewer waits for its run to be announced ends that stream
+// without a terminal event (the run never finished in front of it) and gives
+// the slot back; it does not wait for an announcement that may never come.
+func TestStreamWaitingForItsRunEndsAtShutdown(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	bus := &heldBus{Broadcaster: s.bus}
+	s.mgr = runner.NewManagerAt(s.ex, "test-target", bus, nil, nil)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	entered, release := bus.arm()
+	var releaseOnce sync.Once
+	releaseReset := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseReset()
+	started := make(chan error, 1)
+	go func() {
+		_, err := s.mgr.Start(s.runCtx, payload(3, 0))
+		started <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the manager never reached Reset")
+	}
+	id := s.mgr.Status().RunID
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/runs/"+id+"/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	closed := make(chan error, 1)
+	go func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		closed <- s.Close(cctx)
+	}()
+
+	body, _ := io.ReadAll(resp.Body)
+	if ctx.Err() != nil {
+		t.Fatalf("the stream did not end at shutdown: %q", body)
+	}
+	if strings.Contains(string(body), "event: ") {
+		t.Errorf("a stream whose run was never announced sent %q", body)
+	}
+	waitFor(t, "the waiting viewer to give its slot back", func() bool { return s.bus.Subscribers() == 0 })
+
+	releaseReset()
+	if err := <-started; err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if err := <-closed; err != nil {
+		t.Errorf("close: %v", err)
 	}
 }

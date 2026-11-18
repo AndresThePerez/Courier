@@ -206,12 +206,14 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	// tell "this run is over" from "the stream died", which is precisely the
 	// distinction the polling fallback has to make.
 	if rep.Status != report.StatusRunning && s.bus.RunID() != id {
-		s.streamHeaders(w)
-		rc := http.NewResponseController(w)
-		if writeEvent(w, rc, s.terminalEvent(rep)) == nil {
-			endStream(w, rc)
+		if e, ok := s.terminalEvent(rep); ok {
+			s.streamHeaders(w)
+			rc := http.NewResponseController(w)
+			if writeEvent(w, rc, e) == nil {
+				endStream(w, rc)
+			}
+			return
 		}
-		return
 	}
 
 	sub, err := s.bus.SubscribeRun(lastEventID(r))
@@ -233,10 +235,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A later run reset the log between the check above and the subscribe:
-	// this run is over, and nothing on the subscription will say so.
-	if sub.RunID != id {
-		s.finishStream(w, rc, id)
+	// The log describes another run. Either a later run reset it between the
+	// check above and the subscribe, so this run is over and nothing on the
+	// subscription will say so; or this run is registered (its id is already
+	// on /api/status) but the broadcaster has not been reset to it yet, so its
+	// events are still to come and the viewer stays attached for them. Only
+	// the stored report can tell the two apart.
+	if sub.RunID != id && s.finishStream(w, rc, id) {
 		return
 	}
 
@@ -275,10 +280,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !belongsTo(e, id) {
-				// A later run has started, so this one is over; its own
-				// run_finished went to a subscriber that was dropped.
-				s.finishStream(w, rc, id)
-				return
+				// Another run's event. If this run is over, a later run has
+				// started and this run's own run_finished went to a subscriber
+				// that was dropped. If it is still running, the event is the
+				// tail of the run before it, published while this one waited to
+				// be announced.
+				if s.finishStream(w, rc, id) {
+					return
+				}
+				continue
 			}
 			if err := writeEvent(w, rc, e); err != nil {
 				return
@@ -309,15 +319,23 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // finishStream ends a stream whose run's own run_finished it can no longer
-// deliver, with the terminal event rebuilt from the stored report.
-func (s *Server) finishStream(w http.ResponseWriter, rc *http.ResponseController, id string) {
+// deliver, with the terminal event rebuilt from the stored report. It reports
+// whether the stream is over: a run that is still running is not, and the
+// caller keeps waiting for its events.
+func (s *Server) finishStream(w http.ResponseWriter, rc *http.ResponseController, id string) bool {
 	rep, ok := s.mgr.Report(id)
 	if !ok {
-		return
+		// Evicted from history: there is nothing left to tell the viewer.
+		return true
 	}
-	if writeEvent(w, rc, s.terminalEvent(rep)) == nil {
+	e, ok := s.terminalEvent(rep)
+	if !ok {
+		return false
+	}
+	if writeEvent(w, rc, e) == nil {
 		endStream(w, rc)
 	}
+	return true
 }
 
 // endStream is the last thing a stream sends. EventSource reconnects whenever
@@ -373,7 +391,14 @@ func writeEvent(w http.ResponseWriter, rc *http.ResponseController, e runner.Eve
 // who attached after the broadcaster moved on. It carries the last id the
 // run's own events reached, so a client resuming from it is not sent back to
 // the start; 1 stands in when the broadcaster no longer remembers the run.
-func (s *Server) terminalEvent(rep *report.Report) runner.Event {
+//
+// It refuses a run that is still running: a viewer treats run_finished as the
+// end of the run and closes, so one built from a live report would hide the
+// rest of that run.
+func (s *Server) terminalEvent(rep *report.Report) (runner.Event, bool) {
+	if rep.Status == report.StatusRunning {
+		return runner.Event{}, false
+	}
 	var cooldown time.Time
 	if until := s.mgr.Status().CooldownUntil; until != nil {
 		cooldown = *until
@@ -392,7 +417,7 @@ func (s *Server) terminalEvent(rep *report.Report) runner.Event {
 			Verdict:       verdictOf(rep),
 			CooldownUntil: cooldown,
 		},
-	}
+	}, true
 }
 
 // belongsTo keeps a stream to the run it asked for. The manager stamps every
