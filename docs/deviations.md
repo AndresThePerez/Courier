@@ -1295,3 +1295,33 @@ seeded sequences over the wired page, with the rules checked after every step);
 `web/test/live-races.test.mjs` and `web/test/live-orderings.test.mjs` (another visitor's run
 at every moment of this tab's own, every call failing every way); `web/test/read-shapes.test.mjs`
 (every reader against a 2xx that is not what it reads).
+
+## N42 — Method badges are coloured by method, read from the endpoint catalog
+
+**What the page did:** every request in the sidebar showed the method as plain grey text,
+and the text was the literal `GET` written into the sidebar code, under a comment recording
+the choice of no coloured method badges. The run sequence and the result rows showed no
+method at all.
+
+**What it does now:** the method is read from the catalog `GET /api/collections` serves,
+`endpoints[].method`, by the request's endpoint id, and shown as a badge in the sidebar
+tree (curated collections, saved requests and saved collections), on every sequence row and
+on every functional result row. `GET` is drawn in `--pass`, `POST` in `--warn`, and any other
+method in the muted text colour; the method is upper-cased first, so `get` and `Post` read as
+`GET` and `POST`. A request whose endpoint the page does not know (one stored for an
+endpoint that has since left the catalog, or any request while the catalog has not loaded or
+failed to load) shows a muted `---` named "Method unknown", never a guessed `GET`.
+
+**Why the earlier choice is reversed:** a hard-coded `GET` is a claim about the catalog
+made in a second place, and it would have gone on saying `GET` the day the catalog gained
+another method. Reading the catalog keeps the one statement of each endpoint's method where
+the sandbox keeps it, and colour lets a visitor see at a glance which requests write.
+
+**What a visitor sees today:** every endpoint in the catalog is a `GET`, so every badge is
+green until a `POST` endpoint exists. No colour is new: both hues are existing tokens.
+
+**Proof:** `web/test/method-badges.test.mjs` (a request for a `POST` endpoint renders
+`method-post`; upper, lower and mixed case, an unknown method, an empty, missing or
+non-text method, an endpoint id with quotes and brackets, and an endpoint not in the
+catalog, in all three lists; every list picking the method up once the catalog arrives; no
+list writing a method of its own).
