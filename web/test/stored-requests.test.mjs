@@ -1,7 +1,7 @@
 // What a request read back from this browser is turned into before the page
 // shows, queues or sends it: a request the editor built comes back exactly as
 // it was written, and anything else is rebuilt from the fields the editor
-// writes, of the kinds it writes, within its bounds.
+// writes, of the kinds it writes, within the bounds storage.js states.
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -108,9 +108,9 @@ test('a stored assertion keeps only type, op, a json path and a value of a kind 
   assert.deepEqual(mixed.assertions, [{ type: 'status', op: 'eq', value: 200 }]);
 });
 
-test('a stored request is held to the editor\'s bounds', () => {
+test('a stored request has its name and parameter values cut as the server cuts them, and its assertion path and value kept whole', () => {
   const long = 'x'.repeat(5000);
-  assert.deepEqual(assertionOf({ type: 'json', path: long, op: 'eq', value: long }), { type: 'json', path: 'x'.repeat(500), op: 'eq', value: 'x'.repeat(500) });
+  assert.deepEqual(assertionOf({ type: 'json', path: long, op: 'eq', value: long }), { type: 'json', path: long, op: 'eq', value: long });
 
   const big = rebuilt(JSON.stringify(request(
     Array.from({ length: 1000 }, (_, i) => ({ type: 'status', op: 'eq', value: i })),

@@ -1207,8 +1207,10 @@ malformed field are dropped. Every request stored under either key is rebuilt fr
 set of checked primitive fields before it is shown or sent: `id`, `name` and `endpoint` as
 text, `params` as text values, and each assertion as a `type` and `op` the editor offers
 (any other pair is dropped), a `path` on a json assertion only, and a `value` that is text
-or a finite number, within the editor's bounds (20 assertions; 500 characters for a
-parameter value, path or assertion value; 120 for a name). Nothing else in a stored value is
+or a finite number. A name is cut to 120 characters and a parameter value to 500, as the
+server itself cuts them, and a request keeps its first 20 assertions. An assertion's path
+and value are kept as text of any length: an over-long one is not shortened, it is refused
+by field when it is sent. Nothing else in a stored value is
 kept, so it can neither put a URL, host or method on the wire nor hand the page a value
 nested too deeply to show or encode. A request whose endpoint is no longer in the catalog
 is kept, and the server refuses the run naming the field, as it would any request.
@@ -1218,4 +1220,11 @@ reads and writes, another tab's write, the payload keys);
 `web/test/saved-collections.test.mjs` (saving, listing, Add all at the cap, delete and
 Undo, two tabs, garbage by load and by event, 1,000 collections, a 5 MB value);
 `web/test/workspace-model.test.mjs` runs its 300 seeded tab, storage and event orderings
-over saved collections as well as saved requests.
+over saved collections as well as saved requests; `web/test/stored-requests.test.mjs` and
+`web/test/stored-request-kinds.test.mjs` (what a stored request is rebuilt into, field by
+field and kind by kind); `web/test/run-setup-hostile.test.mjs` (hostile stored setups);
+`web/test/run-setup-writes.test.mjs` (which actions write the setup, and that polls and
+renders do not); `web/test/run-panel-failsafe.test.mjs` and
+`web/test/run-panel-wire.test.mjs` (a row that cannot be shown or sent, and what a run
+puts on the wire); `web/test/saved-collections-tabs.test.mjs` (saved collections across
+tabs).

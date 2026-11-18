@@ -368,20 +368,34 @@ async function start() {
   // slips through between the run ending and the poll noticing gets a 409 and
   // lands in the right state, which is exactly what step 5 asks for.
   // Whatever building or sending the payload throws, Start must come back:
-  // a button left on "Starting..." can only be cleared by a reload.
+  // a button left on "Starting..." can only be cleared by a reload. Only a
+  // payload this page could not build or encode is blamed on a queued
+  // request; a request that was built and then failed on the way is not.
   let outcome;
+  let payload = null;
   try {
-    outcome = await api.startRun({
+    payload = {
       mode: state.mode,
       sequence: entries.map((e) => requestPayload(e.request)),
       options: { ...state.options },
-    });
+    };
+    // Encoded once here so a payload that cannot be encoded fails as one,
+    // rather than inside the request where it would read as the network.
+    JSON.stringify(payload);
   } catch (error) {
     console.warn('run not sent', error);
+    payload = null;
     outcome = { ok: false, kind: 'error', error: 'a queued request could not be sent from this page.' };
-  } finally {
-    starting = false;
   }
+  if (payload) {
+    try {
+      outcome = await api.startRun(payload);
+    } catch (error) {
+      console.warn('run not started', error);
+      outcome = { ok: false, kind: 'error', error: 'Courier could not be reached.' };
+    }
+  }
+  starting = false;
   applyStartOutcome(outcome, state.mode);
   await hooks.refresh();
   render(get());

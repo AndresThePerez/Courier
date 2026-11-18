@@ -129,12 +129,16 @@ const assertionOps = {
   body_contains: ['contains'],
 };
 
-// The editor's and the server's caps: 20 assertions a request, 500 characters
-// for a parameter value, an assertion value or a JSON path, 120 for a name.
-// Ids and parameter names are the page's or the catalog's and are short; one
-// past these bounds was not made by the page.
+// What a restored request is cut to, and what it is not. A name is cut to 120
+// characters and a parameter value to 500, exactly as the server cuts them, so
+// the cut changes nothing a run would have sent; a request keeps its first 20
+// assertions, the editor's cap. An assertion's path and value are never cut:
+// the editor accepts them at any length, and a shortened one would check
+// something the visitor did not write, so an over-long one goes out whole and
+// is refused by field. Ids and parameter names are the page's or the catalog's
+// and are short; one past these bounds was not made by the page.
 export const MaxStoredAssertions = 20;
-const MaxText = 500;
+const MaxParamValue = 500;
 const MaxName = 120;
 const MaxId = 200;
 const MaxParams = 32;
@@ -149,9 +153,8 @@ const isId = (v, max) => typeof v === 'string' && v !== '' && v.length <= max;
 // A stored value is whatever the browser hands back, and another script on
 // the origin, an older build or a damaged profile may have written it. So the
 // result holds only the fields the page itself writes, each one a primitive of
-// the kind the editor produces, within the editor's bounds, or a container
-// rebuilt from such primitives; nothing from the stored value is kept by
-// reference. That is what stops a stored url, host or method reaching a run's
+// the kind the editor produces, or a container rebuilt from such primitives;
+// nothing from the stored value is kept by reference. That is what stops a stored url, host or method reaching a run's
 // payload, and a value nested deeper than the page can print or encode
 // wedging it. A request the editor built comes back unchanged.
 export function requestOf(value) {
@@ -179,13 +182,14 @@ function paramsOf(value) {
   const entries = Object.entries(value);
   if (entries.length > MaxParams) return null;
   if (!entries.every(([k, v]) => isId(k, MaxParamKey) && typeof v === 'string')) return null;
-  return Object.fromEntries(entries.map(([k, v]) => [k, v.slice(0, MaxText)]));
+  return Object.fromEntries(entries.map(([k, v]) => [k, v.slice(0, MaxParamValue)]));
 }
 
 // assertionOf drops an assertion whose type or operator the page does not
 // know. Its path is kept only on a json assertion; its value only as a string
-// (or, outside body_contains, a finite number). Keys keep their stored order,
-// so a saved request reads back exactly as it was written.
+// (or, outside body_contains, a finite number). Both are kept whole: text
+// cannot nest, so its length is no risk to the page. Keys keep their stored
+// order, so a saved request reads back exactly as it was written.
 function assertionOf(a) {
   const { type, op } = a;
   if (typeof type !== 'string' || !Object.hasOwn(assertionOps, type)) return null;
@@ -194,8 +198,8 @@ function assertionOf(a) {
   for (const key of Object.keys(a)) {
     if (key === 'type') out.type = type;
     else if (key === 'op') out.op = op;
-    else if (key === 'path' && type === 'json' && typeof a.path === 'string') out.path = a.path.slice(0, MaxText);
-    else if (key === 'value' && typeof a.value === 'string') out.value = a.value.slice(0, MaxText);
+    else if (key === 'path' && type === 'json' && typeof a.path === 'string') out.path = a.path;
+    else if (key === 'value' && typeof a.value === 'string') out.value = a.value;
     else if (key === 'value' && type !== 'body_contains' && Number.isFinite(a.value)) out.value = a.value;
   }
   return out;
