@@ -538,3 +538,18 @@ func TestAssertionsReadTheStatusOfADroppedBody(t *testing.T) {
 		t.Errorf("row = passed %v status %d outcomes %+v, want a failed row whose status assertion read 200", row.Passed, row.Status, row.Assertions)
 	}
 }
+
+// A functional row records the redirect itself and the walk goes no further.
+func TestFunctionalRecordsARedirectWithoutFollowingIt(t *testing.T) {
+	rd := newRedirecting(t, http.StatusFound, redirectLocations["another server"])
+	res := RunFunctional(context.Background(), NewExecutor(rd.target.URL), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search",
+			Assertions: []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: float64(302)}}}}}, nil)
+	row := res.Functional.Results[0]
+	if row.Status != http.StatusFound || row.Error != "" || !row.Passed {
+		t.Errorf("row = status %d error %q passed %v, want the 302 recorded and asserted", row.Status, row.Error, row.Passed)
+	}
+	if n := rd.away.Load(); n != 0 {
+		t.Errorf("the second server was asked %d times, want never", n)
+	}
+}

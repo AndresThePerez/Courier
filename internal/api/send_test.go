@@ -640,3 +640,24 @@ func TestSendEvaluatesNoAssertionWithoutAResponse(t *testing.T) {
 		}
 	}
 }
+
+// A Send that is answered with a redirect shows the redirect; the server it
+// points at is never asked.
+func TestSendRecordsARedirectWithoutFollowingIt(t *testing.T) {
+	var away atomic.Int64
+	elsewhere := serveTarget(t, func(w http.ResponseWriter, _ *http.Request) {
+		away.Add(1)
+		_, _ = io.WriteString(w, `{"total":107}`)
+	})
+	base := serveTarget(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", elsewhere+"/api/search")
+		w.WriteHeader(http.StatusFound)
+	})
+	got := decode[sendResult](t, do(t, newServer(t, base, nil), http.MethodPost, "/api/send", sendable()))
+	if got.Status != http.StatusFound || got.Error != "" {
+		t.Errorf("status %d error %q, want the 302 recorded", got.Status, got.Error)
+	}
+	if n := away.Load(); n != 0 {
+		t.Errorf("the second server was asked %d times, want never", n)
+	}
+}

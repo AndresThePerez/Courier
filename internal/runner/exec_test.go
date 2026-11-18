@@ -376,3 +376,74 @@ func TestFailedDispatchesCarryFixedMessages(t *testing.T) {
 		t.Errorf("a response with no error has the public error %q, want none", got)
 	}
 }
+
+// transportOf exposes the executor's transport to the tests in this package.
+func transportOf(e *Executor) *http.Transport { return e.client.Transport.(*http.Transport) }
+
+// The target is fixed by configuration; a proxy from the environment would
+// put another host on the path of every dispatch.
+func TestExecutorUsesNoProxy(t *testing.T) {
+	if transportOf(NewExecutor("http://192.0.2.10")).Proxy != nil {
+		t.Error("the executor's transport consults a proxy")
+	}
+}
+
+// redirecting is a target that answers every request with code and Location,
+// and counts what it is asked; elsewhere counts what reaches a second server.
+type redirecting struct {
+	target, elsewhere *httptest.Server
+	hits, away        atomic.Int64
+}
+
+func newRedirecting(t *testing.T, code int, location func(elsewhere string) string) *redirecting {
+	t.Helper()
+	rd := &redirecting{}
+	rd.elsewhere = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rd.away.Add(1)
+		fmt.Fprint(w, `{"total":1}`)
+	}))
+	t.Cleanup(rd.elsewhere.Close)
+	loc := location(rd.elsewhere.URL)
+	rd.target = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rd.hits.Add(1)
+		w.Header().Set("Location", loc)
+		w.WriteHeader(code)
+	}))
+	t.Cleanup(rd.target.Close)
+	return rd
+}
+
+var redirectCodes = []int{
+	http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+	http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+}
+
+var redirectLocations = map[string]func(elsewhere string) string{
+	"another server":  func(e string) string { return e + "/api/search" },
+	"relative":        func(string) string { return "/elsewhere" },
+	"another scheme":  func(e string) string { return strings.Replace(e, "http://", "https://", 1) + "/api/search" },
+	"another host":    func(string) string { return "http://target.invalid/api/search" },
+	"a non-http host": func(string) string { return "ftp://192.0.2.10/x" },
+}
+
+// A redirect is the target's answer, recorded as it stands; following it would
+// send a dispatch somewhere the sandbox never named.
+func TestRedirectsAreRecordedNotFollowed(t *testing.T) {
+	for _, code := range redirectCodes {
+		for name, loc := range redirectLocations {
+			t.Run(fmt.Sprintf("%d %s", code, name), func(t *testing.T) {
+				rd := newRedirecting(t, code, loc)
+				res := NewExecutor(rd.target.URL).Do(context.Background(), searchReq(nil), true)
+				if res.Err != nil || res.Status != code {
+					t.Errorf("status %d err %v, want %d recorded as the response", res.Status, res.Err, code)
+				}
+				if n := rd.hits.Load(); n != 1 {
+					t.Errorf("the target was asked %d times, want once", n)
+				}
+				if n := rd.away.Load(); n != 0 {
+					t.Errorf("the second server was asked %d times, want never", n)
+				}
+			})
+		}
+	}
+}
