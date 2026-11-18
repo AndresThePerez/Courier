@@ -23,6 +23,9 @@
 //      dropped: a history report after a later Start, Watch or history click,
 //      a finished report after the view moved on.
 //   7. At most one stream is open at any time.
+//   8. A run that answered 404 is not attached again until status reports a
+//      different run or no run, however long status goes on naming it. One
+//      stream and one poll is all a vanished run ever costs.
 //
 // The rules live in two pure functions, step and decideSync, over one plain
 // object; they touch no document, timer or network. createLive is the only
@@ -48,7 +51,7 @@ const MaxEnded = 32;
 export const VIEW_KEYS = ['run', 'results', 'progress', 'report', 'spectator', 'outcome'];
 
 // TRACK_KEYS is the other half: what the tab is following.
-const TRACK_KEYS = ['attached', 'ended', 'opening', 'checked'];
+const TRACK_KEYS = ['attached', 'ended', 'gone', 'opening', 'checked'];
 
 export function initialLive() {
   return {
@@ -57,10 +60,13 @@ export function initialLive() {
     progress: null,
     report: null,
     spectator: false,
-    outcome: null, // how the shown run ended, from its terminal event: { run_id, status, duration_ms, verdict }
+    // How the shown run ended: { run_id, status, duration_ms, verdict } from its
+    // terminal event, or status 'unavailable' for a run the server lost.
+    outcome: null,
 
     attached: '', // the run whose events are applied; '' when none
     ended: [], // runs this tab saw end
+    gone: '', // the run that answered 404, until status stops naming it
     opening: '', // the history entry the visitor asked for and is waiting on
     checked: '', // the last disagreement between status and the attachment that was looked into
   };
@@ -105,7 +111,7 @@ export function decideSync(live, status) {
     if (live.checked === `${live.attached}>${id}`) return none();
     return { action: 'check', runId: live.attached };
   }
-  if (!id || live.ended.includes(id)) return none();
+  if (!id || id === live.gone || live.ended.includes(id)) return none();
   // Rule 1: anything on screen, or a report the visitor is waiting for, holds
   // the view.
   if (live.run || live.report || live.opening) return none();
@@ -126,10 +132,20 @@ function follow(live, id, mode, startedAt, spectator) {
     opening: '',
     checked: '',
     ended: live.ended.filter((x) => x !== id),
+    gone: live.gone === id ? '' : live.gone,
   };
 }
 
-function onStatus(live, status) {
+// forgetGone is the second half of rule 8: the id is held only while status
+// goes on naming it. A live run status does not name says nothing either way.
+function forgetGone(live, status) {
+  if (!live.gone || !status) return live;
+  if (status.running && (!status.run_id || status.run_id === live.gone)) return live;
+  return { ...live, gone: '' };
+}
+
+function onStatus(before, status) {
+  const live = forgetGone(before, status);
   const decision = decideSync(live, status);
   if (decision.action === 'attach') {
     return same(follow(live, decision.runId, decision.mode, decision.startedAt, false));
@@ -158,9 +174,9 @@ function onStart(live, e) {
 function onWatch(live, e) {
   const id = e.run_id;
   if (!id) return same(live);
-  // Rule 4: a status that still names a run this tab saw end is stale. Read it
-  // again rather than follow it.
-  if (live.ended.includes(id)) return { live, effects: [{ type: 'status' }] };
+  // Rules 4 and 8: a status that still names a run this tab saw end, or one
+  // the server no longer has, is stale. Read it again rather than follow it.
+  if (id === live.gone || live.ended.includes(id)) return { live, effects: [{ type: 'status' }] };
   // Already following: the replay has arrived and does not arrive twice, so
   // the only thing left to say is that this tab is a spectator.
   if (live.attached === id) return same({ ...live, spectator: true, opening: '' });
@@ -272,6 +288,23 @@ function onRunEvent(live, e) {
   }
 }
 
+// onGone is rule 8's first half. What had arrived stays on screen, marked as
+// a run the server no longer has; a tab that had been sent nothing has nothing
+// to keep, and goes back to showing nothing so it can follow the next run.
+function onGone(live, e) {
+  const id = e.run_id;
+  if (!id || live.attached !== id) return same(live);
+  let next = { ...live, attached: '', checked: '', gone: id, spectator: false };
+  if (next.run && next.run.id === id) {
+    if (next.results.length === 0 && !next.progress) {
+      next = { ...next, run: null, results: [], progress: null, report: null, outcome: null };
+    } else {
+      next = { ...next, outcome: { run_id: id, status: 'unavailable', duration_ms: null, verdict: '' } };
+    }
+  }
+  return { live: next, effects: [{ type: 'status' }] };
+}
+
 // step folds one event into the live state and answers { live, effects }. It
 // never changes what it was given; when nothing changed, live is the object
 // that came in.
@@ -284,7 +317,7 @@ function onRunEvent(live, e) {
 //   open { run_id }               the visitor clicked a history entry
 //   opened { run_id, report } / open_failed { run_id }
 //   report { run_id, report } / report_failed { run_id }  the finished report of a run that ended
-//   lost { run_id }               the transport stopped without the run ending
+//   gone { run_id }               the attached run answered 404
 //
 // Effects are what the caller must now do: { type: 'report', runId } fetch a
 // finished report, { type: 'history', runId } fetch a stored one,
@@ -327,9 +360,8 @@ export function step(live, event) {
       if (!showsEndOf(live, e.run_id)) return same(live);
       return same({ ...live, outcome: { ...live.outcome, report: 'failed' } });
 
-    case 'lost':
-      if (!e.run_id || live.attached !== e.run_id) return same(live);
-      return same({ ...live, attached: '', checked: '' });
+    case 'gone':
+      return onGone(live, e);
 
     default:
       return same(live);
@@ -416,12 +448,16 @@ export function createLive({ api, get, set, showTab = () => {} }) {
       transport: (kind) => {
         if (conn !== mine) return;
         if (kind === 'idle') {
-          // It stopped by itself and the run did not end.
-          conn = null;
-          dispatch({ type: 'lost', run_id: want });
+          // It stopped by itself with the run neither ended nor reported
+          // gone. Whatever the reason, there is nothing to follow, and
+          // treating it as gone is what cannot loop.
+          dispatch({ type: 'gone', run_id: want });
           return;
         }
         set({ transport: kind });
+      },
+      gone: () => {
+        if (conn === mine) dispatch({ type: 'gone', run_id: want });
       },
     });
   }

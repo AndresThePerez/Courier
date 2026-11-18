@@ -151,6 +151,10 @@ function renderSummary(state, rep, run, mode) {
         state.spectator && el('span', { class: 'badge', text: 'spectating' }),
       ]),
       el('div', { class: 'results-meta mono', text: bits.filter(Boolean).join('  ·  ') }),
+      !rep && outcome && outcome.status === 'unavailable' && el('p', {
+        class: 'note',
+        text: 'This run is no longer on the server.',
+      }),
       !rep && outcome && outcome.report === 'failed' && el('p', {
         class: 'note',
         text: 'The finished report could not be loaded - open it from History.',

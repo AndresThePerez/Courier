@@ -619,3 +619,99 @@ test('run_finished from the stream and from the poll together fetch the report o
   assert.equal(callsTo(`/api/runs/${id}`).length, 1);
   assert.equal(get().report.id, id);
 });
+
+// ------------------------------------------------------------------ a run that no longer exists
+
+const tick = async (t, ms, step = 500) => {
+  for (let left = ms; left > 0; left -= step) {
+    t.mock.timers.tick(Math.min(step, left));
+    await flush(2);
+  }
+};
+
+test('a watched run that vanishes is not followed in a loop: one stream, one status read after the 404, and it is not shown as running', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  byId('watch-run').click();
+  await flush();
+  const stream = streamsFor(id)[0];
+  stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 2 }));
+  stream.emit('request_result', frame('request_result', id, resultRow(id, 0)));
+
+  // The server restarts: the stream drops, the run is unknown, nothing is live.
+  server.reports.clear();
+  server.status = { running: false, budget_balance: 1500 };
+  const statusBefore = callsTo('/api/status').length;
+  stream.fail();
+  await flush();
+
+  assert.equal(callsTo(`/api/runs/${id}`).length, 1, 'one poll, which answered 404');
+  assert.equal(callsTo('/api/status').length, statusBefore + 1, 'status is read once right after the 404');
+  assert.equal(get().transport, 'idle');
+  assert.equal(pill().textContent, 'unavailable');
+  assert.match(byId('results-summary').textContent, /This run is no longer on the server\./);
+  assert.equal(get().results.length, 1, 'what arrived stays');
+  assert.equal(get().spectator, false);
+
+  await tick(t, 10000);
+  assert.ok(streamsFor(id).length <= 2, `${streamsFor(id).length} streams opened for the vanished run`);
+  assert.equal(streamsFor(id).length, 1);
+  assert.equal(callsTo(`/api/runs/${id}`).length, 1, 'the vanished run is not asked for again');
+  assert.equal(callsTo('/api/status').length, statusBefore + 1 + 3, 'only the 3s status poll since');
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('a vanished run that status goes on reporting is not attached again until status moves on', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  assert.equal(streamsFor(id).length, 1);
+
+  // The run is unknown to the report route while status still names it.
+  server.reports.delete(id);
+  const before = fetchStub.calls.length;
+  streamsFor(id)[0].fail();
+  await flush();
+  await tick(t, 30000);
+
+  assert.equal(eventSources.opened, 1, 'no second stream in 30s');
+  assert.equal(callsTo(`/api/runs/${id}`).length, 1);
+  assert.ok(fetchStub.calls.length - before <= 13, `${fetchStub.calls.length - before} requests in 30s`);
+  assert.equal(get().run, null, 'nothing had arrived, so nothing is shown');
+  assert.equal(get().status.run_id, id);
+
+  // Watch does not reopen it either.
+  byId('watch-run').click();
+  await flush();
+  assert.equal(eventSources.opened, 1);
+
+  // Status reports no run, then a different one: this tab follows that.
+  server.status = { running: false, budget_balance: 1500 };
+  await tick(t, 3000);
+  const next = server.begin();
+  await tick(t, 3000);
+  assert.equal(streamsFor(next).length, 1);
+  assert.equal(get().run.id, next);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('Cancel on a run whose stream went quiet learns it ended from one read of the run', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  const stream = streamsFor(id)[0];
+  stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 1 }));
+
+  // The run ended on the server and the stream never said so.
+  server.end('expired');
+  byId('cancel-run').click();
+  await flush();
+
+  assert.equal(callsTo(`/api/runs/${id}`, 'DELETE').length, 1);
+  assert.equal(get().report.id, id, 'the status that followed the cancel led to the report');
+  assert.equal(pill().textContent, 'expired');
+  assert.equal(get().transport, 'idle');
+  assert.equal(stream.readyState, EventSource.CLOSED);
+  assert.doesNotMatch(byId('start-note').textContent, /Could not/, 'a cancel that found nothing to stop is not a failure');
+});

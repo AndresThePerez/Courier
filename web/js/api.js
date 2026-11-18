@@ -172,10 +172,18 @@ export function onRunStarted(fn) {
 // Cloudflare tunnel, and a buffering proxy would otherwise kill live results
 // outright rather than degrade them.
 //
-// handlers: { event({type, run_id, data}), transport('sse'|'polling'|'idle') }.
-// Returns a stop() function.
+// handlers: { event({type, run_id, data}), transport('sse'|'polling'|'idle'),
+// gone() }. gone is the run answering 404: it aged out of the server's history
+// or the server restarted, and there is nothing left to follow.
+//
+// Returns a stop() function. stop.probe() reads the run's report once, now,
+// without leaving the stream: it is how a caller that has reason to think the
+// run is over finds out, and it ends the attachment if it is.
+//
+// It opens exactly one EventSource and never lets it reconnect, so the number
+// of stream requests a run can cost is the number of times a caller opened it.
 export function openLive(runId, handlers) {
-  const h = { event: () => {}, transport: () => {}, ...handlers };
+  const h = { event: () => {}, transport: () => {}, gone: () => {}, ...handlers };
 
   let stopped = false;
   let source = null;
@@ -186,9 +194,11 @@ export function openLive(runId, handlers) {
 
   // Cross-transport memory. A fallback that lands mid-run re-reads the whole
   // report, so without these the polling path would replay run_started and
-  // every row the stream had already delivered.
+  // every row the stream had already delivered. Rows are remembered by index,
+  // not counted: a stream may deliver one twice, and a count would then skip
+  // a row the page never had.
   let started = false;
-  let delivered = 0;
+  const delivered = new Set();
 
   function announce(next) {
     if (kind === next) return;
@@ -227,9 +237,12 @@ export function openLive(runId, handlers) {
 
   function finish(event) {
     emit(event);
-    // The server holds the stream open after run_finished on purpose — closing
-    // it would make EventSource reconnect and replay the terminal event
-    // forever (N22). Closing it is the client's job, and this is it.
+    // After a run's run_finished the server writes `retry: 60000` and ends the
+    // stream, on every path, a stream opened on an already finished run
+    // included (docs/deviations.md N38). Closing here, on the terminal event
+    // itself, is what makes that end of stream silent: an EventSource left
+    // open would report it as an error and, a minute later, reconnect to be
+    // told the same thing again.
     stop();
   }
 
@@ -239,11 +252,13 @@ export function openLive(runId, handlers) {
     announce('sse');
     source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/stream`);
     for (const type of LiveEvents) source.addEventListener(type, onFrame);
-    // EventSource reports a refused connection, a dropped one, a mid-flight
-    // reconnect, and the 503 {"poll":true} over the subscriber cap as the same
-    // bare error with no status code. They all mean the same thing here: this
-    // run is still live and the stream is not carrying it, so fall back rather
-    // than let EventSource retry into a ceiling it cannot see.
+    // EventSource reports a refused connection, a dropped one, a stream the
+    // server ended, and the 503 {"poll":true} over the subscriber cap as the
+    // same bare error with no status code. Reaching this handler at all means
+    // run_finished has not been seen (the source is closed the moment it is),
+    // so the run may still be live and the stream is not carrying it: fall
+    // back at once rather than let EventSource retry into a ceiling it cannot
+    // see, or wait out the minute the server's `retry:` asks of a reconnect.
     source.onerror = () => fallback('the stream errored or closed');
     watchdog = setTimeout(() => fallback(`no events within ${FirstEventMs}ms`), FirstEventMs);
   }
@@ -262,7 +277,7 @@ export function openLive(runId, handlers) {
     // run_finished in particular must not end this stream.
     if (!envelope || envelope.run_id !== runId) return;
     if (envelope.type === 'run_started') started = true;
-    if (envelope.type === 'request_result') delivered += 1;
+    if (envelope.type === 'request_result') delivered.add(rowKey(envelope.data, delivered.size));
     if (envelope.type === 'run_finished') {
       finish(envelope);
       return;
@@ -295,9 +310,10 @@ export function openLive(runId, handlers) {
       absorb(res.body);
     } else if (res.status === 404) {
       // 404 is the run having aged out of the history ring, or a server that
-      // restarted under us. There is nothing left to follow; the idle status
-      // poll takes over the moment this transport says it is gone.
+      // restarted under us. There is nothing left to follow, and saying so is
+      // what keeps the caller from attaching to the same id again.
       console.warn('polled run is gone', runId);
+      h.gone();
       stop();
     } else {
       console.warn('run poll failed', res.error);
@@ -326,10 +342,12 @@ export function openLive(runId, handlers) {
     }
 
     const rows = (rep.functional && rep.functional.results) || [];
-    for (let i = delivered; i < rows.length; i += 1) {
-      emit({ type: 'request_result', run_id: rep.id, data: rows[i] });
-    }
-    delivered = Math.max(delivered, rows.length);
+    rows.forEach((row, i) => {
+      const key = rowKey(row, i);
+      if (delivered.has(key)) return;
+      delivered.add(key);
+      emit({ type: 'request_result', run_id: rep.id, data: row });
+    });
 
     const overall = rep.performance && rep.performance.overall;
     if (overall) {
@@ -354,17 +372,31 @@ export function openLive(runId, handlers) {
         data: {
           status: rep.status,
           duration_ms: rep.duration_ms,
-          verdict: (rep.performance && rep.performance.verdict) || '',
-          // The polled report does not carry one; the status poll this
-          // transport hands back to reads the authoritative value.
-          cooldown_until: '',
+          // A functional run carries a verdict too, on its own block.
+          verdict: (rep.performance && rep.performance.verdict) || (rep.functional && rep.functional.verdict) || '',
+          // No cooldown_until: the report does not carry one, and the stream's
+          // own terminal event may omit it as well. Status is what says when
+          // the next run may start, and the caller reads it on every end.
         },
       });
     }
   }
 
+  // probe is one read of the report on top of whatever transport is open.
+  // tick already refuses to overlap itself, so a probe during a poll is the
+  // poll.
+  stop.probe = () => {
+    void tick();
+  };
+
   openStream();
   return stop;
+}
+
+// rowKey is what makes two deliveries of a row the same row: its index, or
+// its position when a row carries none.
+function rowKey(row, position) {
+  return row && Number.isInteger(row.index) ? row.index : `#${position}`;
 }
 
 function elapsedSince(iso) {
