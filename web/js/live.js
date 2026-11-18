@@ -165,13 +165,19 @@ function onStatus(before, status) {
   return same(live);
 }
 
-// onStart is this tab's own 202: it always attaches (the visitor asked).
+// onStart is this tab's own 202. The visitor asked, so it attaches whatever
+// the tab was showing, with the one exception rule 4 makes for everything.
 function onStart(live, e) {
   const id = e.run_id;
   if (!id) return same(live);
   // Status can report the run before the 202 is read, and a tab showing
-  // nothing is then already following it; what arrived is kept.
-  if (live.attached === id) return same({ ...live, spectator: false, opening: '' });
+  // nothing is then already following it; what arrived is kept. It can even
+  // have followed the run to its end by then: the 202 is old news, the end is
+  // on screen, and attaching again would take it away to fetch it back.
+  if (live.attached === id || live.ended.includes(id)) {
+    if (!live.spectator && !live.opening) return same(live);
+    return same({ ...live, spectator: false, opening: '' });
+  }
   return same(follow(live, id, e.mode || '', e.started_at || '', false));
 }
 

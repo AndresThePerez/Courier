@@ -1242,8 +1242,11 @@ is replaced only by that tab's visitor: Start, Watch, opening a history entry, o
 While another run is live such a tab keeps its view, and the run banner reads
 `A run is live - Watch to follow it.`; Watch attaches and clears the old report. Everything
 else in N29 stands: a tab showing nothing still attaches by itself (which is what repaints
-a tab reloaded mid-run), the tab that pressed Start always attaches and is the only one
-moved to the Results tab, and a tab that attached by itself is not marked a spectator. The
+a tab reloaded mid-run), the tab that pressed Start attaches and is the only one moved to
+the Results tab, and a tab that attached by itself is not marked a spectator. One case is
+new: status can name a tab's own run before its 202 is read, and a tab showing nothing has
+then already followed the run, possibly to its end. A 202 for a run the tab has seen end
+attaches nothing, since the end is already on screen. The
 spectating badge is now dropped when the watched run ends, when a history entry is opened
 and when the tab starts its own run.
 

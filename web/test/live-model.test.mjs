@@ -75,6 +75,8 @@ function nextEvent(rnd, live, world) {
     world.live = `n${world.next}`;
     return rnd() < 0.5 ? { type: 'start', run_id: world.live, mode: 'functional' } : { type: 'status', status: { running: true, run_id: world.live, mode: 'functional' } };
   }
+  // A 202 can be read late: after status led the tab through the whole run.
+  if (roll < 0.26 && live.ended.length > 0) return { type: 'start', run_id: pick(rnd, live.ended), mode: 'functional' };
   if (roll < 0.30) return { type: 'watch', run_id: pick(rnd, [world.live, world.live, live.attached, pick(rnd, ids), '']), mode: 'functional' };
   if (roll < 0.36) return { type: 'run_started', run_id: target(), data: pick(rnd, [{ mode: 'functional', total: 3 }, {}, { mode: 'performance' }]) };
   if (roll < 0.54) {
@@ -171,10 +173,9 @@ test('the rules hold for every step of seeded event sequences, in any order and 
       if (after.attached && after.attached !== before.attached) {
         seen.attach += 1;
         if (!['start', 'watch', 'status'].includes(type)) fail(`a ${type} attached the tab to ${after.attached}`);
-        if (type !== 'start') {
-          if (before.ended.includes(after.attached)) fail(`${after.attached} was attached again after it ended (rule 4)`);
-          if (blocked.has(after.attached)) fail(`${after.attached} was attached again while status still named it (rule 8)`);
-        }
+        // Rule 4 has no exception: not even this tab's own 202, read late.
+        if (before.ended.includes(after.attached)) fail(`${after.attached} was attached again after it ended (rule 4)`);
+        if (type !== 'start' && blocked.has(after.attached)) fail(`${after.attached} was attached again while status still named it (rule 8)`);
         if (type === 'status') {
           seen.auto += 1;
           if (before.run || before.report || before.opening) fail('a tab that was showing or waiting for something attached by itself (rule 1)');

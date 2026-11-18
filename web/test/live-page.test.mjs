@@ -899,3 +899,55 @@ test('editing a built-in request while its Send is out copies it, and the answer
   assert.equal(get().send.result.body, '{"from":"A"}');
   assert.match(byId('send-status').textContent, /^200 - /);
 });
+
+// ------------------------------------------------------------------ a 202 read late
+
+test('a Start answer read after status already led the tab through the whole run does not put the run back to running', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  runner.add(req(1));
+
+  // The server accepts the run at once; its answer to this tab is slow.
+  const answer = server.later('POST /api/runs');
+  byId('start-run').click();
+  await flush();
+  const id = server.begin('functional');
+
+  // The status poll names the run first, and the tab, showing nothing, follows it to its end.
+  t.mock.timers.tick(3000);
+  await flush();
+  assert.equal(streamsFor(id).length, 1, 'status attached the tab');
+  const stream = streamsFor(id)[0];
+  stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 1 }));
+  stream.emit('request_result', frame('request_result', id, resultRow(id, 0)));
+  server.reports.get(id).functional.results.push(resultRow(id, 0));
+  server.end('completed');
+  stream.emit('run_finished', frame('run_finished', id, { status: 'completed', duration_ms: 1200, verdict: 'PASS' }));
+  await flush();
+  assert.equal(get().report.id, id);
+  assert.equal(pill().textContent, 'completed');
+  const { report, run } = get();
+
+  // Now the 202 for that same run is read. What the tab shows is sampled
+  // after every round, so a view that is taken away and put back is seen.
+  const reads = callsTo(`/api/runs/${id}`).length;
+  const seen = [];
+  answer({ status: 202, body: { run_id: id } });
+  for (let i = 0; i < 8; i += 1) {
+    await flush(1);
+    seen.push(`${pill() ? pill().textContent : '-'}/${get().report ? 'report' : 'none'}/${get().transport}`);
+  }
+
+  assert.equal(streamsFor(id).length, 1, `no second stream for a run this tab saw end (saw ${seen.join(' ')})`);
+  assert.equal(callsTo(`/api/runs/${id}`).length, reads, 'and its report is not asked for again');
+  assert.deepEqual([...new Set(seen)], ['completed/report/idle'], 'the finished run is never shown as running again');
+  assert.equal(get().report, report, 'the report is still the one on screen');
+  assert.equal(get().run, run);
+  assert.equal(get().transport, 'idle');
+  assert.equal(byId('start-run').textContent, 'Start run');
+  // The run is over, and the tab must not go on believing it is live.
+  assert.equal(get().status.running, false, `status after the late 202: ${JSON.stringify(get().status)}`);
+  assert.equal(byId('start-run').disabled, false, 'Start is usable again');
+  assert.notEqual(byId('run-status-banner').textContent, 'A run is live - Watch to follow it.');
+  assert.deepEqual(listenerErrors, []);
+});

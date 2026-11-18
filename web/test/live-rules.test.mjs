@@ -317,3 +317,26 @@ test('two runs gone in a row are both held: the first is not attached again whil
   // Status naming a now forgets b, which it no longer names, and only b.
   assert.equal(reduce(named.live, { type: 'watch', run_id: 'b', mode: 'functional' }).attached, 'b');
 });
+
+// Found by building the ordering by hand after a browser check: status named
+// this tab's run before its 202 was read, the tab followed it to the end, and
+// the 202 then attached it a second time.
+test('a 202 read after this tab already saw that run end does not attach it again', () => {
+  const shown = reduce(finished('a'), { type: 'report', run_id: 'a', report: report('a') });
+  const out = step(shown, { type: 'start', run_id: 'a', mode: 'functional' });
+  assert.equal(out.live.attached, '', 'rule 4: a run this tab saw end is never attached again');
+  assert.equal(out.live.report, shown.report, 'the finished report stays on screen');
+  assert.equal(out.live.run, shown.run);
+  assert.equal(out.live.outcome, shown.outcome);
+  assert.deepEqual(out.live.ended, ['a']);
+  assert.deepEqual(out.effects, []);
+
+  // The same before the report arrived, and for a spectator whose run it turned out to be.
+  const ended = { ...finished('a'), spectator: true, opening: 'h1' };
+  const late = step(ended, { type: 'start', run_id: 'a', mode: 'functional' });
+  assert.equal(late.live.attached, '');
+  assert.equal(late.live.outcome.status, 'completed');
+  assert.equal(late.live.results.length, 1);
+  assert.equal(late.live.spectator, false);
+  assert.equal(late.live.opening, '', 'the visitor asked for this run last');
+});
