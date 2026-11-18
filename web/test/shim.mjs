@@ -31,7 +31,8 @@
 //     array methods.
 //   - fetch: per-URL scripted responses, rejections and deferred responses,
 //     with every call recorded. An unscripted URL rejects loudly. An abort
-//     signal rejects the call with AbortError, up front or while pending.
+//     signal rejects the call with AbortError, up front or while pending, and
+//     after the answer arrived it errors the body's unread part.
 //   - EventSource: every instance recorded; tests open it, emit named events,
 //     fire errors, and read how many were opened and closed.
 //   - navigator.clipboard.writeText, recording what was written.
@@ -1313,6 +1314,45 @@ function abortReason(signal) {
   return signal.reason ?? new DOMException('This operation was aborted', 'AbortError');
 }
 
+// tieBodyToSignal re-wraps a scripted response so its body belongs to the
+// request's signal, as a browser's does: an abort after the response arrived
+// errors whatever of the body is still unread, so a json() or text() that has
+// not finished rejects with the abort reason. A body read to the end before
+// the abort is already settled and stays that way.
+function tieBodyToSignal(res, signal) {
+  if (!res.body) return res;
+  const reader = res.body.getReader();
+  let controller;
+  const onAbort = () => {
+    try {
+      controller.error(abortReason(signal));
+    } catch {
+      // the body was already read to the end or errored: nothing left to break
+    }
+    reader.cancel().catch(() => {});
+  };
+  const body = new ReadableStream({
+    start(c) {
+      controller = c;
+    },
+    async pull(c) {
+      const { done, value } = await reader.read();
+      if (done) {
+        signal.removeEventListener('abort', onAbort);
+        c.close();
+      } else {
+        c.enqueue(value);
+      }
+    },
+    cancel(reason) {
+      signal.removeEventListener('abort', onAbort);
+      return reader.cancel(reason);
+    },
+  });
+  signal.addEventListener('abort', onAbort, { once: true });
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+
 // FetchStub is the scriptable fetch. Routes are keyed by URL (exactly as the
 // module passes it) and optionally by method; each scripted answer is used
 // `times` times (default once) in the order it was scripted.
@@ -1388,7 +1428,7 @@ export class FetchStub {
       const onAbort = () => reject(abortReason(signal));
       signal.addEventListener('abort', onAbort, { once: true });
       answer.then(
-        (res) => { signal.removeEventListener('abort', onAbort); resolve(res); },
+        (res) => { signal.removeEventListener('abort', onAbort); resolve(tieBodyToSignal(res, signal)); },
         (err) => { signal.removeEventListener('abort', onAbort); reject(err); },
       );
     });
