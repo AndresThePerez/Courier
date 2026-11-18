@@ -288,6 +288,9 @@ func (m *Manager) finish(id string, res Result) {
 	if rep.Note == "" {
 		rep.Note = noteFor(rep)
 	}
+	if rep.Functional != nil {
+		rep.Functional.Verdict = report.FunctionalVerdict(rep.Status, rep.Functional)
+	}
 
 	// Wall-clock worker-seconds, so the in-flight completion tail is paid for.
 	charge := m.bucket.Spend(workerSeconds(rep.Mode, rep.Config, elapsed))
@@ -305,8 +308,11 @@ func (m *Manager) finish(id string, res Result) {
 	m.mu.Unlock()
 
 	verdict := ""
-	if rep.Performance != nil {
+	switch {
+	case rep.Performance != nil:
 		verdict = rep.Performance.Verdict
+	case rep.Functional != nil:
+		verdict = rep.Functional.Verdict
 	}
 	m.log.Info("budget charged",
 		"event", EventBudgetCharged,

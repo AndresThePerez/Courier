@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/budget"
 	"github.com/AndresThePerez/courier/internal/report"
 	"github.com/AndresThePerez/courier/internal/sandbox"
@@ -557,5 +558,28 @@ func TestUnsetTimesAreOmitted(t *testing.T) {
 	}
 	if strings.Contains(string(finished), "cooldown_until") || strings.Contains(string(finished), "0001-01-01") {
 		t.Errorf("run_finished with no cooldown carries one: %s", finished)
+	}
+}
+
+func TestFunctionalRunFinishedCarriesTheVerdict(t *testing.T) {
+	srv := okServer(t)
+	m, _, pub := newTestManager(t, srv.URL)
+	rr := functionalRun()
+	rr.Sequence[0].Assertions = []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: 500}}
+
+	id, err := m.Start(context.Background(), rr)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.Wait()
+
+	rep, _ := m.Report(id)
+	if rep.Functional.Verdict != report.VerdictFail {
+		t.Errorf("functional.verdict = %q, want %q", rep.Functional.Verdict, report.VerdictFail)
+	}
+	for _, e := range pub.Replay() {
+		if d, ok := e.Data.(RunFinished); ok && d.Verdict != report.VerdictFail {
+			t.Errorf("run_finished verdict = %q, want %q", d.Verdict, report.VerdictFail)
+		}
 	}
 }

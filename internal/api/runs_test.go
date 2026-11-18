@@ -1144,3 +1144,51 @@ func TestWireTimesAreUTCAndUnsetOnesAbsent(t *testing.T) {
 		t.Errorf("a terminal event with no cooldown carries a time: %s", terminal)
 	}
 }
+
+// ---- functional verdict -------------------------------------------------
+
+func TestFunctionalRunsCarryAVerdict(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	id := startRun(t, s, payload(3, 300))
+
+	var live struct {
+		Functional map[string]json.RawMessage `json:"functional"`
+	}
+	if err := json.Unmarshal(do(t, s, http.MethodGet, "/api/runs/"+id, nil).Body.Bytes(), &live); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := live.Functional["verdict"]; ok {
+		t.Errorf("a running report carries functional.verdict %s; it is judged only when it ends", v)
+	}
+
+	streamTail(t, srv.URL, id, nil) // returns once the run has finished
+	waitIdle(t, s)
+
+	var finished struct {
+		Functional struct {
+			Verdict string `json:"verdict"`
+		} `json:"functional"`
+	}
+	if err := json.Unmarshal(do(t, s, http.MethodGet, "/api/runs/"+id, nil).Body.Bytes(), &finished); err != nil {
+		t.Fatal(err)
+	}
+	if finished.Functional.Verdict != report.VerdictPass {
+		t.Errorf("finished report functional.verdict = %q, want %q", finished.Functional.Verdict, report.VerdictPass)
+	}
+
+	hist := decode[struct {
+		Runs []historyEntry `json:"runs"`
+	}](t, do(t, s, http.MethodGet, "/api/runs", nil)).Runs
+	if len(hist) != 1 || hist[0].Verdict != report.VerdictPass {
+		t.Errorf("history = %+v, want one functional row with verdict PASS", hist)
+	}
+
+	frames, _ := openStream(t, srv.URL, id, func(f frame) bool { return f.name == runner.EventRunFinished })
+	last := frames[len(frames)-1]
+	if data, _ := last.data["data"].(map[string]any); data["verdict"] != report.VerdictPass {
+		t.Errorf("run_finished data = %v, want verdict PASS", last.data["data"])
+	}
+}

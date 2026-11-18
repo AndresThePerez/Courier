@@ -383,3 +383,31 @@ func Verdict(s Stats, calibrated bool) (string, []string) {
 		fmt.Sprintf("error rate %.2f%% below the %.2f%% gate", 100*errorRate, 100*VerdictMaxErrorRate),
 	}
 }
+
+// FunctionalVerdict judges a functional run: VerdictNA when it was cancelled
+// or expired (a truncated walk is not judged, whatever it reached), VerdictFail
+// when any request failed, VerdictPass when at least one passed, and VerdictNA
+// when nothing was asserted at all (every entry skipped, or no entries).
+//
+// It is the one implementation of the rule. The PDF band, the history row,
+// the stored report and run_finished all read it, so no two of them can
+// disagree about the same run.
+func FunctionalVerdict(status string, f *Functional) string {
+	if status == StatusCancelled || status == StatusExpired || f == nil {
+		return VerdictNA
+	}
+	passed := false
+	for _, r := range f.Results {
+		switch {
+		case r.Skipped:
+		case r.Passed:
+			passed = true
+		default:
+			return VerdictFail
+		}
+	}
+	if passed {
+		return VerdictPass
+	}
+	return VerdictNA
+}

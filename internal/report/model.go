@@ -78,9 +78,13 @@ type Entry struct {
 // The four counters carry `json:"-"` per the plan's interface: they are
 // derivable from Results, and the wire format keeps a single source of truth.
 // Server-side consumers (the PDF renderer) read them from the struct directly.
+//
+// Verdict is set once, when the run finishes (FunctionalVerdict), and is
+// absent while it runs: a partial walk has not earned a judgement.
 type Functional struct {
 	Total, Passed, Failed, Skipped int             `json:"-"`
 	Results                        []RequestResult `json:"results"`
+	Verdict                        string          `json:"verdict,omitempty"`
 }
 
 // MaxBodyPreview bounds how much of a response body a functional result keeps.

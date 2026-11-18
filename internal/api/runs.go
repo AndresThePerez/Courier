@@ -405,11 +405,16 @@ func isValidationError(err error) bool {
 	return errors.As(err, &ve)
 }
 
+// verdictOf is the verdict a finished run was given, in either mode.
 func verdictOf(rep *report.Report) string {
-	if rep.Performance == nil {
+	switch {
+	case rep.Performance != nil:
+		return rep.Performance.Verdict
+	case rep.Functional != nil:
+		return rep.Functional.Verdict
+	default:
 		return ""
 	}
-	return rep.Performance.Verdict
 }
 
 // summarize is the one-line history label. Functional runs are counted, not

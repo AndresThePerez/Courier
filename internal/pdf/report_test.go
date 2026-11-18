@@ -371,3 +371,36 @@ func TestRenderPrintsTheRecordedGate(t *testing.T) {
 			len(first), len(second))
 	}
 }
+
+// The band label is the PDF's verdict as a visitor reads it. Moving the rule
+// into the report package must not change one of them.
+func TestFunctionalVerdictLabelsAreUnchanged(t *testing.T) {
+	results := func(rs ...report.RequestResult) *report.Report {
+		rep := fixtureFunctionalReport()
+		rep.Functional.Results = rs
+		return rep
+	}
+	pass := report.RequestResult{Passed: true}
+	fail := report.RequestResult{}
+	skip := report.RequestResult{Skipped: true}
+	for _, tc := range []struct {
+		name   string
+		rep    *report.Report
+		status string
+		want   string
+	}{
+		{"passed", results(pass, pass), report.StatusCompleted, "PASS"},
+		{"failed", results(pass, fail), report.StatusCompleted, "FAIL"},
+		{"nothing asserted", results(skip), report.StatusCompleted, "N/A - nothing was asserted"},
+		{"cancelled", results(fail, skip), report.StatusCancelled, "N/A - partial data"},
+		{"expired", results(pass, skip), report.StatusExpired, "N/A - partial data"},
+	} {
+		tc.rep.Status = tc.status
+		if got, _, _ := verdictOf(tc.rep); got != tc.want {
+			t.Errorf("%s: label = %q, want %q", tc.name, got, tc.want)
+		}
+		if body := text(t, tc.rep); !strings.Contains(body, "VERDICT: "+tc.want) {
+			t.Errorf("%s: the page does not read VERDICT: %s", tc.name, tc.want)
+		}
+	}
+}

@@ -567,11 +567,10 @@ func verdictOf(r *report.Report) (string, string, rgb) {
 		}
 
 	case r.Functional != nil:
-		c := tally(r.Functional)
-		switch {
-		case c.failed > 0:
+		switch report.FunctionalVerdict(r.Status, r.Functional) {
+		case report.VerdictFail:
 			return report.VerdictFail, headline, fail
-		case c.passed > 0:
+		case report.VerdictPass:
 			return report.VerdictPass, headline, pass
 		default:
 			return report.VerdictNA + " - nothing was asserted", headline, neutral

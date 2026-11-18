@@ -505,3 +505,34 @@ func TestIsCalibratedRecognisesTheSequenceAndRejectsASubset(t *testing.T) {
 		t.Error("a substituted entry is a different workload and must not be recognised")
 	}
 }
+
+// The functional verdict is the PDF's rule, in one place: a stopped run is not
+// judged, any failure fails, any pass passes, and nothing asserted is N/A.
+func TestFunctionalVerdict(t *testing.T) {
+	pass := RequestResult{Passed: true}
+	fail := RequestResult{}
+	skip := RequestResult{Skipped: true}
+	for _, tc := range []struct {
+		name    string
+		status  string
+		results []RequestResult
+		want    string
+	}{
+		{"all passed", StatusCompleted, []RequestResult{pass, pass}, VerdictPass},
+		{"one failed", StatusCompleted, []RequestResult{pass, fail, pass}, VerdictFail},
+		{"failed then skipped", StatusCompleted, []RequestResult{fail, skip}, VerdictFail},
+		{"passed then skipped", StatusCompleted, []RequestResult{pass, skip}, VerdictPass},
+		{"only skipped", StatusCompleted, []RequestResult{skip, skip}, VerdictNA},
+		{"no results", StatusCompleted, nil, VerdictNA},
+		{"cancelled with a failure", StatusCancelled, []RequestResult{fail, skip}, VerdictNA},
+		{"expired with passes", StatusExpired, []RequestResult{pass, skip}, VerdictNA},
+	} {
+		got := FunctionalVerdict(tc.status, &Functional{Results: tc.results})
+		if got != tc.want {
+			t.Errorf("%s: FunctionalVerdict = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if got := FunctionalVerdict(StatusCompleted, nil); got != VerdictNA {
+		t.Errorf("no functional payload: FunctionalVerdict = %q, want %q", got, VerdictNA)
+	}
+}
