@@ -15,7 +15,7 @@ The interesting constraint is that it is *public*. A load tester exposed to the 
 
 ## The numbers
 
-Measured against the pinned 20,324-document PokéSearch index (Milestone 3 build) on
+Measured on 2026-08-22 against the 20,324-document PokéSearch index (Milestone 3 build) on
 the deploy host, over the internal container network — the numbers the live demo's
 panel shows and its SLOs are calibrated to:
 
@@ -41,7 +41,7 @@ carries the whole ladder, min, avg, p50, p90, p95, p99 and max, taken nearest-ra
 published p99 is a latency some request actually experienced rather than an
 interpolation between two that did not.
 The target is [PokéSearch](https://github.com/AndresThePerez/PokeSearch), an
-Elasticsearch search engine for a 20,324-card Pokemon TCG corpus, also built
+Elasticsearch search engine for a Pokemon TCG corpus (20,324 cards when these numbers were measured), also built
 here: Courier load-tested it and found its knee at ten workers, which is the
 number above.
 
@@ -194,8 +194,8 @@ Server-enforced regardless of client input; structural violations are **rejected
 
 ## Running locally
 
-Courier needs a target to point at; the live demo uses PokéSearch, whose 20,324-card index the
-curated assertions are pinned to. That caveat, the port note, the Compose deep-merge and the container stage: [docs/design.md#running-locally](docs/design.md#running-locally).
+Courier needs a target to point at; the live demo uses PokéSearch, whose index held 20,324 cards
+when those numbers were measured. The curated assertions check shapes and bounds that hold as the index grows, but fail against a different target; that caveat, the port note, the Compose deep-merge and the container stage: [docs/design.md#running-locally](docs/design.md#running-locally).
 
 ```bash
 # Serve Courier on 8084, pointed at a target listening on 8081.

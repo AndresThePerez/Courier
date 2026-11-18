@@ -5,13 +5,16 @@
 // parsed once, and handed out as deep copies — a visitor editing a curated
 // request must not be able to change what the next visitor sees.
 //
-// Every asserted value is measured against the pinned index (20,324 cards),
-// never estimated, and two traps govern what may be asserted at all:
+// Every asserted value was measured on 2026-08-22 against the index of that
+// day (20,324 cards), never estimated. The index is reseeded and grows, so a
+// count that follows it is asserted as a bound, and only a shape (a page size,
+// a suggester cap, an error code) or a single named card is asserted exactly.
+// Two traps govern what may be asserted at all:
 //
 //   - Facet cardinalities are query-scoped. types 11 / rarity 38 / set_series
 //     17 / supertype 3 hold only on an unfiltered browse. On a scoped query the
-//     safe facet assertion is facets.sets, which is always 173 because it is a
-//     cached global catalog.
+//     safe facet assertion is facets.sets, which held 173 entries then and is
+//     asserted as a lower bound because it is a cached global catalog.
 //   - A latency bound must be able to fail. Real responses land in 1-30ms, so
 //     "latency lt 300" is decoration, not a test. Search asserts 150ms and
 //     suggest/healthz 100ms — roughly 4x headroom over the measured numbers,

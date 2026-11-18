@@ -1,7 +1,7 @@
 {
   "id": "search-basics",
   "name": "01 - Search Basics",
-  "description": "Text search, exact lookup, fuzzy matching, the browse path, and how facets scope to a query. Every asserted number is measured against the seeded 20,324-card index, not estimated.",
+  "description": "Text search, exact lookup, fuzzy matching, the browse path, and how facets scope to a query. Every asserted number is a shape or a bound measured on 2026-08-22 against the seeded 20,324-card index, not estimated, and each holds as the index grows.",
   "requests": [
     {
       "id": "basic-text",

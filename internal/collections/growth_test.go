@@ -3,6 +3,7 @@ package collections
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -330,6 +331,34 @@ func TestADroppedFilterFailsTheCuratedAssertions(t *testing.T) {
 					t.Errorf("[%s] %s: still passes when $.total is the whole corpus (%d)", ix.name, k, ix.corpus)
 				}
 			}
+		}
+	}
+}
+
+// The index is reseeded and it grows. The fixtures are dated measurements, so
+// prose that calls the index or the assertions fixed in place tells a reader
+// the opposite of what the tests enforce. Pinning an image by digest is a
+// different claim and stays (the Dockerfile stage line in the design notes).
+func TestTargetIndexIsNotDescribedAsPinned(t *testing.T) {
+	// Spelled in two halves so this file does not match its own search.
+	const word = "pin" + "ned"
+
+	var lines []string
+	for _, path := range []string{"../../README.md", "../../docs/design.md", "collections.go"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, l := range strings.Split(string(raw), "\n") {
+			lines = append(lines, fmt.Sprintf("%s:%d:%s", path, i+1, l))
+		}
+	}
+	for _, c := range All() {
+		lines = append(lines, "collection "+c.ID+" description:"+c.Description)
+	}
+	for _, l := range lines {
+		if strings.Contains(strings.ToLower(l), word) && !strings.Contains(l, "digest") && !strings.Contains(l, "distroless") {
+			t.Errorf("describes the index or its assertions as fixed in place: %s", l)
 		}
 	}
 }

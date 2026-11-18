@@ -187,7 +187,7 @@ falsifiable shape (PASS at 1 and 10 workers, FAIL at 25 and 50): verdict gate
 The principle: **an unfalsifiable green is worse than no verdict**. The same
 principle shows up at the edges — `Verdict` fails a run with zero dispatches
 rather than vacuously passing it (docs/deviations.md N7), and curated assertion values
-come from a pinned, measured fixture corpus, not estimates.
+come from a measured fixture corpus and are asserted as bounds that hold as the index grows, not estimates.
 
 ---
 
@@ -433,7 +433,7 @@ disclosed rather than hidden in the target's numbers.
 
 Courier needs a target to point at. Any HTTP service that serves the endpoint catalog's
 paths will do — the live demo uses PokéSearch. Note that the curated collections'
-assertions are pinned to the 20,324-card PokéSearch index, so against a different target
+assertions are measured bounds on the 20,324-card PokéSearch index that hold as it grows, so against a different target
 the app runs fine but those assertions will fail; edit them in the Request tab, or read
 the run as a load test rather than a functional one.
 
