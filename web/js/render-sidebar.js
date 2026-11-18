@@ -4,7 +4,7 @@
 import { get, set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as workspace from './workspace.js';
-import { savedCollections } from './render-runner.js';
+import { savedCollections, methodBadge } from './render-runner.js';
 
 // onSelect / onAdd are wired by main.js so this module stays a pure function
 // of state plus its two callbacks.
@@ -175,7 +175,7 @@ function queuedMark(counts, id) {
   });
 }
 
-function requestRow(request, selectedId, listId, counts) {
+function requestRow(request, selectedId, listId, counts, endpoints) {
   const name = request.name || request.id;
   return el('div', { class: 'req-row' }, [
     el('button', {
@@ -185,7 +185,7 @@ function requestRow(request, selectedId, listId, counts) {
       attrs: { 'data-focus-key': `open:${listId}:${request.id}` },
       on: { click: () => hooks.select(request) },
     }, [
-      el('span', { class: 'method', text: 'GET' }),
+      methodBadge(endpoints, request.endpoint),
       ' ',
       el('span', { text: name }),
     ]),
@@ -201,13 +201,13 @@ function requestRow(request, selectedId, listId, counts) {
   ]);
 }
 
-function collectionNode(collection, selectedId, counts) {
+function collectionNode(collection, selectedId, counts, endpoints) {
   const summary = el('summary', { attrs: { 'data-focus-key': `collection:${collection.id}` } }, [
     el('span', { class: 'collection-name', text: collection.name }),
     el('span', { class: 'badge', text: 'built-in' }),
   ]);
   const body = el('div', { class: 'collection-body' },
-    collection.requests.map((r) => requestRow(r, selectedId, collection.id, counts)));
+    collection.requests.map((r) => requestRow(r, selectedId, collection.id, counts, endpoints)));
   const actions = el('div', { class: 'collection-actions' }, [
     el('button', {
       class: 'btn btn-mini',
@@ -225,14 +225,14 @@ function collectionNode(collection, selectedId, counts) {
 // savedNode lists a saved collection's requests as text: they are copies
 // taken when the sequence was saved, so opening one in the editor would edit
 // nothing the visitor could find again. Adding it to the run copies them anew.
-function savedNode(collection, counts) {
+function savedNode(collection, counts, endpoints) {
   const name = collection.name || 'Untitled';
   const summary = el('summary', { attrs: { 'data-focus-key': `saved:${collection.id}` } }, [
     el('span', { class: 'collection-name', text: name }),
     el('span', { class: 'badge', text: 'saved' }),
   ]);
   const body = el('div', { class: 'collection-body' }, collection.requests.map((r) => el('div', { class: 'req-row' }, [
-    el('span', { class: 'method', text: 'GET' }),
+    methodBadge(endpoints, r.endpoint),
     ' ',
     el('span', { class: 'req-name', text: r.name || r.id }),
     queuedMark(counts, r.id),
@@ -261,25 +261,28 @@ function savedNode(collection, counts) {
 }
 
 // The saved collections are rebuilt only when what they show changes: the
-// list itself, or which of their requests are queued. The status poll
+// list itself, which of their requests are queued, or the catalog their
+// method badges are read from. The status poll
 // notifies every few seconds, and a long list rebuilt on each one would cost
 // the page for nothing. Which ones are open is read back from the tree, as for
 // the curated collections.
 let lastSaved = null;
 let lastSavedMarks = null;
+let lastSavedEndpoints = null;
 
-function renderSaved(list, counts) {
+function renderSaved(list, counts, endpoints) {
   const marks = [...counts].map(([id, n]) => `${id}\u0000${n}`).sort().join('\u0001');
-  if (list === lastSaved && marks === lastSavedMarks) return;
+  if (list === lastSaved && marks === lastSavedMarks && endpoints === lastSavedEndpoints) return;
   lastSaved = list;
   lastSavedMarks = marks;
+  lastSavedEndpoints = endpoints;
   const tree = byId('saved-collections');
   const open = new Set();
   for (const node of tree.querySelectorAll('details[data-id]')) {
     if (node.open) open.add(node.dataset.id);
   }
   replace(tree, list.map((c) => {
-    const node = savedNode(c, counts);
+    const node = savedNode(c, counts, endpoints);
     node.open = open.has(c.id);
     return node;
   }));
@@ -377,7 +380,7 @@ export function render(state) {
   if (detailNodes.length === 0) openCollections = previouslyOpen;
 
   replace(tree, state.collections.map((c) => {
-    const node = collectionNode(c, state.selectedId, counts);
+    const node = collectionNode(c, state.selectedId, counts, state.endpoints);
     node.dataset.id = c.id;
     node.open = openCollections.has(c.id);
     return node;
@@ -392,7 +395,7 @@ export function render(state) {
     })]);
   } else {
     replace(ws, state.workspace.map((r) => {
-      const row = requestRow(r, state.selectedId, 'workspace', counts);
+      const row = requestRow(r, state.selectedId, 'workspace', counts, state.endpoints);
       row.appendChild(el('button', {
         class: 'btn btn-mini',
         type: 'button',
@@ -405,7 +408,7 @@ export function render(state) {
     }));
   }
 
-  renderSaved(state.savedCollections, counts);
+  renderSaved(state.savedCollections, counts, state.endpoints);
 
   const hist = byId('history-list');
   // The five most recent runs, list and click-to-reopen only.

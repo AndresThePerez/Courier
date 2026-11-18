@@ -14,6 +14,7 @@
 
 import { el, replace, byId, fmtMs, fmtBytes, fmtTime } from './dom.js';
 import { jsonView } from './json-view.js';
+import { methodBadge } from './render-runner.js';
 
 // The filter is All/Passed/Failed/Skipped as four plain buttons. Filter-tab
 // chrome is deliberately absent, so this is a button row and nothing more.
@@ -28,6 +29,7 @@ let sortKey = 'index'; // index | p95
 let sortDesc = true;
 let lastRunId = null;
 let lastRowSignature = null;
+let lastRowEndpoints = null;
 let lastReport = null;
 
 // Throttle state for the summary, which is the page's one live region. A
@@ -230,9 +232,11 @@ function renderFunctional(state, rep) {
   // a live run notifies several times a second. The signature covers everything
   // that changes what a row says, the final report included: its rows carry the
   // body previews a mid-run partial report deliberately omits.
+  // The catalog arriving is a change as well: the method badges are read from it.
   const signature = `${filter}|${state.results.length}|${rep ? `${rep.id}:${rep.status}` : 'live'}`;
-  if (signature === lastRowSignature) return;
+  if (signature === lastRowSignature && state.endpoints === lastRowEndpoints) return;
   lastRowSignature = signature;
+  lastRowEndpoints = state.endpoints;
 
   const rows = state.results.filter(matchesFilter);
   const box = byId('results-rows');
@@ -244,7 +248,7 @@ function renderFunctional(state, rep) {
     replace(box, [el('div', { class: 'rows-empty', text: `No ${filter} requests in this run.` })]);
     return;
   }
-  replace(box, rows.map((r) => resultRow(r, Boolean(rep))));
+  replace(box, rows.map((r) => resultRow(r, Boolean(rep), state.endpoints)));
 }
 
 function filterButton(name, c, state) {
@@ -272,13 +276,14 @@ function matchesFilter(r) {
   return !r.skipped && !r.passed;
 }
 
-function resultRow(r, finished) {
+function resultRow(r, finished, endpoints) {
   const outcomes = r.assertions || [];
   const passed = outcomes.filter((o) => o.passed).length;
 
   const head = el('summary', { class: 'res-head' }, [
     el('span', { class: 'res-index mono', text: String((r.index || 0) + 1) }),
     el('span', { class: `pill ${pillClass(r)}`, text: pillText(r) }),
+    methodBadge(endpoints, r.endpoint),
     el('span', { class: 'res-body' }, [
       el('span', { class: 'res-name', text: r.name || r.endpoint }),
       el('span', { class: 'res-target mono', text: `${r.endpoint}${r.query || ''}` }),

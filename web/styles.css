@@ -130,7 +130,12 @@ html, body {
 }
 .req-open:hover { background: var(--line); }
 .req-open.is-selected { background: var(--line); color: var(--accent); }
-.method { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.method { color: var(--muted); font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
+/* Coloured by method from the endpoint catalog: GET on the pass hue, POST on
+   the warn hue, anything else, and an endpoint the page does not know, muted. */
+.method-get { color: var(--pass); }
+.method-post { color: var(--warn); }
+.method-other, .method-none { color: var(--muted); }
 /* "in run" marks a request already queued; it never shrinks, so a long name
    is what gives way. */
 .in-run { flex: 0 0 auto; font-size: 10px; color: var(--accent); white-space: nowrap; }

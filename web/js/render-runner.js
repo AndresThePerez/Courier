@@ -97,6 +97,7 @@ let hooks = { refresh: async () => {}, showTab: () => {}, watch: () => {}, over:
 // painted and what it last has to say.
 let counter = 0;
 let lastSignature = null;
+let lastEndpoints = null;
 let sequenceNote = '';
 let setupNote = '';
 let startNote = '';
@@ -139,6 +140,30 @@ export function init(h) {
   byId('start-run').addEventListener('click', start);
   byId('cancel-run').addEventListener('click', cancel);
   byId('watch-run').addEventListener('click', watch);
+}
+
+// ---------------------------------------------------------------- method badges
+
+// methodBadge is a request's method, read from the endpoint catalog by the
+// request's endpoint id: the catalog is the one place a method is stated, so
+// a list that wrote its own would be wrong the day a POST endpoint exists.
+// GET and POST are coloured; any other method is muted; a request whose
+// endpoint the page does not know (one stored for an endpoint that is gone, or
+// any request before the catalog has loaded) shows a muted placeholder rather
+// than a guess. Every list of requests on the page uses this one.
+export function methodBadge(endpoints, endpointId) {
+  const ep = Array.isArray(endpoints) ? endpoints.find((e) => e && e.id === endpointId) : null;
+  const method = ep && typeof ep.method === 'string' ? ep.method.trim().toUpperCase().slice(0, 7) : '';
+  if (!method) {
+    return el('span', {
+      class: 'method method-none',
+      text: '---',
+      title: 'This request\'s endpoint is not in the catalog the page has loaded',
+      attrs: { 'aria-label': 'Method unknown' },
+    });
+  }
+  const tone = method === 'GET' ? 'method-get' : method === 'POST' ? 'method-post' : 'method-other';
+  return el('span', { class: `method ${tone}`, text: method });
 }
 
 // ---------------------------------------------------------------- the setup
@@ -623,9 +648,11 @@ function renderSequence(state) {
   // Rebuild only when the sequence itself changed. The 3s status poll notifies
   // every render module; rebuilding this list on each one would take the focus
   // out from under a visitor reordering rows with the keyboard.
+  // The catalog arriving is a change too: it is what the badges are read from.
   const sig = list.map((e) => `${e.key}:${e.enabled ? 1 : 0}`).join('|');
-  if (sig === lastSignature) return;
+  if (sig === lastSignature && state.endpoints === lastEndpoints) return;
   lastSignature = sig;
+  lastEndpoints = state.endpoints;
 
   const focus = focusKey();
   const rows = byId('sequence-list');
@@ -635,7 +662,7 @@ function renderSequence(state) {
       text: 'Nothing queued. Add a request with + in the sidebar, or add a whole collection with "Add all to run".',
     })]);
   } else {
-    replace(rows, list.map((entry, i) => shownRow(entry, i, list.length)));
+    replace(rows, list.map((entry, i) => shownRow(entry, i, list.length, state.endpoints)));
   }
   restoreFocus(focus);
 }
@@ -668,7 +695,7 @@ function assertionChips(assertions) {
     assertions.map((a) => el('span', { class: 'chip mono', text: chipLabel(a) })));
 }
 
-function sequenceRow(entry, index, total) {
+function sequenceRow(entry, index, total, endpoints) {
   const r = entry.request;
   const query = Object.entries(r.params || {}).map(([k, v]) => `${k}=${v}`).join('&');
 
@@ -686,6 +713,7 @@ function sequenceRow(entry, index, total) {
   return el('div', { class: `row seq-row${entry.enabled ? '' : ' is-off'}` }, [
     el('span', { class: 'seq-index mono', text: String(index + 1) }),
     check,
+    methodBadge(endpoints, r.endpoint),
     el('span', { class: 'seq-body' }, [
       el('span', { class: 'seq-name', text: r.name || r.id }),
       el('span', { class: 'seq-target mono', text: `${r.endpoint}${query ? `?${query}` : ''}` }),
@@ -707,9 +735,9 @@ function sequenceRow(entry, index, total) {
 // shownRow keeps one queued request the page cannot draw from taking the
 // whole list with it: that row is shown without its details, and can still
 // be removed.
-function shownRow(entry, index, total) {
+function shownRow(entry, index, total, endpoints) {
   try {
-    return sequenceRow(entry, index, total);
+    return sequenceRow(entry, index, total, endpoints);
   } catch (error) {
     console.warn('queued request not shown', error);
     return el('div', { class: 'row seq-row is-off' }, [
