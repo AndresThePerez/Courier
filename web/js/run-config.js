@@ -18,29 +18,24 @@ const MODES = ['functional', 'performance'];
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// requestOf rebuilds a stored request from the fields a run sends and nothing
-// else, or answers null when any of them is malformed. A stored value is
-// whatever the browser hands back, so a url, host or method smuggled into it
-// must not survive into the page: a run's payload is built from these fields
-// alone, and an unknown endpoint id is refused by the server's catalog.
-export function requestOf(value) {
-  if (!isPlain(value)) return null;
-  const { id, endpoint } = value;
-  const name = value.name ?? '';
-  const params = value.params ?? {};
-  const assertions = value.assertions ?? [];
-  if (typeof id !== 'string' || id === '' || typeof endpoint !== 'string' || endpoint === '') return null;
-  if (typeof name !== 'string') return null;
-  if (!isPlain(params) || !Object.values(params).every((p) => typeof p === 'string')) return null;
-  if (!Array.isArray(assertions) || !assertions.every(isPlain)) return null;
-  return { id, name, endpoint, params: { ...params }, assertions: assertions.map((a) => ({ ...a })) };
-}
+// What this module reads back from storage it rebuilds: every value it keeps
+// is a primitive it checked, or a container it built from such primitives,
+// and nothing from a stored value is kept by reference. Requests go through
+// storage.requestOf, the rule every stored request shares.
+const { requestOf } = storage;
+
+// MaxCollectionId bounds a stored collection's id; the page's own are
+// "wc-" and a UUID.
+const MaxCollectionId = 200;
 
 // clampOption is the run-config inputs' rule, and a stored option's: under
 // the floor (or not a number) falls back to the default, over the cap is
-// pulled down to the cap.
+// pulled down to the cap. Only a number or the text of an input is read: a
+// stored array or object would be turned into text first, and a deep one
+// cannot be.
 export function clampOption(limits, key, raw) {
   const { lo, hi, fallback } = limits[key];
+  if (typeof raw !== 'number' && typeof raw !== 'string') return fallback;
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n < lo) return fallback;
   return n > hi ? hi : n;
@@ -106,7 +101,6 @@ export function createRunConfig({ storage: area, limits, maxSequence }) {
   return { load, save };
 }
 
-
 // MaxCollectionName matches the editor's name field.
 export const MaxCollectionName = 120;
 
@@ -123,7 +117,8 @@ export function createSavedCollections({ storage: area, get, set, target = null,
   function collectionOf(value) {
     if (!isPlain(value)) return null;
     const { id, name, requests } = value;
-    if (typeof id !== 'string' || id === '' || typeof name !== 'string' || !Array.isArray(requests)) return null;
+    if (typeof id !== 'string' || id === '' || id.length > MaxCollectionId) return null;
+    if (typeof name !== 'string' || !Array.isArray(requests)) return null;
     const kept = [];
     for (const r of requests) {
       if (kept.length >= maxRequests) break;

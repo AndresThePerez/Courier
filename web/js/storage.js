@@ -116,6 +116,91 @@ export function randomId(prefix) {
   return `${prefix}${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 }
 
+// ---------------------------------------------------------------- stored requests
+
+const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// assertionOps is internal/assert's matrix, the same one the editor offers:
+// the only types and operators an assertion the page built can carry.
+const assertionOps = {
+  status: ['eq', 'neq'],
+  latency: ['lt'],
+  json: ['eq', 'neq', 'gt', 'lt', 'exists', 'contains', 'count'],
+  body_contains: ['contains'],
+};
+
+// The editor's and the server's caps: 20 assertions a request, 500 characters
+// for a parameter value, an assertion value or a JSON path, 120 for a name.
+// Ids and parameter names are the page's or the catalog's and are short; one
+// past these bounds was not made by the page.
+export const MaxStoredAssertions = 20;
+const MaxText = 500;
+const MaxName = 120;
+const MaxId = 200;
+const MaxParams = 32;
+const MaxParamKey = 64;
+
+const isId = (v, max) => typeof v === 'string' && v !== '' && v.length <= max;
+
+// requestOf rebuilds a request read back from this browser, or answers null
+// when it cannot be one. Every stored request goes through it before the page
+// shows, queues or sends it: saved requests, the run setup, saved collections.
+//
+// A stored value is whatever the browser hands back, and another script on
+// the origin, an older build or a damaged profile may have written it. So the
+// result holds only the fields the page itself writes, each one a primitive of
+// the kind the editor produces, within the editor's bounds, or a container
+// rebuilt from such primitives; nothing from the stored value is kept by
+// reference. That is what stops a stored url, host or method reaching a run's
+// payload, and a value nested deeper than the page can print or encode
+// wedging it. A request the editor built comes back unchanged.
+export function requestOf(value) {
+  if (!isPlain(value)) return null;
+  const { id, endpoint } = value;
+  const name = value.name ?? '';
+  const stored = value.assertions ?? [];
+  if (!isId(id, MaxId) || !isId(endpoint, MaxId) || typeof name !== 'string') return null;
+  const params = paramsOf(value.params ?? {});
+  if (!params || !Array.isArray(stored) || !stored.every(isPlain)) return null;
+  const assertions = [];
+  for (const a of stored) {
+    if (assertions.length >= MaxStoredAssertions) break;
+    const rebuilt = assertionOf(a);
+    if (rebuilt) assertions.push(rebuilt);
+  }
+  return { id, name: name.slice(0, MaxName), endpoint, params, assertions };
+}
+
+// paramsOf answers null for anything but string values under short names,
+// which is all the editor's parameter table can produce. fromEntries keeps a
+// "__proto__" name as data.
+function paramsOf(value) {
+  if (!isPlain(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > MaxParams) return null;
+  if (!entries.every(([k, v]) => isId(k, MaxParamKey) && typeof v === 'string')) return null;
+  return Object.fromEntries(entries.map(([k, v]) => [k, v.slice(0, MaxText)]));
+}
+
+// assertionOf drops an assertion whose type or operator the page does not
+// know. Its path is kept only on a json assertion; its value only as a string
+// (or, outside body_contains, a finite number). Keys keep their stored order,
+// so a saved request reads back exactly as it was written.
+function assertionOf(a) {
+  const { type, op } = a;
+  if (typeof type !== 'string' || !Object.hasOwn(assertionOps, type)) return null;
+  if (typeof op !== 'string' || !assertionOps[type].includes(op)) return null;
+  const out = {};
+  for (const key of Object.keys(a)) {
+    if (key === 'type') out.type = type;
+    else if (key === 'op') out.op = op;
+    else if (key === 'path' && type === 'json' && typeof a.path === 'string') out.path = a.path.slice(0, MaxText);
+    else if (key === 'value' && typeof a.value === 'string') out.value = a.value.slice(0, MaxText);
+    else if (key === 'value' && type !== 'body_contains' && Number.isFinite(a.value)) out.value = a.value;
+  }
+  return out;
+}
+
 // removeKey is remove under a name createSyncedList does not shadow.
 const removeKey = remove;
 

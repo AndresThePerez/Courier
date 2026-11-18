@@ -1203,9 +1203,14 @@ message for a saved collection). A wrong version, garbage, `null` or a non-objec
 defaults. A stored sequence is cut to 50 entries, a saved collection to 50 requests, and
 stored options are clamped by the same rules as the inputs; a mode other than `functional`
 or `performance` loads as functional. Entries that are not objects and requests with a
-malformed field are dropped. A restored request keeps only `id`, `name`, `endpoint`,
-`params` (string values) and `assertions`, the fields a run sends, so a stored value cannot
-put a URL, host or method on the wire. A request whose endpoint is no longer in the catalog
+malformed field are dropped. Every request stored under either key is rebuilt from a fixed
+set of checked primitive fields before it is shown or sent: `id`, `name` and `endpoint` as
+text, `params` as text values, and each assertion as a `type` and `op` the editor offers
+(any other pair is dropped), a `path` on a json assertion only, and a `value` that is text
+or a finite number, within the editor's bounds (20 assertions; 500 characters for a
+parameter value, path or assertion value; 120 for a name). Nothing else in a stored value is
+kept, so it can neither put a URL, host or method on the wire nor hand the page a value
+nested too deeply to show or encode. A request whose endpoint is no longer in the catalog
 is kept, and the server refuses the run naming the field, as it would any request.
 
 **Proof:** `web/test/run-config.test.mjs` (the reload, the bad values, the clamps, refused
