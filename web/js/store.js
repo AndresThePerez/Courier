@@ -40,8 +40,10 @@ const initialState = () => ({
   transport: 'idle', // idle | sse | polling
 
   history: [],
+  historyNote: '', // why the last history entry asked for could not be opened
   activeTab: 'runner',
-  notice: null,
+  notice: null, // why the catalog is not shown, once a load of it has failed
+  catalogLoading: false,
 });
 
 const state = initialState();

@@ -8,7 +8,7 @@ import { savedCollections } from './render-runner.js';
 
 // onSelect / onAdd are wired by main.js so this module stays a pure function
 // of state plus its two callbacks.
-let hooks = { select: () => {}, add: () => {}, addAll: () => {}, openRun: () => {} };
+let hooks = { select: () => {}, add: () => {}, addAll: () => {}, openRun: () => {}, retryCatalog: () => {} };
 
 export function init(h) {
   hooks = { ...hooks, ...h };
@@ -257,6 +257,22 @@ function historyRow(entry) {
 
 let openCollections = new Set();
 
+// catalogPlaceholder is what stands in for the curated collections while there
+// are none to list. Once a load has failed it says so and offers Retry, and it
+// keeps saying so while the retry is out: "Loading" after a failure would read
+// as progress the page cannot promise.
+function catalogPlaceholder(state) {
+  if (!state.notice) return [el('div', { class: 'tree-empty', text: 'Loading collections...' })];
+  const retry = el('button', {
+    class: 'btn btn-mini',
+    type: 'button',
+    text: 'Retry',
+    on: { click: () => hooks.retryCatalog() },
+  });
+  retry.disabled = Boolean(state.catalogLoading);
+  return [el('div', { class: 'tree-empty' }, [el('span', { text: state.notice }), ' ', retry])];
+}
+
 export function render(state) {
   const tree = byId('collections-tree');
   // Remember which collections the visitor had expanded, so a notify from an
@@ -278,9 +294,7 @@ export function render(state) {
     node.open = openCollections.has(c.id);
     return node;
   }));
-  if (state.collections.length === 0) {
-    replace(tree, [el('div', { class: 'tree-empty', text: 'Loading collections...' })]);
-  }
+  if (state.collections.length === 0) replace(tree, catalogPlaceholder(state));
 
   const ws = byId('workspace-tree');
   if (state.workspace.length === 0) {
@@ -307,11 +321,12 @@ export function render(state) {
   const hist = byId('history-list');
   // The five most recent runs, list and click-to-reopen only.
   const recent = state.history.slice(0, 5);
-  if (recent.length === 0) {
-    replace(hist, [el('div', { class: 'tree-empty', text: 'No runs yet.' })]);
-  } else {
-    replace(hist, recent.map(historyRow));
-  }
+  const rows = recent.length === 0
+    ? [el('div', { class: 'tree-empty', text: 'No runs yet.' })]
+    : recent.map(historyRow);
+  // An entry that could not be opened says so here, beside the list it was
+  // clicked in; nothing else on the page would explain the click.
+  replace(hist, [state.historyNote ? el('div', { class: 'note', text: state.historyNote }) : null, ...rows]);
 
   const name = byId('target-note-name');
   if (state.target && name.textContent !== state.target) name.textContent = state.target;

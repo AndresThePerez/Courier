@@ -180,3 +180,209 @@ test('the tab that pressed Start attaches to its run and moves to the Results ta
   assert.equal(byId('start-run').textContent, 'Start run');
   assert.deepEqual(listenerErrors, []);
 });
+
+// ------------------------------------------------------------------ Courier cannot be reached
+
+const UNREACHABLE = {
+  send: 'Could not reach Courier - check the connection and try again.',
+  start: 'Could not reach Courier - the run was not started.',
+  cancel: 'Could not reach Courier - the run was not cancelled.',
+  catalog: 'Could not load collections from the server.',
+};
+
+function openRequest() {
+  [...byId('collections-tree').querySelectorAll('button')].find((b) => b.classList.contains('req-open')).click();
+}
+
+test('a Send that cannot reach Courier says so and gives Send back', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  openRequest();
+  server.down.add('POST /api/send');
+
+  byId('send-request').click();
+  assert.equal(byId('send-request').disabled, true, 'busy while the request is out');
+  await flush();
+
+  assert.equal(byId('send-request').disabled, false);
+  assert.equal(byId('send-status').textContent, UNREACHABLE.send);
+  assert.deepEqual(listenerErrors, []);
+
+  // And the next Send goes out.
+  server.down.clear();
+  byId('send-request').click();
+  await flush();
+  assert.equal(callsTo('/api/send', 'POST').length, 2);
+  assert.match(byId('send-status').textContent, /^200 - /);
+});
+
+test('a Start that cannot reach Courier says so and gives Start back', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  runner.add(req(1));
+  server.down.add('*');
+
+  byId('start-run').click();
+  assert.equal(byId('start-run').textContent, 'Starting...');
+  await flush();
+
+  assert.equal(byId('start-run').textContent, 'Start run');
+  assert.equal(byId('start-run').disabled, false);
+  assert.equal(byId('start-note').hidden, false);
+  assert.equal(byId('start-note').textContent, UNREACHABLE.start);
+  assert.equal(eventSources.opened, 0, 'no run, so nothing to follow');
+  assert.deepEqual(listenerErrors, []);
+
+  server.down.clear();
+  byId('start-run').click();
+  await flush();
+  assert.equal(streamsFor(server.status.run_id).length, 1, 'the next Start starts a run');
+  assert.equal(byId('start-note').textContent, '');
+});
+
+test('a Cancel that cannot reach Courier says so and gives Cancel back', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  assert.equal(byId('cancel-run').hidden, false);
+  server.down.add(`DELETE /api/runs/${id}`);
+
+  byId('cancel-run').click();
+  assert.equal(byId('cancel-run').disabled, true);
+  await flush();
+
+  assert.equal(byId('cancel-run').hidden, false);
+  assert.equal(byId('cancel-run').disabled, false);
+  assert.equal(byId('start-note').hidden, false);
+  assert.equal(byId('start-note').textContent, UNREACHABLE.cancel);
+  assert.deepEqual(listenerErrors, []);
+
+  server.down.clear();
+  byId('cancel-run').click();
+  await flush();
+  assert.equal(callsTo(`/api/runs/${id}`, 'DELETE').length, 2);
+  assert.equal(byId('start-note').textContent, '', 'a cancel that landed leaves no note');
+});
+
+test('Cancel pressed while Start is out: each control comes back with its own outcome', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  runner.add(req(1));
+  // This tab still believes nothing is running, so Start is live; the server knows better.
+  set({ status: { running: false, budget_balance: 1500 } });
+  const releaseStart = server.hold('POST /api/runs');
+  byId('start-run').click();
+  await flush();
+  assert.equal(byId('start-run').textContent, 'Starting...');
+
+  set({ status: { ...server.status } });
+  server.down.add(`DELETE /api/runs/${id}`);
+  byId('cancel-run').click();
+  await flush();
+  assert.equal(byId('cancel-run').disabled, false);
+  assert.match(byId('start-note').textContent, /Could not reach Courier - the run was not cancelled\./);
+  assert.equal(byId('start-run').textContent, 'Starting...', 'Start is still out');
+
+  releaseStart();
+  await flush();
+  assert.equal(byId('start-run').textContent, 'Start run');
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('a catalog that cannot be loaded says so with a Retry, and never claims to be loading', async (t) => {
+  const server = makeServer();
+  server.down.add('GET /api/collections');
+  await bootPage(t, server);
+
+  const tree = byId('collections-tree');
+  const retry = () => [...tree.querySelectorAll('button')].find((b) => b.textContent === 'Retry');
+  assert.match(tree.textContent, /Could not load collections from the server\./);
+  assert.doesNotMatch(tree.textContent, /Loading collections/);
+  assert.ok(retry(), 'a Retry button is offered');
+
+  // A second failure: same notice, still no "Loading".
+  retry().click();
+  assert.doesNotMatch(tree.textContent, /Loading collections/, 'not while the retry is out either');
+  await flush();
+  assert.match(tree.textContent, /Could not load collections from the server\./);
+  assert.equal(retry().disabled, false);
+  assert.equal(callsTo('/api/collections').length, 2);
+
+  // The notice survives the renders a status poll causes.
+  t.mock.timers.tick(3000);
+  await flush();
+  assert.match(tree.textContent, /Could not load collections from the server\./);
+  assert.ok(retry());
+
+  server.down.clear();
+  retry().click();
+  await flush();
+  assert.equal(callsTo('/api/collections').length, 3);
+  assert.doesNotMatch(tree.textContent, /Could not load/);
+  assert.equal(tree.querySelectorAll('details').length, 1, 'the collections are listed');
+  assert.equal(get().notice, null);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('the catalog notice and Retry are drawn whatever the saved collections are', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  const tree = byId('collections-tree');
+  assert.equal(tree.querySelectorAll('details').length, 1);
+
+  // Only the notice changes: the saved list, which the sidebar redraws only
+  // when it changes, is the same array throughout.
+  const saved = get().savedCollections;
+  set({ collections: [], notice: UNREACHABLE.catalog });
+  assert.equal(get().savedCollections, saved);
+  assert.match(tree.textContent, /Could not load collections from the server\./);
+  assert.ok([...tree.querySelectorAll('button')].some((b) => b.textContent === 'Retry'));
+  set({ notice: null });
+  assert.equal(tree.textContent, 'Loading collections...');
+});
+
+test('a page that cannot reach Courier at load still boots, and catches up when it can', async (t) => {
+  const server = makeServer();
+  server.down.add('*');
+  await bootPage(t, server);
+  assert.equal(get().status, null);
+  assert.deepEqual(get().history, []);
+  assert.deepEqual(listenerErrors, []);
+
+  server.down.clear();
+  const id = server.begin();
+  t.mock.timers.tick(3000);
+  await flush();
+  assert.equal(get().status.run_id, id);
+  assert.equal(streamsFor(id).length, 1);
+});
+
+test('a history entry that cannot be fetched says so and leaves the view as it was', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  server.end();
+  await bootPage(t, server);
+  const row = () => byId('history-list').querySelector('button');
+
+  server.down.add(`GET /api/runs/${id}`);
+  row().click();
+  await flush();
+  assert.equal(get().report, null);
+  assert.equal(get().run, null);
+  assert.match(byId('history-list').textContent, /Could not open that run - Could not reach Courier\./);
+  assert.deepEqual(listenerErrors, []);
+
+  server.down.clear();
+  row().click();
+  await flush();
+  assert.equal(get().report.id, id);
+  assert.doesNotMatch(byId('history-list').textContent, /Could not open/);
+
+  // A run the server no longer stores says that instead.
+  server.reports.delete(id);
+  row().click();
+  await flush();
+  assert.match(byId('history-list').textContent, /That run is no longer stored on the server\./);
+  assert.equal(get().report.id, id, 'the report already open stays');
+});

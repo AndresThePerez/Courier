@@ -1,8 +1,18 @@
 // api.js — every fetch call and the live-update transport.
 // Nothing else in the frontend calls fetch.
+//
+// No call here throws. A request that could not be made, or whose answer never
+// arrived whole, is an outcome like any other: the caller asked a question and
+// is owed an answer it can show, and a rejected promise nobody caught is how a
+// button stays on "Sending..." until the page is reloaded.
 
-async function readJSON(res) {
-  const text = await res.text();
+// unreachable is that outcome: the request was refused, dropped, or cut off
+// while its body was being read. All three are the same fact to a visitor.
+function unreachable() {
+  return { ok: false, kind: 'network', error: 'Could not reach Courier' };
+}
+
+function parse(text) {
   if (!text) return null;
   try {
     return JSON.parse(text);
@@ -11,16 +21,28 @@ async function readJSON(res) {
   }
 }
 
-async function getJSON(url) {
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  const body = await readJSON(res);
-  if (!res.ok) {
-    const err = new Error((body && body.error) || `${res.status} ${res.statusText}`);
-    err.status = res.status;
-    err.body = body;
-    throw err;
+// call makes one request and reads its whole body. It answers null when
+// Courier could not be reached, and otherwise the status and the parsed body
+// (null for an empty or non-JSON one).
+async function call(url, init = {}) {
+  try {
+    const res = await fetch(url, init);
+    const body = parse(await res.text());
+    return { status: res.status, statusText: res.statusText, ok: res.ok, body };
+  } catch {
+    return null;
   }
-  return body;
+}
+
+const said = (res) => (res.body && res.body.error) || `${res.status} ${res.statusText}`;
+
+// getJSON answers { ok: true, body }, or { ok: false, kind: 'error', status,
+// error, body } when the server refused, or the network outcome.
+async function getJSON(url) {
+  const res = await call(url, { headers: { Accept: 'application/json' } });
+  if (!res) return unreachable();
+  if (!res.ok) return { ok: false, kind: 'error', status: res.status, error: said(res), body: res.body };
+  return { ok: true, body: res.body };
 }
 
 export function getCollections() {
@@ -39,6 +61,18 @@ export function getRun(id) {
   return getJSON(`/api/runs/${encodeURIComponent(id)}`);
 }
 
+// encode answers null for a payload JSON cannot carry, which is the page's
+// own fault and must not read as the network's.
+function encode(payload) {
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return null;
+  }
+}
+
+const unencodable = () => ({ ok: false, kind: 'error', error: 'the request could not be encoded' });
+
 // startRun answers with a tagged result rather than throwing, because every
 // one of its outcomes is a UI state and not an error: 409 with a run_id means
 // "offer spectator mode", 409 with a cooldown_until means "start the
@@ -46,14 +80,17 @@ export function getRun(id) {
 // is the authority on run state; the UI never assumes its own optimism was
 // right.
 export async function startRun(payload) {
-  const res = await fetch('/api/runs', {
+  const text = encode(payload);
+  if (text === null) return unencodable();
+  const res = await call('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: text,
   });
-  const body = (await readJSON(res)) || {};
+  if (!res) return unreachable();
+  const body = res.body || {};
   if (res.status === 202) {
-    startedHook(body.run_id);
+    startedHook(body.run_id, payload && payload.mode);
     return { ok: true, runId: body.run_id };
   }
   if (res.status === 409) {
@@ -63,29 +100,32 @@ export async function startRun(payload) {
     return { ok: false, kind: 'busy', runId: body.run_id || '' };
   }
   if (res.status === 400) return { ok: false, kind: 'invalid', error: body.error || 'invalid payload', field: body.field || '' };
-  return { ok: false, kind: 'error', error: body.error || `${res.status} ${res.statusText}` };
+  return { ok: false, kind: 'error', error: said(res) };
 }
 
 export async function cancelRun(id) {
-  const res = await fetch(`/api/runs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await call(`/api/runs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res) return unreachable();
   if (res.status === 204) return { ok: true };
-  const body = (await readJSON(res)) || {};
   // 404 is "there is nothing there to stop" — an unknown id and a finished id
   // are the same fact from here.
-  return { ok: false, gone: res.status === 404, error: body.error || `${res.status} ${res.statusText}` };
+  return { ok: false, gone: res.status === 404, error: said(res) };
 }
 
 export async function send(request) {
-  const res = await fetch('/api/send', {
+  const text = encode(request);
+  if (text === null) return unencodable();
+  const res = await call('/api/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
+    body: text,
   });
-  const body = (await readJSON(res)) || {};
+  if (!res) return unreachable();
+  const body = res.body || {};
   if (res.ok) return { ok: true, result: body };
   if (res.status === 429) return { ok: false, kind: 'busy', error: body.error || 'another send is in flight' };
   if (res.status === 400) return { ok: false, kind: 'invalid', error: body.error || 'invalid request', field: body.field || '' };
-  return { ok: false, kind: 'error', error: body.error || `${res.status} ${res.statusText}` };
+  return { ok: false, kind: 'error', error: said(res) };
 }
 
 // ---------------------------------------------------------- live transport
@@ -113,10 +153,10 @@ const FirstEventMs = 5000;
 
 const LiveEvents = ['run_started', 'request_result', 'progress', 'run_finished'];
 
-// startedHook lets the page tell "a run is live" from "this tab started it".
-// Every tab attaches to a live run; only the one that pressed Start follows it
-// to the Results tab. The alternative — the runner module calling openLive
-// itself — would put a second transport owner in the page.
+// startedHook lets the page tell "a run is live" from "this tab started it":
+// it is called with the run's id and mode on this tab's own 202 and on
+// nothing else. The alternative — the runner module calling openLive itself —
+// would put a second transport owner in the page.
 let startedHook = () => {};
 
 export function onRunStarted(fn) {
@@ -245,20 +285,19 @@ export function openLive(runId, handlers) {
   async function tick() {
     if (stopped || polling) return;
     polling = true;
-    try {
-      absorb(await getRun(runId));
-    } catch (err) {
+    const res = await getRun(runId);
+    polling = false;
+    if (stopped) return;
+    if (res.ok) {
+      absorb(res.body);
+    } else if (res.status === 404) {
       // 404 is the run having aged out of the history ring, or a server that
       // restarted under us. There is nothing left to follow; the idle status
       // poll takes over the moment this transport says it is gone.
-      if (err.status === 404) {
-        console.warn('polled run is gone', runId);
-        stop();
-      } else {
-        console.warn('run poll failed', err);
-      }
-    } finally {
-      polling = false;
+      console.warn('polled run is gone', runId);
+      stop();
+    } else {
+      console.warn('run poll failed', res.error);
     }
   }
 

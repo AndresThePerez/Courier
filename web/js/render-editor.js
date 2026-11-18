@@ -222,7 +222,15 @@ async function sendDraft() {
   if (!state.draft || (state.send && state.send.pending)) return;
 
   set({ send: { pending: true } });
-  const outcome = await api.send(payloadOf(state.draft));
+  // Whatever building or sending the request throws, Send must come back: a
+  // button left on "Sending..." can only be cleared by a reload.
+  let outcome;
+  try {
+    outcome = await api.send(payloadOf(state.draft));
+  } catch (error) {
+    console.warn('request not sent', error);
+    outcome = { ok: false, kind: 'error', error: 'this request could not be sent from this page.' };
+  }
   if (outcome.ok) set({ send: { pending: false, result: outcome.result } });
   else set({ send: { pending: false, kind: outcome.kind, error: outcome.error, field: outcome.field || '' } });
 }
@@ -583,6 +591,14 @@ function renderSend(state) {
   if (send.pending) {
     status.textContent = 'Sending...';
     status.className = 'send-status muted';
+    return;
+  }
+  if (!send.result && send.kind === 'network') {
+    // Nothing is known about the target here: the request may never have
+    // left, or its answer may have been lost on the way back.
+    status.textContent = 'Could not reach Courier - check the connection and try again.';
+    status.className = 'send-status fail';
+    replace(box, []);
     return;
   }
   if (!send.result) {

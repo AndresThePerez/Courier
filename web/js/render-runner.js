@@ -100,6 +100,8 @@ let lastSignature = null;
 let sequenceNote = '';
 let setupNote = '';
 let startNote = '';
+let cancelNote = '';
+let cancelNoteRun = ''; // the run a failed cancel was for; its note goes when that run does
 let starting = false;
 let cancelling = false;
 let startedRunId = '';
@@ -360,43 +362,44 @@ async function start() {
   }
 
   starting = true;
-  startNote = 'Starting...';
+  startNote = '';
+  cancelNote = '';
   render(get());
 
   // Deliberately not gated on the phase this module last rendered: the button
   // being disabled is the affordance, the server is the authority. A click that
   // slips through between the run ending and the poll noticing gets a 409 and
-  // lands in the right state, which is exactly what step 5 asks for.
+  // lands in the right state.
   // Whatever building or sending the payload throws, Start must come back:
   // a button left on "Starting..." can only be cleared by a reload. Only a
   // payload this page could not build or encode is blamed on a queued
   // request; a request that was built and then failed on the way is not.
   let outcome;
-  let payload = null;
   try {
-    payload = {
-      mode: state.mode,
-      sequence: entries.map((e) => requestPayload(e.request)),
-      options: { ...state.options },
-    };
-    // Encoded once here so a payload that cannot be encoded fails as one,
-    // rather than inside the request where it would read as the network.
-    JSON.stringify(payload);
-  } catch (error) {
-    console.warn('run not sent', error);
-    payload = null;
-    outcome = { ok: false, kind: 'error', error: 'a queued request could not be sent from this page.' };
-  }
-  if (payload) {
+    let payload = null;
     try {
-      outcome = await api.startRun(payload);
+      payload = {
+        mode: state.mode,
+        sequence: entries.map((e) => requestPayload(e.request)),
+        options: { ...state.options },
+      };
+      // Encoded once here so a payload that cannot be encoded fails as one,
+      // rather than inside the request.
+      JSON.stringify(payload);
     } catch (error) {
-      console.warn('run not started', error);
-      outcome = { ok: false, kind: 'error', error: 'Courier could not be reached.' };
+      console.warn('run not sent', error);
+      payload = null;
+      outcome = { ok: false, kind: 'error', error: 'a queued request could not be sent from this page.' };
     }
+    if (payload) outcome = await api.startRun(payload);
+  } catch (error) {
+    console.warn('run not started', error);
+    outcome = { ok: false, kind: 'network' };
+  } finally {
+    starting = false;
   }
-  starting = false;
   applyStartOutcome(outcome, state.mode);
+  render(get());
   await hooks.refresh();
   render(get());
 }
@@ -424,6 +427,10 @@ function applyStartOutcome(outcome, mode) {
     adoptStatus({ running: false, cooldown_until: outcome.cooldownUntil });
     return;
   }
+  if (outcome.kind === 'network') {
+    startNote = 'Could not reach Courier - the run was not started.';
+    return;
+  }
   if (outcome.kind === 'invalid') {
     // The sandbox refused the payload. Naming the field is the whole value of
     // the 400: it is where a visitor learns the validation is real.
@@ -448,15 +455,27 @@ async function cancel() {
   if (!id || cancelling) return;
 
   cancelling = true;
-  startNote = 'Cancelling...';
+  cancelNote = '';
   render(get());
 
-  const outcome = await api.cancelRun(id);
-  cancelling = false;
+  // Cancel comes back on every outcome, as Start does.
+  let outcome;
+  try {
+    outcome = await api.cancelRun(id);
+  } catch (error) {
+    console.warn('cancel not sent', error);
+    outcome = { ok: false, kind: 'network' };
+  } finally {
+    cancelling = false;
+  }
   // A 404 means the run finished on its own between the click and the request.
   // From here that is the same fact as a successful cancel: there is nothing
   // left to stop.
-  startNote = outcome.ok || outcome.gone ? '' : `Could not cancel - ${outcome.error}`;
+  if (outcome.ok || outcome.gone) cancelNote = '';
+  else if (outcome.kind === 'network') cancelNote = 'Could not reach Courier - the run was not cancelled.';
+  else cancelNote = `Could not cancel - ${outcome.error}`;
+  cancelNoteRun = id;
+  render(get());
   await hooks.refresh();
   render(get());
 }
@@ -738,8 +757,16 @@ function renderControls(state) {
   ensureTicker(phase === 'cooling' || lastPhase === 'cooling');
   lastPhase = phase;
 
+  // Start and Cancel each say their own piece, so neither request settling
+  // can wipe what the other reported. A failed cancel is about one run, and
+  // its note leaves with that run.
+  if (cancelNote && runId !== cancelNoteRun) cancelNote = '';
   const note = byId('start-note');
-  const noteText = startNote
+  const said = [
+    starting ? 'Starting...' : startNote,
+    cancelling ? 'Cancelling...' : cancelNote,
+  ].filter(Boolean).join(' ');
+  const noteText = said
     || (phase === 'idle' && selected === 0 ? 'Check at least one request to enable Start.' : '');
   note.hidden = !noteText;
   setText(note, noteText);

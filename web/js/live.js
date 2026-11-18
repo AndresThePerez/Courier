@@ -10,6 +10,14 @@
 // figure was not adopted, because the documented one is authoritative (see docs/deviations.md N26).
 export const StatusPollMs = 3000;
 
+// historyRefusal is what the history rail says when an entry could not be
+// opened. A 404 is the run having aged out of the server's ring of 20.
+function historyRefusal(res) {
+  if (res.kind === 'network') return 'Could not open that run - Could not reach Courier.';
+  if (res.status === 404) return 'That run is no longer stored on the server.';
+  return `Could not open that run - ${res.error}`;
+}
+
 function runShape(id, data) {
   return {
     id,
@@ -37,20 +45,15 @@ export function createLive({ api, get, set, showTab = () => {} }) {
   let syncQueued = false;
 
   async function refreshStatus() {
-    try {
-      set({ status: await api.getStatus() });
-    } catch (err) {
-      console.warn('status poll failed', err);
-    }
+    const res = await api.getStatus();
+    if (res.ok) set({ status: res.body });
+    else console.warn('status poll failed', res.error);
   }
 
   async function refreshHistory() {
-    try {
-      const body = await api.getHistory();
-      set({ history: (body && body.runs) || [] });
-    } catch (err) {
-      console.warn('history fetch failed', err);
-    }
+    const res = await api.getHistory();
+    if (res.ok) set({ history: (res.body && res.body.runs) || [] });
+    else console.warn('history fetch failed', res.error);
   }
 
   // refresh is what a module calls after it changed the run state itself (a
@@ -60,18 +63,36 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     return Promise.all([refreshStatus(), refreshHistory()]);
   }
 
-  async function loadCatalog() {
-    try {
-      const body = await api.getCollections();
-      set({
-        collections: (body && body.collections) || [],
-        endpoints: (body && body.endpoints) || [],
-        target: (body && body.target) || '',
+  // loadCatalog fetches the curated collections, at load and on Retry. A
+  // failure is a state of the page, not a pause: the sidebar says so and
+  // offers Retry, and one load is out at a time.
+  let catalogFlight = null;
+
+  function loadCatalog() {
+    if (!catalogFlight) {
+      catalogFlight = readCatalog().finally(() => {
+        catalogFlight = null;
       });
-    } catch (err) {
-      console.error('could not load /api/collections', err);
-      set({ notice: 'Could not load collections from the server.' });
     }
+    return catalogFlight;
+  }
+
+  async function readCatalog() {
+    set({ catalogLoading: true });
+    const res = await api.getCollections();
+    if (!res.ok) {
+      console.warn('could not load /api/collections', res.error);
+      set({ catalogLoading: false, notice: 'Could not load collections from the server.' });
+      return;
+    }
+    const body = res.body || {};
+    set({
+      catalogLoading: false,
+      notice: null,
+      collections: body.collections || [],
+      endpoints: body.endpoints || [],
+      target: body.target || '',
+    });
   }
 
   function attach(runId) {
@@ -150,15 +171,16 @@ export function createLive({ api, get, set, showTab = () => {} }) {
       },
     });
 
-    try {
-      const rep = await api.getRun(runId);
+    const res = await api.getRun(runId);
+    if (res.ok) {
+      const rep = res.body;
       set({
         run: runShape(rep.id, { ...rep, total: (rep.entries || []).length }),
         report: rep,
         results: (rep.functional && rep.functional.results) || get().results,
       });
-    } catch (err) {
-      console.warn('could not fetch the finished report', err);
+    } else {
+      console.warn('could not fetch the finished report', res.error);
     }
 
     await refresh();
@@ -173,18 +195,21 @@ export function createLive({ api, get, set, showTab = () => {} }) {
       live = null;
     }
     pinnedRunId = id;
-    try {
-      const rep = await api.getRun(id);
-      set({
-        run: runShape(rep.id, { ...rep, total: (rep.entries || []).length }),
-        report: rep,
-        results: (rep.functional && rep.functional.results) || [],
-        progress: null,
-        spectator: false,
-      });
-    } catch (err) {
-      console.warn('could not reopen run', id, err);
+    set({ historyNote: '' });
+    const res = await api.getRun(id);
+    if (!res.ok) {
+      console.warn('could not reopen run', id, res.error);
+      set({ historyNote: historyRefusal(res) });
+      return;
     }
+    const rep = res.body;
+    set({
+      run: runShape(rep.id, { ...rep, total: (rep.entries || []).length }),
+      report: rep,
+      results: (rep.functional && rep.functional.results) || [],
+      progress: null,
+      spectator: false,
+    });
   }
 
   // scheduleSync defers the attach decision out of the notify loop: attaching
@@ -246,7 +271,10 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     // tests wire the same functions under the same names.
     hooks: {
       runner: { refresh, showTab },
-      sidebar: { openRun: (id) => { void openRun(id); } },
+      sidebar: {
+        openRun: (id) => { void openRun(id); },
+        retryCatalog: () => { void loadCatalog(); },
+      },
     },
   };
 }
