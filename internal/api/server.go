@@ -140,7 +140,7 @@ func New(static fs.FS, opts Options) *Server {
 	s.metrics = newMetrics()
 	s.mgr = runner.NewManagerAt(ex, opts.TargetDisplay, meteredBus{bus, s.metrics}, log, now)
 	s.routes(static)
-	s.handler = secureHeaders(s.withRequestID(s.mux))
+	s.handler = secureHeaders(s.withRequestID(s.apiMisses(s.mux)))
 	return s
 }
 
@@ -164,37 +164,62 @@ func (s *Server) routes(static fs.FS) {
 	s.mux.HandleFunc("GET /api/runs/{id}/stream", s.handleStream)
 	s.mux.HandleFunc("GET /api/runs/{id}/report.pdf", s.handleReportPDF)
 
-	// Every GET on an /api/ path that no method-scoped pattern above matched.
-	// Without this a GET /api/send falls through to the file server and answers
-	// 404, while /api/runs answers 405 with an Allow header, so the verb
-	// contract the README claims held unevenly. The pattern is GET-scoped
-	// because a method-less "/api/" conflicts with "GET /" and makes the mux
-	// panic at registration; a wrong non-GET verb on a GET-only path never needs
-	// it, because the mux answers that 405 itself with an Allow header it
-	// computes. Go's mux prefers the more specific pattern, so the
-	// method-scoped routes above still win for their own verbs.
-	s.mux.HandleFunc("GET /api/", s.handleAPIFallback)
-
-	s.mux.Handle("GET /", newStaticHandler(static))
+	s.mux.Handle(staticPattern, newStaticHandler(static))
 }
 
-// apiAllow is the verb contract for the fixed API paths. The catalogue is
-// closed and small, so a request that reaches the fallback on a known path is
-// a wrong verb rather than a wrong path, and Allow is what the client needs.
-var apiAllow = map[string]string{
-	"/api/send":        "POST",
-	"/api/status":      "GET, HEAD",
-	"/api/collections": "GET, HEAD",
-	"/api/runs":        "GET, HEAD, POST",
+// staticPattern is the file server's catch-all. Under /api/ a match on it is a
+// miss: the path names no endpoint for this verb.
+const staticPattern = "GET /"
+
+// probeMethods are the verbs an Allow header can name. The routes use no
+// others.
+var probeMethods = []string{
+	http.MethodDelete, http.MethodGet, http.MethodHead,
+	http.MethodPatch, http.MethodPost, http.MethodPut,
 }
 
-func (s *Server) handleAPIFallback(w http.ResponseWriter, r *http.Request) {
-	if allow, ok := apiAllow[r.URL.Path]; ok {
-		w.Header().Set("Allow", allow)
-		writeError(w, http.StatusMethodNotAllowed, "", "method %s is not allowed on %s", r.Method, r.URL.Path)
-		return
+// apiMisses answers every /api request that no API route takes, whatever the
+// verb, in the one error shape: a 405 with Allow when the path exists under
+// another verb, a 404 otherwise. Left to the mux, a wrong verb is a plain-text
+// 405 and a GET falls through to the file server.
+//
+// It sits in front of the mux rather than as a method-less "/api/" pattern,
+// which conflicts with "GET /" and makes the mux panic at registration. Allow
+// is read back from the mux itself, so the route table stays the only place
+// the verb contract is written.
+func (s *Server) apiMisses(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isAPIPath(r.URL.Path) || s.routed(r, r.Method) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		var allow []string
+		for _, m := range probeMethods {
+			if s.routed(r, m) {
+				allow = append(allow, m)
+			}
+		}
+		if len(allow) > 0 {
+			w.Header().Set("Allow", strings.Join(allow, ", "))
+			writeError(w, http.StatusMethodNotAllowed, "", "method %q is not allowed on %q", r.Method, r.URL.Path)
+			return
+		}
+		writeError(w, http.StatusNotFound, "", "no such endpoint %q", r.URL.Path)
+	})
+}
+
+func isAPIPath(p string) bool { return p == "/api" || strings.HasPrefix(p, "/api/") }
+
+// routed reports whether an API route, rather than the file server or the
+// mux's own 404/405, would take r under the given method.
+func (s *Server) routed(r *http.Request, method string) bool {
+	probe := r
+	if method != r.Method {
+		probe = r.Clone(r.Context())
+		probe.Method = method
 	}
-	writeError(w, http.StatusNotFound, "", "no such endpoint %q", r.URL.Path)
+	_, pattern := s.mux.Handler(probe)
+	return pattern != "" && pattern != staticPattern
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }

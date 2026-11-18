@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -95,29 +96,94 @@ func TestServesEmbeddedIndex(t *testing.T) {
 	}
 }
 
-// The README says the verb is part of the contract. It was, for /api/runs and
-// not for /api/send, which fell through to the file server and answered 404.
+// The README says the verb is part of the contract, and every answer under
+// /api/ is JSON: a wrong verb on a known path is a 405 naming the verbs that
+// path takes, and anything else is a 404, whatever the method.
 func TestWrongVerbOnAnAPIPathAnswers405(t *testing.T) {
-	cases := []struct{ method, path, allow string }{
-		{http.MethodGet, "/api/send", "POST"},
-		{http.MethodPost, "/api/status", "GET, HEAD"},
-		{http.MethodPut, "/api/runs", "GET, HEAD, POST"},
+	s := newServer(t, newTarget(t, 0), nil)
+	allow := map[string]string{
+		"/api/send":              "POST",
+		"/api/status":            "GET, HEAD",
+		"/api/collections":       "GET, HEAD",
+		"/api/runs":              "GET, HEAD, POST",
+		"/api/runs/x":            "DELETE, GET, HEAD",
+		"/api/runs/x/stream":     "GET, HEAD",
+		"/api/runs/x/report.pdf": "GET, HEAD",
 	}
-	for _, c := range cases {
-		rec := httptest.NewRecorder()
-		testServer(t).ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("%s %s = %d, want 405", c.method, c.path, rec.Code)
+	methods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions}
+	for path, want := range allow {
+		for _, m := range methods {
+			if strings.Contains(", "+want+",", ", "+m+",") {
+				continue
+			}
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, httptest.NewRequest(m, path, nil))
+			wantAPIError(t, rec, m, path, http.StatusMethodNotAllowed)
+			if got := rec.Header().Get("Allow"); got != want {
+				t.Errorf("%s %s Allow = %q, want %q", m, path, got, want)
+			}
 		}
-		if got := rec.Header().Get("Allow"); got != c.allow {
-			t.Errorf("%s %s Allow = %q, want %q", c.method, c.path, got, c.allow)
+	}
+}
+
+func TestUnknownAPIPathsAnswerAJSON404ForEveryVerb(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	paths := map[string]string{ // as requested -> as named in the error
+		"/api/nope":             "/api/nope",
+		"/api":                  "/api",
+		"/api/":                 "/api/",
+		"/api/runs/":            "/api/runs/",
+		"/api/runs/x/nope":      "/api/runs/x/nope",
+		"/api/%6Eope":           "/api/nope",
+		"/api/%3Cscript%3E":     "/api/<script>",
+		"/api/send/extra":       "/api/send/extra",
+		"/api/status/":          "/api/status/",
+		"/api/collections.json": "/api/collections.json",
+	}
+	methods := []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions, "TRACE"}
+	for path, named := range paths {
+		for _, m := range methods {
+			rec := httptest.NewRecorder()
+			s.ServeHTTP(rec, httptest.NewRequest(m, path, nil))
+			body := wantAPIError(t, rec, m, path, http.StatusNotFound)
+			if rec.Header().Get("Allow") != "" {
+				t.Errorf("%s %s carries Allow %q on a 404", m, path, rec.Header().Get("Allow"))
+			}
+			if m == http.MethodHead {
+				continue
+			}
+			if want := fmt.Sprintf("no such endpoint %q", named); body.Error != want {
+				t.Errorf("%s %s error = %q, want %q", m, path, body.Error, want)
+			}
+			if strings.Contains(rec.Body.String(), "<") {
+				t.Errorf("%s %s body %s carries a raw '<'", m, path, rec.Body.String())
+			}
 		}
 	}
-	rec := httptest.NewRecorder()
-	testServer(t).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/nope", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("GET /api/nope = %d, want 404", rec.Code)
+}
+
+// wantAPIError checks an error answer is JSON, carries the security headers,
+// and has the given status.
+func wantAPIError(t *testing.T, rec *httptest.ResponseRecorder, method, path string, status int) errorBody {
+	t.Helper()
+	if rec.Code != status {
+		t.Errorf("%s %s = %d %q, want %d", method, path, rec.Code, rec.Body.String(), status)
 	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("%s %s Content-Type = %q, want application/json", method, path, ct)
+	}
+	for _, h := range []string{"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy"} {
+		if rec.Header().Get(h) == "" {
+			t.Errorf("%s %s has no %s", method, path, h)
+		}
+	}
+	var body errorBody
+	if method != http.MethodHead {
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Errorf("%s %s body %q is not JSON: %v", method, path, rec.Body.String(), err)
+		}
+	}
+	return body
 }
 
 // postRaw sends body exactly as given, with the Content-Type values listed
