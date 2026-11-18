@@ -211,8 +211,21 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
   function fork(request) {
     const copy = deepCopy(request);
     copy.id = randomId();
-    copy.name = `${request.name || 'Request'} (copy)`;
+    copy.name = copyName(request.name || 'Request');
     return save(copy);
+  }
+
+  // copyName numbers a fork so two copies of one request can be told apart in
+  // the sidebar. Names stored by another tab count as taken too, even before
+  // its storage event has arrived.
+  function copyName(base) {
+    const r = storage.read(area, key);
+    const lists = [get().workspace, r.ok ? decode(r.value).requests : []];
+    const taken = new Set(lists.flat().map((req) => req.name));
+    if (!taken.has(`${base} (copy)`)) return `${base} (copy)`;
+    let n = 2;
+    while (taken.has(`${base} (copy ${n})`)) n += 1;
+    return `${base} (copy ${n})`;
   }
 
   // remove deletes a request and closes it if it is open, returning what was
