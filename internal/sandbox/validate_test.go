@@ -409,3 +409,37 @@ func TestTruncationsListExactlyWhatIsCut(t *testing.T) {
 		t.Errorf("a payload with nothing cut reports %q, want nil", got)
 	}
 }
+
+// Validation messages are response bodies; a quoted payload string reads
+// exactly as written when short and is cut to a readable length when long.
+func TestValidationMessagesClipWhatTheyQuote(t *testing.T) {
+	long := strings.Repeat("ü", 100_000)
+	run := func(r Request) RunRequest {
+		return RunRequest{Mode: ModeFunctional, Sequence: []Request{r}}
+	}
+	cases := []struct {
+		name string
+		rr   RunRequest
+		want string
+	}{
+		{"short mode", RunRequest{Mode: "x", Sequence: []Request{req(nil)}}, `must be "functional" or "performance", got "x"`},
+		{"long mode", RunRequest{Mode: long, Sequence: []Request{req(nil)}}, `must be "functional" or "performance", got "` + assert.Clip(long) + `"`},
+		{"short endpoint", run(Request{Endpoint: "admin"}), `unknown endpoint "admin"`},
+		{"long endpoint", run(Request{Endpoint: long}), `unknown endpoint "` + assert.Clip(long) + `"`},
+		{"short parameter", run(req(map[string]string{"url": "x"})), `unknown parameter "url" for endpoint "search"`},
+		{"long parameter", run(req(map[string]string{long: "x"})), `unknown parameter "` + assert.Clip(long) + `" for endpoint "search"`},
+	}
+	for _, c := range cases {
+		_, err := Validate(c.rr)
+		var ve ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("%s: err = %v, want a ValidationError", c.name, err)
+		}
+		if ve.Message != c.want {
+			t.Errorf("%s: message = %.300q, want %.300q", c.name, ve.Message, c.want)
+		}
+		if n := utf8.RuneCountInString(ve.Message); n > 200 {
+			t.Errorf("%s: message is %d characters", c.name, n)
+		}
+	}
+}

@@ -93,7 +93,7 @@ func invalid(field, format string, args ...any) ValidationError {
 // The input is never mutated.
 func Validate(rr RunRequest) (RunRequest, error) {
 	if rr.Mode != ModeFunctional && rr.Mode != ModePerformance {
-		return RunRequest{}, invalid("mode", "must be %q or %q, got %q", ModeFunctional, ModePerformance, rr.Mode)
+		return RunRequest{}, invalid("mode", "must be %q or %q, got %q", ModeFunctional, ModePerformance, assert.Clip(rr.Mode))
 	}
 	if len(rr.Sequence) == 0 {
 		return RunRequest{}, invalid("sequence", "a run needs at least one request")
@@ -124,7 +124,7 @@ func Validate(rr RunRequest) (RunRequest, error) {
 func ValidateRequest(r Request) (Request, error) {
 	ep, ok := Lookup(r.Endpoint)
 	if !ok {
-		return Request{}, invalid("endpoint", "unknown endpoint %q", r.Endpoint)
+		return Request{}, invalid("endpoint", "unknown endpoint %q", assert.Clip(r.Endpoint))
 	}
 
 	out := Request{
@@ -142,7 +142,7 @@ func ValidateRequest(r Request) (Request, error) {
 		// bug report nobody can reproduce.
 		for _, key := range slices.Sorted(maps.Keys(r.Params)) {
 			if !ep.Allows(key) {
-				return Request{}, invalid("params", "unknown parameter %q for endpoint %q", key, ep.ID)
+				return Request{}, invalid("params", "unknown parameter %q for endpoint %q", assert.Clip(key), ep.ID)
 			}
 			out.Params[key] = truncate(r.Params[key], MaxParamValueLen)
 		}

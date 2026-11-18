@@ -93,10 +93,10 @@ var opsByType = map[string][]string{
 func ValidateAssertion(a Assertion) error {
 	ops, ok := opsByType[a.Type]
 	if !ok {
-		return fmt.Errorf("unknown assertion type %q", a.Type)
+		return fmt.Errorf("unknown assertion type %q", Clip(a.Type))
 	}
 	if !slices.Contains(ops, a.Op) {
-		return fmt.Errorf("operator %q is not valid for a %s assertion (allowed: %v)", a.Op, a.Type, ops)
+		return fmt.Errorf("operator %q is not valid for a %s assertion (allowed: %v)", Clip(a.Op), a.Type, ops)
 	}
 
 	if a.Type == TypeJSON {
@@ -151,6 +151,27 @@ func ValidateAssertion(a Assertion) error {
 		}
 	}
 	return nil
+}
+
+// ClipLen is how many characters of a client-supplied string an error message
+// quotes. A message is shown whole; a payload string may be a quarter of a
+// megabyte.
+const ClipLen = 64
+
+// Clip bounds a client-supplied string quoted in an error message to ClipLen
+// characters, marking the cut with "...". It never splits a character.
+//
+// It lives here because this is the lowest package that quotes a payload:
+// sandbox and api both import it, and neither may be imported back.
+func Clip(s string) string {
+	n := 0
+	for i := range s {
+		if n == ClipLen {
+			return s[:i] + "..."
+		}
+		n++
+	}
+	return s
 }
 
 // isWhole is false for NaN and the infinities as well as for fractions.

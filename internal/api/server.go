@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/collections"
 	"github.com/AndresThePerez/courier/internal/runner"
 	"github.com/AndresThePerez/courier/internal/sandbox"
@@ -201,10 +203,10 @@ func (s *Server) apiMisses(next http.Handler) http.Handler {
 		}
 		if len(allow) > 0 {
 			w.Header().Set("Allow", strings.Join(allow, ", "))
-			writeError(w, http.StatusMethodNotAllowed, "", "method %q is not allowed on %q", r.Method, r.URL.Path)
+			writeError(w, http.StatusMethodNotAllowed, "", "method %q is not allowed on %q", assert.Clip(r.Method), assert.Clip(r.URL.Path))
 			return
 		}
-		writeError(w, http.StatusNotFound, "", "no such endpoint %q", r.URL.Path)
+		writeError(w, http.StatusNotFound, "", "no such endpoint %q", assert.Clip(r.URL.Path))
 	})
 }
 
@@ -322,11 +324,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		// checkBody has already walked every value against v's shape, so this
-		// is a backstop; its text is Go's and is not shown.
+	// checkBody has already held every key and value to v's shape, so this
+	// decode cannot meet an unknown field, and a second Decoder would only
+	// buffer the body over again.
+	if err := json.Unmarshal(body, v); err != nil {
+		// A backstop; its text is Go's and is not shown.
 		writeError(w, http.StatusBadRequest, "body", "the body does not match the expected shape")
 		return false
 	}
@@ -375,64 +377,232 @@ func checkBody(body []byte, t reflect.Type) (field, msg string, ok bool) {
 		return "body", "body must be a JSON object", false
 	}
 
-	walk := json.NewDecoder(bytes.NewReader(raw))
-	walk.UseNumber()
-	if err := checkValue(walk, t, ""); err != nil {
-		var se *shapeError
-		if errors.As(err, &se) {
-			return fieldName(se.path), se.msg, false
-		}
-		return "body", "malformed JSON", false
+	w := shapeWalk{b: raw}
+	if se := w.value(t, 0); se != nil {
+		return se.field, se.msg, false
 	}
 	return "", "", true
 }
 
-// shapeError is a value that does not fit the payload's shape, at a path in
+// shapeError is a value that does not fit the payload's shape, at a field in
 // the same notation the validator uses (sequence[2].params.q).
-type shapeError struct{ path, msg string }
+type shapeError struct{ field, msg string }
 
-func (e *shapeError) Error() string { return e.path + ": " + e.msg }
+// maxFieldLen bounds the field an error body names. Within the schema a field
+// is a handful of short segments; only nesting inside an untyped value can
+// make one longer.
+const maxFieldLen = 200
 
-func fieldName(path string) string {
-	if path == "" {
-		return "body"
-	}
-	return path
+// shapePath is where the walk is, kept as segments on one reused stack and
+// rendered only when an error names it.
+//
+// A body nests ten thousand levels deep inside an assertion's value within the
+// size cap. A path string built per level, and held by every level beneath it,
+// costs the square of the depth: about a gigabyte for one request. Inside an
+// untyped value the stack also stops growing past what a field could show, so
+// its size is set by the schema, not by the body.
+type shapePath struct {
+	segs []pathSeg
+	// dropped counts the levels below the deepest segment kept. Levels are
+	// dropped only from the bottom, so push and pop stay in step.
+	dropped int
 }
 
-func joinKey(path, key string) string {
-	if path == "" {
-		return key
-	}
-	return path + "." + key
+// pathSeg is an object key, or an array index when isKey is false.
+type pathSeg struct {
+	key   string
+	index int
+	isKey bool
 }
 
-// checkValue reads one value from dec and checks it against t. A nil t (an
-// `any` field) accepts any value, though duplicate keys are still refused.
-func checkValue(dec *json.Decoder, t reflect.Type, path string) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
+// maxUntypedSegs is how far below a typed value segments are kept: a segment
+// renders as at least two characters, so a deeper path cannot fit in a field.
+const maxUntypedSegs = maxFieldLen / 2
+
+func (p *shapePath) push(sg pathSeg, typed int) {
+	if p.dropped > 0 || len(p.segs)-typed >= maxUntypedSegs {
+		p.dropped++
+		return
 	}
+	p.segs = append(p.segs, sg)
+}
+
+func (p *shapePath) pop() {
+	if p.dropped > 0 {
+		p.dropped--
+		return
+	}
+	p.segs = p.segs[:len(p.segs)-1]
+}
+
+// fail reports msg at the current position. typed is how many segments lead to
+// the nearest value the schema types: a position inside an untyped value whose
+// full path will not fit is named by that value instead, which is still the
+// thing the editor can highlight.
+func (p *shapePath) fail(typed int, msg string) *shapeError {
+	field, ok := renderPath(p.segs, maxFieldLen)
+	if !ok || p.dropped > 0 {
+		field, ok = renderPath(p.segs[:typed], maxFieldLen)
+	}
+	if !ok {
+		field = clipRunes(field, maxFieldLen)
+	}
+	if field == "" {
+		field = "body"
+	}
+	return &shapeError{field, msg}
+}
+
+// renderPath writes segs in the validator's notation, each key clipped, and
+// reports whether the result fits in limit characters. It stops writing once
+// it is past the limit, so a deep path costs no more than a short one.
+func renderPath(segs []pathSeg, limit int) (string, bool) {
+	var b strings.Builder
+	for _, sg := range segs {
+		if utf8.RuneCountInString(b.String()) > limit {
+			return b.String(), false
+		}
+		if !sg.isKey {
+			b.WriteByte('[')
+			b.WriteString(strconv.Itoa(sg.index))
+			b.WriteByte(']')
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(assert.Clip(sg.key))
+	}
+	out := b.String()
+	return out, utf8.RuneCountInString(out) <= limit
+}
+
+// clipRunes cuts s to at most n characters, the last three of them "...",
+// never splitting a character.
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	count := 0
+	for i := range s {
+		if count == n-3 {
+			return s[:i] + "..."
+		}
+		count++
+	}
+	return s
+}
+
+// shapeWalk checks a JSON value against a Go type by reading its bytes in
+// place. The value has already been through the decoder once, so it is known
+// to be well-formed and at most the decoder's nesting limit deep, which is
+// what bounds the recursion here.
+//
+// A walk over encoding/json's tokens would cost a decode, an interface value
+// and, after every key, a syntax error allocated and thrown away: a few hundred
+// bytes per key, which ten thousand nested keys turn into megabytes.
+type shapeWalk struct {
+	b    []byte
+	i    int
+	path shapePath
+}
+
+func (w *shapeWalk) skipSpace() {
+	for w.i < len(w.b) {
+		switch w.b[w.i] {
+		case ' ', '\t', '\r', '\n':
+			w.i++
+		default:
+			return
+		}
+	}
+}
+
+// skipString moves past the string starting at w.i and returns its bytes,
+// quotes included.
+func (w *shapeWalk) skipString() []byte {
+	start := w.i
+	for w.i++; w.i < len(w.b); w.i++ {
+		switch w.b[w.i] {
+		case '\\':
+			w.i++
+		case '"':
+			w.i++
+			return w.b[start:w.i]
+		}
+	}
+	return w.b[start:]
+}
+
+// key reads an object key as encoding/json will see it, escapes resolved and
+// invalid UTF-8 replaced, so the key checked is the key decoded.
+func (w *shapeWalk) key() string {
+	quoted := w.skipString()
+	inner := quoted[1 : len(quoted)-1]
+	if bytes.IndexByte(inner, '\\') < 0 && utf8.Valid(inner) {
+		return string(inner)
+	}
+	var k string
+	_ = json.Unmarshal(quoted, &k)
+	return k
+}
+
+// value checks the value at w.i against t. A nil t (an `any` field) accepts
+// any value, though duplicate keys are still refused. typed is the depth of
+// the nearest typed value at or above this one.
+func (w *shapeWalk) value(t reflect.Type, typed int) *shapeError {
+	w.skipSpace()
 	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	if tok == nil { // null leaves a field at its zero value
+	c := w.b[w.i]
+	if c == 'n' { // null leaves a field at its zero value
+		w.i += len("null")
 		return nil
 	}
-	if t != nil && t.Kind() == reflect.Interface {
-		t = nil
-	}
-	if d, isDelim := tok.(json.Delim); isDelim {
-		if d == '{' {
-			return checkObject(dec, t, path)
+	if t != nil {
+		// An `any` field is itself a typed position; only what it holds is not.
+		typed = len(w.path.segs)
+		if t.Kind() == reflect.Interface {
+			t = nil
 		}
-		return checkArray(dec, t, path)
 	}
-	return checkScalar(tok, t, path)
+	mismatch := func(got string) *shapeError {
+		return w.path.fail(typed, fmt.Sprintf("expected %s, got %s", jsonKind(t), got))
+	}
+	switch c {
+	case '{':
+		return w.object(t, typed)
+	case '[':
+		return w.array(t, typed)
+	case '"':
+		w.skipString()
+		if t != nil && t.Kind() != reflect.String {
+			return mismatch("a string")
+		}
+	case 't', 'f':
+		if c == 't' {
+			w.i += len("true")
+		} else {
+			w.i += len("false")
+		}
+		if t != nil && t.Kind() != reflect.Bool {
+			return mismatch("a boolean")
+		}
+	default:
+		start := w.i
+		for w.i < len(w.b) && strings.IndexByte("+-.0123456789eE", w.b[w.i]) >= 0 {
+			w.i++
+		}
+		n := json.Number(w.b[start:w.i])
+		return checkNumber(n, t, func() *shapeError {
+			return w.path.fail(typed, fmt.Sprintf("the number %s is out of range", assert.Clip(n.String())))
+		}, mismatch)
+	}
+	return nil
 }
 
-func checkObject(dec *json.Decoder, t reflect.Type, path string) error {
+func (w *shapeWalk) object(t reflect.Type, typed int) *shapeError {
 	var fields map[string]reflect.Type
 	switch {
 	case t == nil:
@@ -440,19 +610,46 @@ func checkObject(dec *json.Decoder, t reflect.Type, path string) error {
 		fields = jsonFields(t)
 	case t.Kind() == reflect.Map:
 	default:
-		return &shapeError{path, fmt.Sprintf("expected %s, got an object", jsonKind(t))}
+		return w.path.fail(typed, fmt.Sprintf("expected %s, got an object", jsonKind(t)))
 	}
-	seen := make(map[string]bool)
-	for dec.More() {
-		tok, err := dec.Token()
-		if err != nil {
-			return err
+	w.i++ // '{'
+	// Objects in a payload hold a few keys, and nesting is where the count of
+	// objects is large, so a set is only built past a handful of keys.
+	var few [4]string
+	keys := few[:0]
+	var seen map[string]bool
+	for n := 0; ; n++ {
+		w.skipSpace()
+		if w.b[w.i] == '}' {
+			w.i++
+			return nil
 		}
-		key, _ := tok.(string)
-		if seen[key] {
-			return &shapeError{joinKey(path, key), fmt.Sprintf("duplicate key %q", clip(key))}
+		if n > 0 {
+			w.i++ // ','
+			w.skipSpace()
 		}
-		seen[key] = true
+		key := w.key()
+		w.skipSpace()
+		w.i++ // ':'
+
+		if seen[key] || (seen == nil && slices.Contains(keys, key)) {
+			w.path.push(pathSeg{key: key, isKey: true}, typed)
+			se := w.path.fail(typed, fmt.Sprintf("duplicate key %q", assert.Clip(key)))
+			w.path.pop()
+			return se
+		}
+		switch {
+		case seen != nil:
+			seen[key] = true
+		case len(keys) < cap(keys):
+			keys = append(keys, key)
+		default:
+			seen = make(map[string]bool, 2*len(keys))
+			for _, k := range keys {
+				seen[k] = true
+			}
+			seen[key] = true
+		}
 
 		var elem reflect.Type
 		switch {
@@ -460,60 +657,51 @@ func checkObject(dec *json.Decoder, t reflect.Type, path string) error {
 		case fields != nil:
 			ft, known := fields[key]
 			if !known {
-				return &shapeError{path, fmt.Sprintf("unknown field %q", clip(key))}
+				return w.path.fail(typed, fmt.Sprintf("unknown field %q", assert.Clip(key)))
 			}
 			elem = ft
 		default:
 			elem = t.Elem()
 		}
-		if err := checkValue(dec, elem, joinKey(path, key)); err != nil {
-			return err
+		w.path.push(pathSeg{key: key, isKey: true}, typed)
+		se := w.value(elem, typed)
+		w.path.pop()
+		if se != nil {
+			return se
 		}
 	}
-	_, err := dec.Token() // '}'
-	return err
 }
 
-func checkArray(dec *json.Decoder, t reflect.Type, path string) error {
+func (w *shapeWalk) array(t reflect.Type, typed int) *shapeError {
 	var elem reflect.Type
 	if t != nil {
 		if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
-			return &shapeError{path, fmt.Sprintf("expected %s, got an array", jsonKind(t))}
+			return w.path.fail(typed, fmt.Sprintf("expected %s, got an array", jsonKind(t)))
 		}
 		elem = t.Elem()
 	}
-	for i := 0; dec.More(); i++ {
-		if err := checkValue(dec, elem, fmt.Sprintf("%s[%d]", path, i)); err != nil {
-			return err
+	w.i++ // '['
+	for i := 0; ; i++ {
+		w.skipSpace()
+		if w.b[w.i] == ']' {
+			w.i++
+			return nil
+		}
+		if i > 0 {
+			w.i++ // ','
+		}
+		w.path.push(pathSeg{index: i}, typed)
+		se := w.value(elem, typed)
+		w.path.pop()
+		if se != nil {
+			return se
 		}
 	}
-	_, err := dec.Token() // ']'
-	return err
-}
-
-func checkScalar(tok json.Token, t reflect.Type, path string) error {
-	mismatch := func(got string) error {
-		return &shapeError{path, fmt.Sprintf("expected %s, got %s", jsonKind(t), got)}
-	}
-	switch v := tok.(type) {
-	case string:
-		if t != nil && t.Kind() != reflect.String {
-			return mismatch("a string")
-		}
-	case bool:
-		if t != nil && t.Kind() != reflect.Bool {
-			return mismatch("a boolean")
-		}
-	case json.Number:
-		return checkNumber(v, t, path, mismatch)
-	}
-	return nil
 }
 
 // checkNumber holds a number to what encoding/json will accept for t, so the
 // decode that follows cannot fail on it.
-func checkNumber(n json.Number, t reflect.Type, path string, mismatch func(string) error) error {
-	outOfRange := &shapeError{path, fmt.Sprintf("the number %s is out of range", clip(n.String()))}
+func checkNumber(n json.Number, t reflect.Type, outOfRange func() *shapeError, mismatch func(string) *shapeError) *shapeError {
 	kind := reflect.Float64
 	if t != nil {
 		kind = t.Kind()
@@ -522,9 +710,9 @@ func checkNumber(n json.Number, t reflect.Type, path string, mismatch func(strin
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if _, err := strconv.ParseInt(n.String(), 10, t.Bits()); err != nil {
 			if errors.Is(err, strconv.ErrRange) {
-				return outOfRange
+				return outOfRange()
 			}
-			return mismatch("the number " + clip(n.String()))
+			return mismatch("the number " + assert.Clip(n.String()))
 		}
 	case reflect.Float32, reflect.Float64:
 		bits := 64
@@ -532,7 +720,7 @@ func checkNumber(n json.Number, t reflect.Type, path string, mismatch func(strin
 			bits = t.Bits()
 		}
 		if _, err := strconv.ParseFloat(n.String(), bits); err != nil {
-			return outOfRange
+			return outOfRange()
 		}
 	default:
 		return mismatch("a number")
@@ -581,15 +769,6 @@ func jsonKind(t reflect.Type) string {
 	default:
 		return "a JSON value"
 	}
-}
-
-// clip bounds a client-supplied fragment echoed in an error message.
-func clip(s string) string {
-	const max = 64
-	if utf8.RuneCountInString(s) <= max {
-		return s
-	}
-	return string([]rune(s)[:max]) + "..."
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
