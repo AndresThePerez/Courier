@@ -1,7 +1,7 @@
 {
   "id": "random-traffic",
   "name": "05 - Randomized Traffic",
-  "description": "Requests whose params use template variables: {{randomWord}} draws a generic English word (misses and fuzzy matches included - that is what real traffic looks like), {{randomPokemon}} draws a species name the index always answers. Both resolve to a fresh word for EVERY dispatched request - in a performance run each worker iteration queries something different. Note the loose assertions: an exact total like the curated searches assert would be meaningless here, which is the point - assertions are per-request choices, editable in the Request tab.",
+  "description": "Requests whose params use template variables: {{randomWord}} draws a generic English word (misses and fuzzy matches included - that is what real traffic looks like), {{randomPokemon}} draws a species name the index always answers. Both resolve to a fresh word for EVERY dispatched request - in a performance run each worker iteration queries something different. Note the loose assertions: a measured total like the curated searches assert would be meaningless here, which is the point - assertions are per-request choices, editable in the Request tab.",
   "requests": [
     {
       "id": "random-word",

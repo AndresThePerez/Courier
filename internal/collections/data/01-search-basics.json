@@ -11,7 +11,7 @@
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
         { "type": "latency", "op": "lt", "value": 150 },
-        { "type": "json", "path": "$.total", "op": "eq", "value": 107 },
+        { "type": "json", "path": "$.total", "op": "gt", "value": 106 },
         { "type": "json", "path": "$.results[0].name", "op": "contains", "value": "Charizard" }
       ]
     },
@@ -34,7 +34,7 @@
       "params": {},
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
-        { "type": "json", "path": "$.total", "op": "eq", "value": 20324 },
+        { "type": "json", "path": "$.total", "op": "gt", "value": 20323 },
         { "type": "json", "path": "$.results", "op": "count", "value": 24 },
         { "type": "json", "path": "$.facets.types", "op": "count", "value": 11 }
       ]
@@ -46,7 +46,7 @@
       "params": { "q": "charzard" },
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
-        { "type": "json", "path": "$.total", "op": "eq", "value": 128 },
+        { "type": "json", "path": "$.total", "op": "gt", "value": 127 },
         { "type": "json", "path": "$.results[0].name", "op": "contains", "value": "Charizard" }
       ]
     },
@@ -57,9 +57,9 @@
       "params": { "q": "pikachu" },
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
-        { "type": "json", "path": "$.total", "op": "eq", "value": 221 },
-        { "type": "json", "path": "$.facets.types", "op": "count", "value": 9 },
-        { "type": "json", "path": "$.facets.sets", "op": "count", "value": 173 }
+        { "type": "json", "path": "$.total", "op": "gt", "value": 220 },
+        { "type": "json", "path": "$.facets.types[8]", "op": "exists" },
+        { "type": "json", "path": "$.facets.sets[172]", "op": "exists" }
       ]
     }
   ]

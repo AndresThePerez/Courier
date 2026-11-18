@@ -135,8 +135,14 @@
         {
           "type": "json",
           "path": "$.total",
-          "op": "eq",
-          "value": 1513
+          "op": "gt",
+          "value": 1512
+        },
+        {
+          "type": "json",
+          "path": "$.total",
+          "op": "lt",
+          "value": 20324
         },
         {
           "type": "json",

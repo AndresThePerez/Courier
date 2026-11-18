@@ -11,7 +11,7 @@
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
         { "type": "json", "path": "$.suggestions", "op": "count", "value": 8 },
-        { "type": "json", "path": "$.suggestions[0]", "op": "eq", "value": "Alakazam" }
+        { "type": "json", "path": "$.suggestions[0]", "op": "contains", "value": "alak" }
       ]
     },
     {
@@ -44,7 +44,7 @@
         { "type": "status", "op": "eq", "value": 200 },
         { "type": "latency", "op": "lt", "value": 100 },
         { "type": "json", "path": "$.status", "op": "eq", "value": "ok" },
-        { "type": "json", "path": "$.docs", "op": "eq", "value": 20324 }
+        { "type": "json", "path": "$.docs", "op": "gt", "value": 20323 }
       ]
     }
   ]

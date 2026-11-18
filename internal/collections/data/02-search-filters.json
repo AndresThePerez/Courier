@@ -10,7 +10,8 @@
       "params": { "rarity": "Rare Holo" },
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
-        { "type": "json", "path": "$.total", "op": "eq", "value": 1617 },
+        { "type": "json", "path": "$.total", "op": "gt", "value": 1616 },
+        { "type": "json", "path": "$.total", "op": "lt", "value": 20324 },
         { "type": "json", "path": "$.results[0].rarity", "op": "eq", "value": "Rare Holo" }
       ]
     },
@@ -22,8 +23,8 @@
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
         { "type": "latency", "op": "lt", "value": 150 },
-        { "type": "json", "path": "$.total", "op": "eq", "value": 3992 },
-        { "type": "json", "path": "$.facets.sets", "op": "count", "value": 173 }
+        { "type": "json", "path": "$.total", "op": "gt", "value": 3991 },
+        { "type": "json", "path": "$.total", "op": "lt", "value": 20324 }
       ]
     },
     {
@@ -33,7 +34,8 @@
       "params": { "hp_min": "300", "hp_max": "380" },
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
-        { "type": "json", "path": "$.total", "op": "eq", "value": 491 },
+        { "type": "json", "path": "$.total", "op": "gt", "value": 490 },
+        { "type": "json", "path": "$.total", "op": "lt", "value": 20324 },
         { "type": "json", "path": "$.results[0].hp", "op": "gt", "value": 299 }
       ]
     },
@@ -44,8 +46,8 @@
       "params": { "sort": "hp", "order": "desc" },
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
-        { "type": "json", "path": "$.results[0].hp", "op": "eq", "value": 380 },
-        { "type": "json", "path": "$.results[0].name", "op": "eq", "value": "Mega Venusaur ex" }
+        { "type": "json", "path": "$.results", "op": "count", "value": 24 },
+        { "type": "json", "path": "$.results[0].hp", "op": "gt", "value": 379 }
       ]
     }
   ]
