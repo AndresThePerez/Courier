@@ -331,3 +331,9 @@ test('the My Workspace heading says its contents are saved in this browser only'
   const label = [...heading.querySelectorAll('span')].find((s) => s.textContent === 'Saved in this browser only');
   assert.ok(label, 'the exact words sit in the heading beside the name');
 });
+
+test('the saved collections list is a labelled group, so its label is announced', () => {
+  const list = byId('saved-collections');
+  assert.equal(list.getAttribute('role'), 'group');
+  assert.equal(list.getAttribute('aria-label'), 'Saved collections');
+});

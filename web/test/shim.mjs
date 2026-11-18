@@ -22,6 +22,9 @@
 //     document to window; once; stopPropagation; preventDefault on cancelable
 //     events. KeyboardEvent, MouseEvent, FocusEvent, StorageEvent and
 //     HashChangeEvent constructors.
+//     A handler that throws does not fail the dispatch: the error is
+//     collected in listenerErrors, not rethrown, so a test that drives the
+//     page through events must assert that list is empty.
 //   - window (=== globalThis): add/removeEventListener, dispatchEvent,
 //     matchMedia with scriptable matches, location with hashchange.
 //   - localStorage / sessionStorage: Map-backed, each method can be told to

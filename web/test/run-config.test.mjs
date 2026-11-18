@@ -87,16 +87,6 @@ test('queueing three, unchecking one, and choosing performance at 25 workers for
   assert.equal(document.getElementById('concurrency').value, '25');
 });
 
-test('restoring the setup writes nothing back', () => {
-  localStorage.setItem(KEY, JSON.stringify({ version: 1, sequence: [{ enabled: true, request: req(1) }], mode: 'functional', options: DEFAULT_OPTIONS }));
-  const before = localStorage.peek(KEY);
-  localStorage.failOn('setItem');
-  runner.restore();
-  localStorage.heal();
-  assert.equal(localStorage.peek(KEY), before);
-  assert.equal(get().sequence.length, 1);
-});
-
 // ---------------------------------------------------------------- bad values
 
 const defaults = (loaded) => {

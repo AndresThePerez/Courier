@@ -323,7 +323,11 @@ function turn(world) {
       const o = pick(rand, waiting);
       if (!o) break;
       world.log.push(`${o.name} receive`);
+      // (g) Only a current read counts: an event delivered while this tab's
+      // reads are refused changes nothing it lists, whatever it carries.
+      const listedBefore = listed(o).map((r) => r.id);
       o.deliver();
+      if (world.readsRefused) assert.deepEqual(listed(o).map((r) => r.id), listedBefore, `${o.name} took in an event it could not read`);
       return;
     }
     case 'writes': {
@@ -455,12 +459,11 @@ test('300 random sequences of tab, storage and event turns keep every saved coll
   for (let seed = 1; seed <= 300; seed += 1) runSequence(seed, COLLECTIONS);
 });
 
-
 // ---------------------------------------------------------------- sequences the model found
 
 // smallTab is one tab over shared storage, receiving events by hand.
-function smallTab(shared) {
-  const world = { shared, subject: WORKSPACE };
+function smallTab(shared, subject = WORKSPACE) {
+  const world = { shared, subject };
   const t = newTab(world, 'T');
   return t;
 }
@@ -488,4 +491,28 @@ test('an undo of a delete that never reached storage loses to a reset made in an
 
   assert.deepEqual(storedList(shared).map((r) => r.id), ['ws-2'], 'the reset made after the undo wins');
   assert.deepEqual(b.state.workspace.map((r) => r.id), ['ws-2']);
+});
+
+test('an undo of a delete of a saved collection that never reached storage loses to a reset made in another tab afterwards', (t) => {
+  t.mock.method(console, 'warn', () => {});
+  resetBrowser();
+  const shared = new FakeStorage();
+  const collection = (id, name) => ({ id, name, requests: [curated] });
+  shared.setItem(COLLECTIONS.slot, JSON.stringify({ version: 1, collections: [collection('wc-1', 'one')] }));
+  const a = smallTab(shared, COLLECTIONS);
+  const b = smallTab(shared, COLLECTIONS);
+
+  // B deletes and undoes while the browser refuses its reads (so also its
+  // writes): storage never saw the delete, so the undo only withdraws it.
+  shared.failOn('getItem');
+  const gone = b.ws.remove('wc-1');
+  b.ws.save(gone.request);
+  shared.heal();
+
+  // Then A clears the saved collections, and B's next write goes through.
+  assert.equal(a.ws.reset().ok, true);
+  b.ws.save(collection('wc-2', 'two'));
+
+  assert.deepEqual(storedList(shared, COLLECTIONS).map((c) => c.id), ['wc-2'], 'the reset made after the undo wins');
+  assert.deepEqual(b.state.savedCollections.map((c) => c.id), ['wc-2']);
 });
