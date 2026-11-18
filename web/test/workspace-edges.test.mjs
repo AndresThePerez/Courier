@@ -153,20 +153,28 @@ test('reset in one tab drops another tab\'s queued edit of a request it had, and
 
 // ---------------------------------------------------------------- values this build cannot read
 
-test('unreadable values arriving by storage event never throw and keep only well-formed requests', () => {
+test('each unreadable value another tab stores empties the list on arrival, never throws, and well-formed requests come back', () => {
   seed([req('ws-x', 'X')]);
   const a = tab();
-  const values = [
-    JSON.stringify({ version: 2, requests: [req('ws-x')] }),
-    'not json',
-    null,
-    JSON.stringify({ version: 1 }),
-    'x'.repeat(5 * 1024 * 1024),
-    JSON.stringify({ version: 1, requests: [null, 5, 'ws-q', [], { name: 'no id', endpoint: 'search' }, req('ws-ok', 'ok')] }),
+  // A browser fires the event only once the value is in the shared store, so
+  // each value is stored first and then delivered; the list must follow it
+  // step by step, not only end up right.
+  const steps = [
+    [JSON.stringify({ version: 2, requests: [req('ws-x')] }), []],
+    [JSON.stringify({ version: 1, requests: [req('ws-x', 'X')] }), ['ws-x']],
+    ['not json', []],
+    [null, []],
+    [JSON.stringify({ version: 1 }), []],
+    ['x'.repeat(5 * 1024 * 1024), []],
+    [JSON.stringify({ version: 1, requests: [null, 5, 'ws-q', [], { name: 'no id', endpoint: 'search' }, req('ws-ok', 'ok')] }), ['ws-ok']],
   ];
-  for (const v of values) a.receive(v);
+  for (const [v, want] of steps) {
+    if (v === null) shared.removeItem(KEY);
+    else shared.setItem(KEY, v);
+    a.receive(v);
+    assert.deepEqual(ids(a.state.workspace), want, `after ${String(v).slice(0, 40)}`);
+  }
   assert.deepEqual(listenerErrors, []);
-  assert.deepEqual(ids(a.state.workspace), ['ws-ok']);
 });
 
 test('a garbage value seen briefly does not make a later save of a live request look deleted', () => {

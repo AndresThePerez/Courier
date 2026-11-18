@@ -73,16 +73,17 @@ export function update(storage, key, fn) {
   return { ok: written.ok, read: current, value: next, error: written.error };
 }
 
-// subscribe calls fn(value, { current }) whenever another tab changes key. A
-// browser fires `storage` only in the other tabs, never in the one that wrote.
-// A clear() elsewhere arrives with key null and counts as the key removed;
-// events for another storage area (sessionStorage) are ignored.
+// subscribe calls fn(value) whenever another tab changes key. A browser fires
+// `storage` only in the other tabs, never in the one that wrote. A clear()
+// elsewhere arrives with key null and counts as the key removed; events for
+// another storage area (sessionStorage) are ignored.
 //
 // The event is queued after the shared value has changed, and this page may
 // have written in between, so its newValue can be older than what is stored.
-// The value handed on is therefore the key as stored now; newValue stands in
-// only when the browser refuses the read, and then current is false so the
-// caller knows the value may be stale.
+// The value handed on is therefore always the key as stored now. When the
+// browser refuses that read, fn is not called: a value of unknown age must
+// never stand in for what is stored, and the next read that succeeds catches
+// up anyway.
 export function subscribe(target, storage, key, fn) {
   const onStorage = (event) => {
     if (event.key !== key && event.key !== null) return;
@@ -96,8 +97,7 @@ export function subscribe(target, storage, key, fn) {
       if (event.storageArea !== area) return;
     }
     const now = read(storage, key);
-    if (now.ok) fn(now.value, { current: true });
-    else fn(event.key === null ? null : event.newValue ?? null, { current: false });
+    if (now.ok) fn(now.value);
   };
   target.addEventListener('storage', onStorage);
   return () => target.removeEventListener('storage', onStorage);

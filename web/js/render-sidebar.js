@@ -66,7 +66,7 @@ function showResetConfirm() {
               note.hidden = true;
               return;
             }
-            replace(note, [el('span', { text: workspace.WRITE_REFUSED })]);
+            replace(note, [el('span', { text: workspace.RESET_REFUSED })]);
             note.hidden = false;
           },
         },

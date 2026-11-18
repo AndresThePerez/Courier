@@ -204,7 +204,7 @@ test('a reset the browser refuses says so and leaves the list as stored', (t) =>
   paint();
 
   assert.equal(workspaceNote().hidden, false);
-  assert.equal(workspaceNote().textContent, REFUSED);
+  assert.equal(workspaceNote().textContent, 'Could not reset - this browser refused the write (storage full or disabled). Your saved requests are unchanged.');
   assert.deepEqual(ids(get().workspace), ['ws-1', 'ws-2']);
 
   localStorage.heal();

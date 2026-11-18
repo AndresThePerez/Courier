@@ -21,6 +21,7 @@ const VERSION = 1;
 
 export const DELETED_ELSEWHERE = 'This request was deleted in another tab.';
 export const WRITE_REFUSED = 'Could not save - this browser refused the write (storage full or disabled). The change stays on this page until you reload.';
+export const RESET_REFUSED = 'Could not reset - this browser refused the write (storage full or disabled). Your saved requests are unchanged.';
 
 export function isWorkspaceId(id) {
   return typeof id === 'string' && id.startsWith('ws-');
@@ -71,19 +72,32 @@ function randomId() {
 }
 
 export function createWorkspace({ storage: area, get, set, target = null, key = KEY }) {
-  // known is every id this tab has seen in storage and not deleted itself. A
-  // write that finds one of them gone from storage is editing a request
-  // another tab deleted, and must not bring it back.
+  // What this tab may conclude from storage, because two tabs share it and
+  // either may be refused a read or a write at any moment:
+  //
+  //   1. Only a current read counts. A storage event's newValue, or anything
+  //      else of unknown age, never replaces what this tab knows; when the
+  //      read is refused, the tab keeps its view until a read succeeds.
+  //   2. A request this tab deleted stays deleted by this tab until this tab
+  //      stores it again (Undo), or a current read lists it while this tab
+  //      has no delete of it waiting. Until then, its Undo is never refused
+  //      as "deleted in another tab". An Undo that comes before storage
+  //      accepted the delete withdraws the delete instead, and the request is
+  //      again one this tab knows (rule 3).
+  //   3. "Deleted in another tab" is concluded only from a current read that
+  //      lacks a request this tab saw in an earlier current read or stored
+  //      itself, and that this tab did not delete. A request this tab has
+  //      only queued has never been stored, so its absence proves nothing.
+  //   4. Changes the browser refused are this tab's intent: one per request,
+  //      replayed over every current read, and dropped only when the request
+  //      was deleted in another tab (the delete wins), which closes it with a
+  //      notice if it is open.
+  //
+  // known holds the requests of rule 3, deletedHere those of rule 2; no id is
+  // in both. stored is the list as of the last current read or accepted
+  // write, and pending the refused changes of rule 4, oldest first.
   let known = new Set();
-  // deletedHere is every id this tab deleted and has not stored again. A value
-  // that may be stale (a storage event read while the browser refuses reads)
-  // can still list one; taking it from there would show the request again and
-  // turn this tab's own Undo into "deleted in another tab".
   let deletedHere = new Set();
-  // stored is the list as this tab last read or wrote it. pending is this
-  // tab's changes the browser refused to store, oldest first: they stay on the
-  // page and ride along with the next write the browser accepts, so storage
-  // that frees up (or a storage event from another tab) loses none of them.
   let stored = [];
   let pending = [];
   let unsubscribe = null;
@@ -109,12 +123,22 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     unsubscribe = null;
   }
 
-  function onExternal(raw, { current }) {
-    let { requests } = decode(raw);
-    if (current) for (const r of requests) deletedHere.delete(r.id);
-    else requests = requests.filter((r) => !deletedHere.has(r.id));
-    for (const r of requests) known.add(r.id);
+  const removing = (id) => pending.some((op) => op.type === 'remove' && op.id === id);
+
+  // observe takes in one current read (rules 2 and 3).
+  function observe(requests) {
+    for (const r of requests) {
+      if (deletedHere.has(r.id)) {
+        if (removing(r.id)) continue;
+        deletedHere.delete(r.id);
+      }
+      known.add(r.id);
+    }
     stored = requests;
+  }
+
+  function onExternal(raw) {
+    observe(decode(raw).requests);
     publish(applyAll(stored, pending));
   }
 
@@ -185,11 +209,14 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     // change: without this a store that stays unwritable would grow the
     // queue, and the cost of every later write, by one entry per keystroke.
     const id = opId(op);
-    pending = pending.filter((p) => opId(p) !== id);
+    const replaced = pending.find((p) => opId(p) === id);
+    if (op.type === 'save' && replaced && replaced.type === 'remove') withdraw(replaced);
+    pending = pending.filter((p) => p !== replaced);
     pending.push(op);
     let result = null;
     const written = storage.update(area, key, (raw) => {
       const saved = decode(raw);
+      observe(saved.requests);
       result = applyAll(saved.requests, pending);
       return result.changed ? encode(result.list, saved.counter) : undefined;
     });
@@ -198,7 +225,6 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
       // written; the page carries on from what this tab last saw.
       result = applyAll(stored, pending);
     } else if (!written.ok) {
-      stored = decode(written.read.value).requests;
       console.warn('workspace not persisted', written.error);
     } else {
       stored = result.list;
@@ -251,10 +277,20 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
   // deleted so the caller can offer it back.
   function remove(id) {
     const request = find(id);
+    const wasKnown = known.has(id);
     known.delete(id);
     deletedHere.add(id);
     closeIfOpen(id);
-    return { ...commit({ type: 'remove', id }), request };
+    return { ...commit({ type: 'remove', id, wasKnown }), request };
+  }
+
+  // withdraw takes back a delete storage never saw, for an Undo that came
+  // before the browser accepted it: the tab is back where it was before the
+  // delete, so a delete made in another tab meanwhile wins over the Undo, as
+  // it would over any edit.
+  function withdraw(op) {
+    deletedHere.delete(op.id);
+    if (op.wasKnown) known.add(op.id);
   }
 
   // reset clears the stored workspace and returns { ok }. A refused removal
