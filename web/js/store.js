@@ -6,7 +6,10 @@
 // polling reducer feed identical renders without either knowing the other
 // exists.
 
-const state = {
+// initialState builds the page's starting state. It is a function so every
+// call hands out fresh arrays and objects: resetState must not hand back a
+// default that something already mutated.
+const initialState = () => ({
   // catalog, from GET /api/collections
   collections: [],
   endpoints: [],
@@ -37,9 +40,20 @@ const state = {
   history: [],
   activeTab: 'runner',
   notice: null,
-};
+});
+
+const state = initialState();
 
 const subscribers = [];
+
+// resetState puts the state back to initialState in place, without notifying.
+// It keeps the object's identity, so a module holding the value get() returned
+// still reads the live state. The page itself never calls it: it exists so the
+// frontend tests can start each case from a fresh page in one process.
+export function resetState() {
+  for (const key of Object.keys(state)) delete state[key];
+  Object.assign(state, initialState());
+}
 
 export function get() {
   return state;
