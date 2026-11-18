@@ -147,6 +147,8 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     return { list: out, blocked: false };
   }
 
+  const opId = (op) => (op.type === 'remove' ? op.id : op.request.id);
+
   function applyAll(list, ops) {
     let out = list;
     const blocked = new Set();
@@ -171,6 +173,11 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
   // browser accepted the write, deleted when the change lost to a delete made
   // in another tab.
   function commit(op) {
+    // Only the latest change per request matters, and every keystroke is a
+    // change: without this a store that stays unwritable would grow the
+    // queue, and the cost of every later write, by one entry per keystroke.
+    const id = opId(op);
+    pending = pending.filter((p) => opId(p) !== id);
     pending.push(op);
     let result = null;
     const written = storage.update(area, key, (raw) => {
