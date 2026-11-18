@@ -40,3 +40,9 @@ func (r Response) PublicError() string {
 		return MsgConnection
 	}
 }
+
+// What an assertion outcome reads when its request got no response.
+const (
+	NoResponse   = "no response"
+	NotEvaluated = "not evaluated: the request got no response"
+)

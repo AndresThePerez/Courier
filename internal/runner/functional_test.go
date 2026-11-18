@@ -483,3 +483,58 @@ func TestTheRawErrorIsNeverSerialized(t *testing.T) {
 	}
 	checkNoLeak(t, "the encoded event", b, base)
 }
+
+// everyKind is one assertion of each type, including two that a request with
+// no response used to satisfy: a latency bound (the failure was fast) and a
+// negated status (0 is not 200).
+func everyKind() []assert.Assertion {
+	return []assert.Assertion{
+		{Type: assert.TypeStatus, Op: "eq", Value: float64(200)},
+		{Type: assert.TypeStatus, Op: "neq", Value: float64(500)},
+		{Type: assert.TypeLatency, Op: "lt", Value: float64(150)},
+		{Type: assert.TypeBodyContains, Op: "contains", Value: "total"},
+		{Type: assert.TypeJSON, Path: "$.total", Op: "gt", Value: float64(0)},
+	}
+}
+
+// Without a response there is nothing to hold an assertion to: every outcome
+// fails as not evaluated, rather than a latency bound passing on a request
+// that never connected.
+func TestAssertionsAreNotEvaluatedWithoutAResponse(t *testing.T) {
+	for name, ex := range map[string]*Executor{
+		"refused": NewExecutor(closedTarget(t)),
+		"timeout": withTimeout(NewExecutor(hangingTarget(t).URL), 150*time.Millisecond),
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := RunFunctional(context.Background(), ex, sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+				Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search", Assertions: everyKind()}}}, nil)
+			row := res.Functional.Results[0]
+			if row.Passed || res.Functional.Failed != 1 {
+				t.Errorf("row passed = %v, failed count %d; a request with no response fails", row.Passed, res.Functional.Failed)
+			}
+			if len(row.Assertions) != len(everyKind()) {
+				t.Fatalf("%d outcomes, want %d", len(row.Assertions), len(everyKind()))
+			}
+			for _, o := range row.Assertions {
+				if o.Passed || o.Actual != NoResponse || o.Error != NotEvaluated || o.Expected == "" {
+					t.Errorf("outcome %+v, want failed, actual %q, error %q, and the expectation kept", o, NoResponse, NotEvaluated)
+				}
+			}
+			if v := report.FunctionalVerdict(res.Status, res.Functional); v != report.VerdictFail {
+				t.Errorf("verdict = %q, want FAIL", v)
+			}
+		})
+	}
+}
+
+// A body that dropped after its status line did get a response: its status is
+// real and is what a status assertion reads.
+func TestAssertionsReadTheStatusOfADroppedBody(t *testing.T) {
+	res := RunFunctional(context.Background(), NewExecutor(droppingTarget(t).URL), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search",
+			Assertions: []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: float64(200)}}}}}, nil)
+	row := res.Functional.Results[0]
+	if row.Passed || row.Status != 200 || len(row.Assertions) != 1 || row.Assertions[0].Actual != "200" {
+		t.Errorf("row = passed %v status %d outcomes %+v, want a failed row whose status assertion read 200", row.Passed, row.Status, row.Assertions)
+	}
+}

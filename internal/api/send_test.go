@@ -616,3 +616,27 @@ func TestRunSurfacesCarryNoTargetAddress(t *testing.T) {
 		})
 	}
 }
+
+// A Send that got no response evaluates nothing: every outcome fails as not
+// evaluated, and a latency bound no longer passes on a refused connection.
+func TestSendEvaluatesNoAssertionWithoutAResponse(t *testing.T) {
+	s := newServer(t, closedTarget(t), nil)
+	req := sendable()
+	req.Assertions = []assert.Assertion{
+		{Type: assert.TypeLatency, Op: "lt", Value: 150},
+		{Type: assert.TypeStatus, Op: "neq", Value: 500},
+		{Type: assert.TypeStatus, Op: "eq", Value: 200},
+	}
+	got := decode[sendResult](t, do(t, s, http.MethodPost, "/api/send", req))
+	if got.Passed {
+		t.Error("passed = true for a request that got no response")
+	}
+	if len(got.Assertions) != 3 {
+		t.Fatalf("%d outcomes, want 3", len(got.Assertions))
+	}
+	for _, o := range got.Assertions {
+		if o.Passed || o.Actual != runner.NoResponse || o.Error != runner.NotEvaluated {
+			t.Errorf("outcome %+v, want failed, actual %q, error %q", o, runner.NoResponse, runner.NotEvaluated)
+		}
+	}
+}

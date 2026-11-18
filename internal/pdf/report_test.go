@@ -449,3 +449,21 @@ func TestRenderedFailureCarriesNoTargetAddress(t *testing.T) {
 		t.Error("the PDF does not carry the fixed connection sentence")
 	}
 }
+
+// A run whose only request got no response is a failed run on paper too, even
+// when its only assertion is a latency bound the failure was quick enough for.
+func TestRenderedRunWithNoResponseFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close()
+	rep := runAgainst(t, base, []assert.Assertion{{Type: assert.TypeLatency, Op: "lt", Value: float64(150)}})
+	if rep.Functional.Verdict != report.VerdictFail {
+		t.Errorf("verdict = %q, want FAIL", rep.Functional.Verdict)
+	}
+	if o := rep.Functional.Results[0].Assertions[0]; o.Passed || o.Actual != runner.NoResponse {
+		t.Errorf("outcome = %+v, want failed with actual %q", o, runner.NoResponse)
+	}
+	if body := text(t, rep); !strings.Contains(body, "VERDICT: FAIL") {
+		t.Error("the PDF does not print VERDICT: FAIL")
+	}
+}

@@ -118,11 +118,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Body, out.BodyTruncated = runner.PreviewN(resp.Body, SendBodyMax)
 
-	target := assert.NewTarget(resp.Status, resp.LatencyMs, resp.Body)
-	outcomes, allPassed := assert.EvaluateAll(clean.Assertions, target)
-	if outcomes == nil {
-		outcomes = []assert.Outcome{}
-	}
+	outcomes, allPassed := runner.EvaluateResponse(clean.Assertions, resp)
 	out.Assertions = outcomes
 	out.Passed = allPassed && resp.Err == nil
 
