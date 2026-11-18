@@ -21,16 +21,32 @@ function parse(text) {
   }
 }
 
-// call makes one request and reads its whole body. It answers null when
-// Courier could not be reached, and otherwise the status and the parsed body
-// (null for an empty or non-JSON one).
-async function call(url, init = {}) {
+// How long a request may take before the page stops waiting for it. A read,
+// or a cancel, is answered from memory and is slow only when something is
+// wrong. Send and Start can sit behind the server's own 10s timeout towards
+// the target, so they get twice that before the page decides for itself.
+const ReadTimeoutMs = 10000;
+const WriteTimeoutMs = 20000;
+
+// call makes one request and reads its whole body, within timeoutMs. It
+// answers null when Courier could not be reached, and otherwise the status
+// and the parsed body (null for an empty or non-JSON one).
+//
+// The timeout is an AbortController aborted from a timer, armed until the
+// body has been read: an answer whose headers arrive and whose body then
+// stalls is as lost as one that never came. AbortSignal.timeout would do the
+// same with less code, but it runs on a clock the tests cannot advance.
+async function call(url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, init);
+    const res = await fetch(url, { ...init, signal: controller.signal });
     const body = parse(await res.text());
     return { status: res.status, statusText: res.statusText, ok: res.ok, body };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -39,7 +55,7 @@ const said = (res) => (res.body && res.body.error) || `${res.status} ${res.statu
 // getJSON answers { ok: true, body }, or { ok: false, kind: 'error', status,
 // error, body } when the server refused, or the network outcome.
 async function getJSON(url) {
-  const res = await call(url, { headers: { Accept: 'application/json' } });
+  const res = await call(url, { headers: { Accept: 'application/json' } }, ReadTimeoutMs);
   if (!res) return unreachable();
   if (!res.ok) return { ok: false, kind: 'error', status: res.status, error: said(res), body: res.body };
   return { ok: true, body: res.body };
@@ -86,7 +102,7 @@ export async function startRun(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: text,
-  });
+  }, WriteTimeoutMs);
   if (!res) return unreachable();
   const body = res.body || {};
   if (res.status === 202) {
@@ -104,7 +120,7 @@ export async function startRun(payload) {
 }
 
 export async function cancelRun(id) {
-  const res = await call(`/api/runs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await call(`/api/runs/${encodeURIComponent(id)}`, { method: 'DELETE' }, ReadTimeoutMs);
   if (!res) return unreachable();
   if (res.status === 204) return { ok: true };
   // 404 is "there is nothing there to stop" — an unknown id and a finished id
@@ -119,7 +135,7 @@ export async function send(request) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: text,
-  });
+  }, WriteTimeoutMs);
   if (!res) return unreachable();
   const body = res.body || {};
   if (res.ok) return { ok: true, result: body };

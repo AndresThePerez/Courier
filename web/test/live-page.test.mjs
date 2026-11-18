@@ -35,6 +35,7 @@ function makeServer() {
       target: 'pokesearch',
     },
     down: new Set(), // 'GET /api/status', ... or '*': the request fails as the network does
+    scripted: new Map(), // 'GET /api/status' -> answers to give first, each a function of nothing
     held: new Map(), // 'GET /api/status' -> a promise the next answer waits for
     next: 1,
     // hold makes the next answer to one route wait until release() is called.
@@ -80,10 +81,22 @@ function makeServer() {
         await gate;
       }
       if (server.down.has('*') || server.down.has(key)) throw new TypeError('Failed to fetch');
+      const first = server.scripted.get(key);
+      if (first && first.length > 0) return first.shift()();
       return answer(call);
     }, { method });
   };
   const idOf = (call) => decodeURIComponent(call.url.split('/')[3]);
+
+  // later scripts one answer to a route that the test settles when it likes,
+  // with whatever body it likes: an answer written before the server changed.
+  server.later = (key) => {
+    let settle;
+    const answer = new Promise((resolve) => { settle = resolve; });
+    if (!server.scripted.has(key)) server.scripted.set(key, []);
+    server.scripted.get(key).push(() => answer);
+    return settle;
+  };
 
   route('/api/collections', 'GET', () => ({ status: 200, body: server.catalog }));
   route('/api/status', 'GET', () => ({ status: 200, body: server.status }));
@@ -714,4 +727,89 @@ test('Cancel on a run whose stream went quiet learns it ended from one read of t
   assert.equal(get().transport, 'idle');
   assert.equal(stream.readyState, EventSource.CLOSED);
   assert.doesNotMatch(byId('start-note').textContent, /Could not/, 'a cancel that found nothing to stop is not a failure');
+});
+
+// ------------------------------------------------------------------ one status request at a time
+
+test('while a status request is out, the 3s poll does not start another', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  const before = callsTo('/api/status').length;
+  const answer = server.later('GET /api/status');
+
+  t.mock.timers.tick(3000);
+  await flush();
+  t.mock.timers.tick(3000);
+  await flush();
+  assert.equal(callsTo('/api/status').length, before + 1, 'two ticks, one request');
+
+  answer({ status: 200, body: { running: false, budget_balance: 7 } });
+  await flush();
+  assert.equal(get().status.budget_balance, 7);
+  t.mock.timers.tick(3000);
+  await flush();
+  assert.equal(callsTo('/api/status').length, before + 2, 'the poll carries on once the slow one is in');
+});
+
+test('a status request that is never answered is given up after 10s, and the poll asks again', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  const before = callsTo('/api/status').length;
+  server.later('GET /api/status');
+
+  // The poll goes out at 3s and is given up at 13s; the ticks at 6, 9 and 12s
+  // find it still out, and the one at 15s asks again.
+  await tick(t, 12000, 1000);
+  assert.equal(callsTo('/api/status').length, before + 1);
+  await tick(t, 3000, 1000);
+  assert.equal(callsTo('/api/status').length, before + 2, 'asked again after the timeout');
+  assert.equal(get().status.running, false, 'what the page knew stays until an answer arrives');
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('a status answer written before this tab\'s run started does not undo the run', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  runner.add(req(1));
+  const stale = server.later('GET /api/status');
+  t.mock.timers.tick(3000);
+  await flush();
+  const out = callsTo('/api/status').length;
+
+  byId('start-run').click();
+  await flush();
+  const id = server.status.run_id;
+  assert.equal(get().status.run_id, id);
+  assert.equal(callsTo('/api/status').length, out, 'the read after Start waits for the one already out');
+
+  // The old answer lands now: it says nothing is running.
+  stale({ status: 200, body: { running: false, budget_balance: 1500 } });
+  await flush();
+  assert.equal(get().status.running, true, 'the stale answer was not applied');
+  assert.equal(get().status.run_id, id);
+  assert.equal(byId('start-run').disabled, true);
+  assert.equal(callsTo('/api/status').length, out + 1, 'and status was read again, once');
+  assert.equal(callsTo(`/api/runs/${id}`).length, 0, 'nothing made the tab doubt its own run');
+  assert.equal(get().transport, 'sse');
+});
+
+test('a history answer written before a run ended does not hide that run', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  const stream = streamsFor(id)[0];
+  stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 1 }));
+
+  // Cancel reads history while the run is still going; the answer is slow.
+  const stale = server.later('GET /api/runs');
+  byId('cancel-run').click();
+  await flush();
+  server.end('cancelled');
+  stream.emit('run_finished', frame('run_finished', id, { status: 'cancelled', duration_ms: 1200 }));
+  await flush();
+  stale({ status: 200, body: { runs: [] } });
+  await flush();
+
+  assert.deepEqual(get().history.map((h) => h.id), [id]);
+  assert.equal(callsTo('/api/runs').length, 3, 'boot, the slow one, and the read that replaced it');
 });

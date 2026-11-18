@@ -22,7 +22,9 @@
 //   6. An answer that arrives after the visitor asked for something else is
 //      dropped: a history report after a later Start, Watch or history click,
 //      a finished report after the view moved on.
-//   7. At most one stream is open at any time.
+//   7. At most one stream is open and at most one status request is in
+//      flight at any time, and an answer written before something this tab
+//      knows of happened is not applied.
 //   8. A run that answered 404 is not attached again until status reports a
 //      different run or no run, however long status goes on naming it. One
 //      stream and one poll is all a vanished run ever costs.
@@ -382,6 +384,45 @@ function historyRefusal(res) {
   return `Could not open that run - ${res.error}`;
 }
 
+// oneAtATime keeps a repeated read to one request in flight (rule 7).
+//
+// poll() is for a timer: it starts a request only when none is out, so a slow
+// answer is waited for rather than raced. refresh() is for a caller that
+// knows something just changed: an answer already on its way may have been
+// written before the change, so it is dropped when it lands and the read is
+// made again. Either way apply sees one answer at a time, in the order the
+// requests were made.
+function oneAtATime(read, apply) {
+  let flight = null;
+  let stale = false;
+
+  async function run() {
+    try {
+      for (;;) {
+        stale = false;
+        const res = await read();
+        if (stale) continue;
+        apply(res);
+        return;
+      }
+    } finally {
+      flight = null;
+    }
+  }
+
+  return {
+    poll() {
+      if (!flight) flight = run();
+      return flight;
+    },
+    refresh() {
+      if (flight) stale = true;
+      else flight = run();
+      return flight;
+    },
+  };
+}
+
 function pick(from, keys) {
   const out = {};
   for (const key of keys) out[key] = from[key];
@@ -465,27 +506,25 @@ export function createLive({ api, get, set, showTab = () => {} }) {
   function perform(effect, event) {
     if (effect.type === 'report') void finishRun(effect.runId, event.data || {});
     else if (effect.type === 'history') void fetchStored(effect.runId);
-    else if (effect.type === 'status') void refreshStatus();
+    else if (effect.type === 'status') void status.refresh();
     else if (effect.type === 'probe' && conn && conn.runId === effect.runId && conn.stop.probe) conn.stop.probe();
   }
 
-  async function refreshStatus() {
-    const res = await api.getStatus();
+  const status = oneAtATime(api.getStatus, (res) => {
     if (res.ok) set({ status: res.body });
     else console.warn('status poll failed', res.error);
-  }
+  });
 
-  async function refreshHistory() {
-    const res = await api.getHistory();
+  const history = oneAtATime(api.getHistory, (res) => {
     if (res.ok) set({ history: (res.body && res.body.runs) || [] });
     else console.warn('history fetch failed', res.error);
-  }
+  });
 
   // refresh is what a module calls after it changed the run state itself (a
   // start, a cancel) rather than waiting up to StatusPollMs for the poll to
   // catch up.
   function refresh() {
-    return Promise.all([refreshStatus(), refreshHistory()]);
+    return Promise.all([status.refresh(), history.refresh()]);
   }
 
   // loadCatalog fetches the curated collections, at load and on Retry. A
@@ -529,16 +568,16 @@ export function createLive({ api, get, set, showTab = () => {} }) {
   // the cooldown the terminal event carries can be absent, and a report that is
   // slow or lost must not hold Start back.
   async function finishRun(runId, data) {
-    const status = get().status || {};
+    const held = get().status || {};
     // Only the run status last named, or none: a status already naming a
     // later run knows more than this event does.
-    if (!status.run_id || status.run_id === runId) {
+    if (!held.run_id || held.run_id === runId) {
       set({
         status: {
-          ...status,
+          ...held,
           running: false,
           run_id: '',
-          cooldown_until: data.cooldown_until || status.cooldown_until,
+          cooldown_until: data.cooldown_until || held.cooldown_until,
         },
       });
     }
@@ -627,7 +666,7 @@ export function createLive({ api, get, set, showTab = () => {} }) {
       // transport rather than state.run, because a run can be shown (history,
       // a finished report) with no transport attached to it, and a page with
       // neither a stream nor a poll would never learn the next run started.
-      if (get().transport === 'idle') refreshStatus();
+      if (get().transport === 'idle') void status.poll();
     }, StatusPollMs);
   }
 

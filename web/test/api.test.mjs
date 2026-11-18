@@ -1,6 +1,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { resetBrowser, fetchStub } from './shim.mjs';
+import { resetBrowser, fetchStub, flush } from './shim.mjs';
 import * as api from '../js/api.js';
 
 beforeEach(() => {
@@ -139,4 +139,89 @@ test('a started run is announced to the page with its id and mode', async () => 
   await api.startRun({ mode: 'performance', sequence: [], options: {} });
   api.onRunStarted(() => {});
   assert.deepEqual(seen, [['r9', 'performance']]);
+});
+
+// ------------------------------------------------------------------ timeouts
+
+const TIMEOUTS = { getCollections: 10000, getStatus: 10000, getHistory: 10000, getRun: 10000, cancelRun: 10000, startRun: 20000, send: 20000 };
+
+// settledAfter reports whether a promise has settled, without waiting on it.
+function watchSettle(promise) {
+  const seen = { done: false, value: undefined };
+  promise.then((v) => { seen.done = true; seen.value = v; });
+  return seen;
+}
+
+test('a call that gets no answer is given up as the network outcome: 10s for reads and cancel, 20s for Send and Start', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  for (const [name, url, method, call] of CALLS) {
+    fetchStub.defer(url, { method });
+    const seen = watchSettle(call());
+    await flush();
+    t.mock.timers.tick(TIMEOUTS[name] - 1);
+    await flush();
+    assert.equal(seen.done, false, `${name} is still waiting just before ${TIMEOUTS[name]}ms`);
+    t.mock.timers.tick(1);
+    await flush();
+    assert.equal(seen.done, true, `${name} gave up at ${TIMEOUTS[name]}ms`);
+    assert.deepEqual(seen.value, NETWORK, name);
+    fetchStub.reset();
+  }
+});
+
+test('an answer whose body is cut off by the timeout, after its headers arrived, is the network outcome', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const real = globalThis.fetch;
+  for (const [name, url, method, call] of CALLS) {
+    fetchStub.respond(url, { status: 200, body: { run_id: 'r1', runs: [] } }, { method });
+    // The headers arrive; the body is not read until the test lets it be.
+    let letBody;
+    const stalled = new Promise((resolve) => { letBody = resolve; });
+    globalThis.fetch = async (...args) => {
+      const res = await real(...args);
+      const text = res.text.bind(res);
+      res.text = async () => {
+        await stalled;
+        return text();
+      };
+      return res;
+    };
+    try {
+      const seen = watchSettle(call());
+      await flush();
+      t.mock.timers.tick(TIMEOUTS[name]);
+      letBody();
+      await flush();
+      assert.equal(seen.done, true, name);
+      assert.deepEqual(seen.value, NETWORK, name);
+    } finally {
+      globalThis.fetch = real;
+      fetchStub.reset();
+    }
+  }
+});
+
+test('an answered call leaves no timer behind: its signal is never aborted afterwards', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const real = globalThis.fetch;
+  const signals = [];
+  globalThis.fetch = (input, init = {}) => {
+    signals.push(init.signal);
+    return real(input, init);
+  };
+  try {
+    for (const [, url, method, call] of CALLS) {
+      fetchStub.respond(url, { status: 200, body: {} }, { method });
+      await call();
+    }
+    t.mock.timers.tick(60000);
+    await flush();
+    assert.equal(signals.length, CALLS.length);
+    for (const signal of signals) {
+      assert.ok(signal instanceof AbortSignal, 'every request carries a signal');
+      assert.equal(signal.aborted, false);
+    }
+  } finally {
+    globalThis.fetch = real;
+  }
 });
