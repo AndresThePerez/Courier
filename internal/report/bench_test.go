@@ -83,6 +83,28 @@ func BenchmarkTallyAddResponse(b *testing.B) {
 	}
 }
 
+// BenchmarkTallyAddResponse spends nearly all its iterations past MaxSamples,
+// where a sample replaces another. A real run never gets there (about 18,000
+// responses at the knee), so this one starts a fresh Tally before the cap and
+// measures the path a real run takes: appending, with the slice's growth
+// amortised in. Building the fresh Tally is not timed.
+func BenchmarkTallyAddResponseBelowCap(b *testing.B) {
+	fresh := func() Tally { return Tally{StatusCounts: map[int]int{}, ErrorKinds: map[string]int{}} }
+	t := fresh()
+	b.ReportAllocs()
+	for b.Loop() {
+		if len(t.Samples) == MaxSamples {
+			b.StopTimer()
+			t = fresh()
+			b.StartTimer()
+		}
+		t.AddResponse(200, 9.5, 38_000)
+	}
+	if len(t.Samples) != t.Requests {
+		b.Fatalf("kept %d of %d samples; the benchmark crossed the cap", len(t.Samples), t.Requests)
+	}
+}
+
 func tallyOf(n int) Tally {
 	t := Tally{StatusCounts: map[int]int{}, ErrorKinds: map[string]int{}}
 	for i, ms := range latencies(n) {

@@ -1125,7 +1125,9 @@ requests took the process from 15 MB to 290 MB.
 
 **What it does now:** a run's overall tally keeps at most `report.MaxSamples` = 262,144
 latencies, and each entry's tally at most ⌈262,144 ÷ entries⌉: about 8.4 MB per run in all,
-whatever its volume. Below the cap every sample is kept and every number is what it was.
+whatever its volume. Each entry's share is rounded up, so the entries' tallies together may
+keep up to (entries − 1) samples more than 262,144. Below the cap every sample is kept and
+every number is what it was.
 Past it, the kept samples are a uniform random sample of every latency recorded (reservoir
 sampling, Algorithm R), drawn with a splitmix64 generator held in the tally: deterministic,
 and allocation-free on the per-dispatch path. Every kept sample is a latency a request
@@ -1146,7 +1148,10 @@ the cap (about 18,000 responses at the measured knee).
 Measured on one machine at the parent commit and at this change, five runs each: 19–33 ns
 before and 14.6 ns after for the first (the benchmark now runs mostly past the cap, where a
 sample replaces another instead of growing the slice), and 156–171 ns before and 134–144 ns
-after for the second. The figures in `docs/design.md` (31 ns, 115 ns) are an earlier
+after for the second. Below the cap, the path every run against the real target takes,
+`BenchmarkTallyAddResponseBelowCap` starts a fresh tally before the cap and measured
+27.0–35.0 ns over five runs on the same machine, with 0 allocs/op (86 B/op: the sample
+slice's growth, amortised). The figures in `docs/design.md` (31 ns, 115 ns) are an earlier
 measurement on another load and are left as they are.
 
 **Proof:** `internal/report/metrics_test.go`: `TestTallyIsExactPastTheSampleCap` (300,000
