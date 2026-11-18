@@ -19,6 +19,7 @@ const initialState = () => ({
   workspace: [],
   selectedId: null,
   draft: null, // the request the editor is editing (a copy, never a catalog object)
+  editorNotice: '', // why the editor closed a request it had open, until another is opened
   send: null, // the editor's last Send: { pending, result, kind, error, field }
 
   // runner

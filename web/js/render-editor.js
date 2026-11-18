@@ -81,7 +81,7 @@ function own() {
   if (!draft) return null;
   if (workspace.isWorkspaceId(draft.id)) return draft;
 
-  const forked = deepCopy(workspace.fork(draft));
+  const forked = deepCopy(workspace.fork(draft).request);
   forkNote = `Copied to My Workspace as "${forked.name}" - the built-in request is untouched.`;
   saveNote = '';
   return forked;
@@ -96,15 +96,23 @@ function edit(mutate) {
   const draft = own();
   if (!draft) return;
   mutate(draft);
-  workspace.save(draft);
+  const saved = workspace.save(draft);
+  // A request another tab deleted has just been closed; publishing the draft
+  // again would reopen it.
+  if (saved.deleted) return;
+  if (!saved.ok) saveNote = workspace.WRITE_REFUSED;
+  else if (saveNote === workspace.WRITE_REFUSED) saveNote = '';
   set({ draft, selectedId: draft.id });
 }
 
 function saveDraft() {
   const draft = own();
   if (!draft) return;
-  workspace.save(draft);
-  saveNote = `Saved "${draft.name || draft.id}" to My Workspace.`;
+  const saved = workspace.save(draft);
+  if (saved.deleted) return;
+  // Only a write the browser accepted may claim the request is saved: a full
+  // or disabled localStorage throws, and the visitor would lose it on reload.
+  saveNote = saved.ok ? `Saved "${draft.name || draft.id}" to My Workspace.` : workspace.WRITE_REFUSED;
   set({ draft, selectedId: draft.id });
 }
 
@@ -241,6 +249,10 @@ function payloadOf(draft) {
 
 export function render(state) {
   const draft = state.draft;
+  const notice = byId('editor-notice');
+  const noticeText = draft ? '' : state.editorNotice || '';
+  notice.hidden = !noticeText;
+  if (notice.textContent !== noticeText) notice.textContent = noticeText;
   byId('editor-empty').hidden = Boolean(draft);
   byId('editor-form').hidden = !draft;
   if (!draft) {
