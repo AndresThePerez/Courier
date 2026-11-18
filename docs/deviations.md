@@ -1228,3 +1228,59 @@ renders do not); `web/test/run-panel-failsafe.test.mjs` and
 `web/test/run-panel-wire.test.mjs` (a row that cannot be shown or sent, and what a run
 puts on the wire); `web/test/saved-collections-tabs.test.mjs` (saved collections across
 tabs).
+
+## N41 — A tab showing a finished run does not attach to the next one by itself
+
+**Amends N29.** N29 attached every tab to whatever run `GET /api/status` reported as live,
+whenever nothing was attached. A tab reading a finished report was therefore taken off it
+the moment another visitor pressed Start: `run_started` cleared the report, and the reader
+was left watching somebody else's run.
+
+**What the page does now.** What a tab shows of a run that has ended (its report, a report
+reopened from history, or its rows and how it ended when the report could not be fetched)
+is replaced only by that tab's visitor: Start, Watch, opening a history entry, or a reload.
+While another run is live such a tab keeps its view, and the run banner reads
+`A run is live - Watch to follow it.`; Watch attaches and clears the old report. Everything
+else in N29 stands: a tab showing nothing still attaches by itself (which is what repaints
+a tab reloaded mid-run), the tab that pressed Start always attaches and is the only one
+moved to the Results tab, and a tab that attached by itself is not marked a spectator. The
+spectating badge is now dropped when the watched run ends, when a history entry is opened
+and when the tab starts its own run.
+
+**A run the server no longer has.** A followed run whose report answers 404 (it aged out
+of the history, or the server restarted) is not followed again: the tab closes the
+transport, reads status once, and does not attach to that id until status reports a
+different run or none, however long status goes on naming it. What had arrived stays on
+screen marked `unavailable`; a tab that had been sent nothing goes back to showing nothing.
+One stream request and one report request is all a vanished run costs. When status says
+the followed run is not the live one, the tab reads that run's report once rather than
+detaching, since status can be a moment ahead of the stream.
+
+**Events.** They are applied only for the attached run and never after its terminal event;
+a row that arrives before `run_started` is kept, and `run_started` removes nothing. A run
+whose finished report cannot be fetched shows the status its terminal event carried
+(`completed`, `cancelled`, `expired`) and says the report can be opened from History.
+
+**Requests.** No call the page makes throws. One that cannot reach Courier, gets no answer
+in time (10 s for reads and cancel, 20 s for Send and Start), or loses its body after the
+headers arrived is answered as `Could not reach Courier`, and the control that made it
+returns to idle with a sentence saying what did not happen. A catalog that cannot be loaded
+says so with a Retry. The status poll (still 3 s, still gated on the transport, N26 and
+N27) keeps one request in flight, and an answer that was already on its way when the tab
+learned something newer is read again instead of applied. A Send answer that arrives after
+another request was opened is dropped.
+
+**Where the rules are.** `web/js/live.js` states them at the top and implements them as two
+pure functions, `step` and `decideSync`; `createLive` in the same file is the only code
+that opens a transport or reads status, history, the catalog or a report, and `main.js`
+only wires it to the render modules.
+
+**Proof:** `web/test/live-rules.test.mjs` (each rule on the pure functions);
+`web/test/live-page.test.mjs` (the page as `main.js` wires it, against a function standing
+for the server: the kept report and the banner, Watch, the vanished run and the stale
+status, every control after an unreachable server, the catalog Retry, late Send and
+history answers, one status request at a time); `web/test/live.test.mjs` (the transport:
+the end of a stream, the 404, the polled verdict, rows across the two transports);
+`web/test/api.test.mjs` (every call's network, timeout and cut-off-body outcomes);
+`web/test/live-model.test.mjs` (500 seeded event sequences over the pure functions and 120
+seeded sequences over the wired page, with the rules checked after every step).
