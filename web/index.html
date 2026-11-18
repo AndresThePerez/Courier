@@ -38,11 +38,13 @@
       <section class="rail-section">
         <h2 class="rail-heading">
           My Workspace
+          <span class="badge">Saved in this browser only</span>
           <button id="reset-workspace" type="button" class="link-btn">Reset</button>
         </h2>
         <div id="reset-confirm" class="confirm" hidden></div>
         <div id="workspace-note" class="note" role="status" hidden></div>
         <div id="workspace-tree" class="tree"></div>
+        <div id="saved-collections" class="tree" aria-label="Saved collections"></div>
       </section>
 
       <section class="rail-section">
@@ -94,6 +96,11 @@
           </span>
         </h3>
         <p id="sequence-note" class="note" role="status" hidden></p>
+        <div class="block-actions">
+          <input id="save-sequence-name" type="text" maxlength="120" autocomplete="off" spellcheck="false"
+                 placeholder="Collection name" aria-label="Name for the saved collection">
+          <button id="save-sequence" type="button" class="btn btn-mini">Save sequence as collection</button>
+        </div>
         <div id="sequence-list" class="rows"></div>
        </div>
       </div>

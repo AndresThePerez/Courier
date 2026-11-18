@@ -1,4 +1,5 @@
-// Saved requests driven through orderings nobody wrote down: two or three tabs
+// Saved requests, and saved collections, which keep the same rules through the
+// same code, driven through orderings nobody wrote down: two or three tabs
 // over one shared storage take random turns saving, editing, deleting,
 // undoing, forking, resetting, receiving (or not yet receiving) each other's
 // storage events, while the browser refuses writes or reads on and off. The
@@ -14,10 +15,45 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetBrowser, FakeStorage, StorageEvent } from './shim.mjs';
 import * as workspace from '../js/workspace.js';
+import { createSavedCollections } from '../js/run-config.js';
 
-const KEY = 'courier.workspace.v1';
 const DELETED_ELSEWHERE = 'This request was deleted in another tab.';
 const curated = { id: 'search-pikachu', name: 'Search pikachu', endpoint: 'search', params: { q: 'pikachu' }, assertions: [] };
+
+// A subject is one list under test: its key, where its entries sit in the
+// stored value and in the page state, how to build a tab's store, and how an
+// entry is made and changed. Each store is adapted to the saved-request
+// interface the model drives: save, remove, fork, reset, queued, answering
+// { ok, deleted, request }.
+const WORKSPACE = {
+  slot: 'courier.workspace.v1',
+  list: 'requests',
+  field: 'workspace',
+  create: (opts) => workspace.createWorkspace(opts),
+  newItem: (id, name) => ({ id, name, endpoint: 'search', assertions: [] }),
+  content: (base, v) => ({ ...base, params: { v } }),
+};
+
+const asRequest = ({ collection, ...rest }) => (collection === undefined ? rest : { ...rest, request: collection });
+
+const COLLECTIONS = {
+  slot: 'courier.collections.v1',
+  list: 'collections',
+  field: 'savedCollections',
+  create: (opts) => {
+    const store = createSavedCollections({ ...opts, maxRequests: 50 });
+    return {
+      init: () => store.init(),
+      save: (c) => asRequest(store.save(c)),
+      remove: (id) => asRequest(store.remove(id)),
+      fork: (request) => asRequest(store.create(request.name, [request])),
+      reset: () => store.reset(),
+      queued: () => store.queued(),
+    };
+  },
+  newItem: (id, name) => ({ id: id.replace(/^ws-/, 'wc-'), name, requests: [] }),
+  content: (base, v) => ({ ...base, requests: [{ ...curated, params: { v: String(v) } }] }),
+};
 
 // mulberry32: a small seeded generator, so every sequence replays exactly.
 function prng(seed) {
@@ -31,21 +67,22 @@ function prng(seed) {
   };
 }
 
-const storedList = (shared) => {
-  const raw = shared.peek(KEY);
+const storedList = (shared, subject = WORKSPACE) => {
+  const raw = shared.peek(subject.slot);
   if (raw === null) return [];
-  return JSON.parse(raw).requests;
+  return JSON.parse(raw)[subject.list];
 };
 const byId = (list) => new Map(list.map((r) => [r.id, r]));
 const sortById = (list) => list.slice().sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
 
 // world holds the shared storage, the tabs and the ground truth the checks
 // compare against.
-function newWorld(rand, nTabs) {
+function newWorld(rand, nTabs, subject) {
   const shared = new FakeStorage();
   const world = {
     rand,
     shared,
+    subject,
     tabs: [],
     writesRefused: false,
     readsRefused: false,
@@ -74,6 +111,7 @@ function newWorld(rand, nTabs) {
 }
 
 function newTab(world, name) {
+  const { subject } = world;
   const listeners = new Set();
   const target = {
     addEventListener: (type, fn) => { if (type === 'storage') listeners.add(fn); },
@@ -81,7 +119,7 @@ function newTab(world, name) {
   };
   const t = {
     name,
-    state: { workspace: [], draft: null, selectedId: null, editorNotice: '' },
+    state: { [subject.field]: [], draft: null, selectedId: null, editorNotice: '' },
     inbox: [],
     // mirror is this tab's changes the test expects still to be waiting for
     // an accepted write: id -> { type, request }, one per request.
@@ -89,7 +127,7 @@ function newTab(world, name) {
     lastDeleted: null,
     notices: [],
   };
-  t.ws = workspace.createWorkspace({
+  t.ws = subject.create({
     storage: world.shared,
     get: () => t.state,
     set: (patch) => {
@@ -101,7 +139,7 @@ function newTab(world, name) {
   // Listeners are called directly, so anything they throw reaches the test.
   t.deliver = () => {
     const newValue = t.inbox.shift();
-    const event = new StorageEvent('storage', { key: KEY, newValue, storageArea: world.shared });
+    const event = new StorageEvent('storage', { key: subject.slot, newValue, storageArea: world.shared });
     for (const fn of [...listeners]) fn(event);
   };
   t.ws.init();
@@ -116,7 +154,7 @@ const addTo = (map, id, v) => {
 function content(world, base) {
   const v = world.nextVersion;
   world.nextVersion += 1;
-  return { ...base, params: { v } };
+  return world.subject.content(base, v);
 }
 
 function pick(rand, list) {
@@ -147,11 +185,11 @@ function trackRemove(world, t, id) {
 // other tabs, records what left storage, and folds the tab's changes into the
 // truth once the tab's queue is empty (its write was accepted).
 function settle(world, t, before, result) {
-  const after = world.shared.peek(KEY);
+  const after = world.shared.peek(world.subject.slot);
   if (after !== before.raw) {
     for (const o of world.tabs) if (o !== t) o.inbox.push(after);
   }
-  const now = byId(storedList(world.shared));
+  const now = byId(storedList(world.shared, world.subject));
   for (const id of before.ids) if (!now.has(id)) addTo(world.removedBy, id, t.name);
   // A delete wins over an edit: a request that was stored and then removed
   // comes back only through a tab that deleted it itself (its Undo).
@@ -176,8 +214,8 @@ function settle(world, t, before, result) {
 }
 
 function snapshot(world) {
-  const raw = world.shared.peek(KEY);
-  return { raw, ids: storedList(world.shared).map((r) => r.id) };
+  const raw = world.shared.peek(world.subject.slot);
+  return { raw, ids: storedList(world.shared, world.subject).map((r) => r.id) };
 }
 
 const ACTIONS = [
@@ -204,14 +242,15 @@ function chooseAction(rand) {
 }
 
 function turn(world) {
-  const { rand } = world;
+  const { rand, subject } = world;
+  const listed = (t) => t.state[subject.field];
   const action = chooseAction(rand);
   const t = pick(rand, world.tabs);
   const before = snapshot(world);
 
   switch (action) {
     case 'saveNew': {
-      const request = content(world, { id: `ws-m${world.nextId++}`, name: `new ${world.nextId}`, endpoint: 'search', assertions: [] });
+      const request = content(world, subject.newItem(`ws-m${world.nextId++}`, `new ${world.nextId}`));
       world.log.push(`${t.name} save new ${request.id}`);
       trackSave(world, t, request);
       const r = t.ws.save(request);
@@ -219,7 +258,8 @@ function turn(world) {
       return;
     }
     case 'edit': {
-      const { draft, workspace: list } = t.state;
+      const { draft } = t.state;
+      const list = listed(t);
       const target = draft && list.some((r) => r.id === draft.id) && rand() < 0.5 ? draft : pick(rand, list);
       if (!target) break;
       const request = content(world, target);
@@ -231,7 +271,7 @@ function turn(world) {
       return;
     }
     case 'delete': {
-      const target = pick(rand, t.state.workspace);
+      const target = pick(rand, listed(t));
       if (!target) break;
       world.log.push(`${t.name} delete ${target.id}`);
       trackRemove(world, t, target.id);
@@ -257,7 +297,7 @@ function turn(world) {
       const now = othersDeleted(world, t, request.id);
       if (healthy && now === others && (!withdrawn || now === 0)) {
         assert.deepEqual({ ok: r.ok, deleted: r.deleted }, { ok: true, deleted: false }, `${t.name} could not undo its own delete of ${request.id}`);
-        assert.ok(byId(storedList(world.shared)).has(request.id), `${t.name} undo did not restore ${request.id}`);
+        assert.ok(byId(storedList(world.shared, subject)).has(request.id), `${t.name} undo did not restore ${request.id}`);
       }
       settle(world, t, before, r);
       return;
@@ -272,7 +312,7 @@ function turn(world) {
       return;
     }
     case 'open': {
-      const target = pick(rand, t.state.workspace);
+      const target = pick(rand, listed(t));
       if (!target) break;
       world.log.push(`${t.name} open ${target.id}`);
       t.state = { ...t.state, draft: structuredClone(target), selectedId: target.id };
@@ -355,7 +395,7 @@ function finish(world) {
   checkNotices(world);
   for (const t of world.tabs) {
     const before = snapshot(world);
-    const request = content(world, { id: `ws-end-${t.name}`, name: `end ${t.name}`, endpoint: 'search', assertions: [] });
+    const request = content(world, world.subject.newItem(`ws-end-${t.name}`, `end ${t.name}`));
     trackSave(world, t, request);
     const r = t.ws.save(request);
     assert.equal(r.ok, true, `${t.name} final write refused`);
@@ -365,7 +405,7 @@ function finish(world) {
   for (const t of world.tabs) while (t.inbox.length) t.deliver();
   checkNotices(world);
 
-  const stored = byId(storedList(world.shared));
+  const stored = byId(storedList(world.shared, world.subject));
   // (b) Saved and never deleted: stored, with its last accepted or replayed
   // save. Two tabs saving one request is last-writer-wins, and the truth is
   // folded in the order the writes were accepted, so it follows that rule.
@@ -383,13 +423,13 @@ function finish(world) {
   // (f) Every tab lists exactly what is stored.
   const want = sortById([...stored.values()]);
   for (const t of world.tabs) {
-    assert.deepEqual(sortById(t.state.workspace), want, `${t.name} does not list what is stored`);
+    assert.deepEqual(sortById(t.state[world.subject.field]), want, `${t.name} does not list what is stored`);
   }
 }
 
-function runSequence(seed) {
+function runSequence(seed, subject = WORKSPACE) {
   const rand = prng(seed);
-  const world = newWorld(rand, 2 + Math.floor(rand() * 2));
+  const world = newWorld(rand, 2 + Math.floor(rand() * 2), subject);
   const steps = 1 + Math.floor(rand() * 30);
   try {
     for (let i = 0; i < steps; i += 1) {
@@ -409,12 +449,18 @@ test('300 random sequences of tab, storage and event turns keep every saved requ
   for (let seed = 1; seed <= 300; seed += 1) runSequence(seed);
 });
 
+test('300 random sequences of tab, storage and event turns keep every saved collection and every delete', (t) => {
+  t.mock.method(console, 'warn', () => {});
+  resetBrowser();
+  for (let seed = 1; seed <= 300; seed += 1) runSequence(seed, COLLECTIONS);
+});
+
 
 // ---------------------------------------------------------------- sequences the model found
 
 // smallTab is one tab over shared storage, receiving events by hand.
 function smallTab(shared) {
-  const world = { shared };
+  const world = { shared, subject: WORKSPACE };
   const t = newTab(world, 'T');
   return t;
 }
@@ -425,7 +471,7 @@ test('an undo of a delete that never reached storage loses to a reset made in an
   t.mock.method(console, 'warn', () => {});
   resetBrowser();
   const shared = new FakeStorage();
-  shared.setItem(KEY, JSON.stringify({ version: 1, requests: [plain('ws-1', 'one')] }));
+  shared.setItem(WORKSPACE.slot, JSON.stringify({ version: 1, requests: [plain('ws-1', 'one')] }));
   const a = smallTab(shared);
   const b = smallTab(shared);
 

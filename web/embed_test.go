@@ -24,6 +24,7 @@ var requiredIDs = []string{
 
 	// sidebar
 	"collections-tree", "workspace-tree", "reset-workspace", "reset-confirm", "workspace-note",
+	"saved-collections",
 	"history-list", "target-note", "target-note-name",
 
 	// request editor
@@ -37,6 +38,7 @@ var requiredIDs = []string{
 
 	// runner sequence
 	"sequence-list", "sequence-count", "sequence-note", "select-all", "deselect-all",
+	"save-sequence", "save-sequence-name",
 
 	// run config rail and run controls
 	"mode-functional", "mode-performance", "mode-note",

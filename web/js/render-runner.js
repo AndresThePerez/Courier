@@ -14,7 +14,8 @@
 import { get, set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as api from './api.js';
-import { createRunConfig, clampOption as clampWithin, SETUP_REFUSED } from './run-config.js';
+import { createRunConfig, createSavedCollections, clampOption as clampWithin, SETUP_REFUSED } from './run-config.js';
+import { WRITE_REFUSED } from './workspace.js';
 
 // MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
 // enforces them either way; matching them here means a visitor meets a cap as a
@@ -37,6 +38,21 @@ export function createRunSetup(area) {
 }
 
 const setup = createRunSetup(() => globalThis.localStorage);
+
+// savedCollections is the page's list of sequences saved as collections. The
+// sidebar lists them; this module saves them, because what is saved is the
+// sequence it owns.
+export const savedCollections = createSavedCollections({
+  storage: () => globalThis.localStorage,
+  get,
+  set,
+  target: globalThis,
+  maxRequests: MaxSequence,
+});
+
+// MaxSavedCollections bounds what the sidebar lists and rebuilds; the server
+// never sees any of them.
+const MaxSavedCollections = 50;
 
 const optionOf = {
   'delay-ms': 'delay_ms',
@@ -96,6 +112,7 @@ export function init(h) {
   hooks = { ...hooks, ...h };
 
   byId('select-all').addEventListener('click', () => setAllEnabled(true));
+  byId('save-sequence').addEventListener('click', saveSequence);
   byId('deselect-all').addEventListener('click', () => setAllEnabled(false));
 
   byId('mode-functional').addEventListener('change', () => setMode('functional'));
@@ -198,6 +215,29 @@ function setEnabled(key, on) {
 
 function setAllEnabled(on) {
   setSetup({ sequence: get().sequence.map((e) => (e.enabled === on ? e : { ...e, enabled: on })) });
+}
+
+// saveSequence saves every queued request, checked or not, in order, as a
+// collection in this browser.
+function saveSequence() {
+  const list = get().sequence;
+  const input = byId('save-sequence-name');
+  const name = input.value.trim();
+  if (list.length === 0) {
+    sequenceNote = 'Queue at least one request before saving the sequence.';
+  } else if (!name) {
+    sequenceNote = 'Name the collection before saving it.';
+  } else if (get().savedCollections.length >= MaxSavedCollections) {
+    sequenceNote = `${MaxSavedCollections} saved collections is the cap - delete one before saving another.`;
+  } else {
+    const { ok, collection } = savedCollections.create(name, list.map((e) => e.request));
+    const n = collection.requests.length;
+    sequenceNote = ok
+      ? `Saved "${collection.name}" with ${n} request${n === 1 ? '' : 's'} to My Workspace.`
+      : WRITE_REFUSED;
+    input.value = '';
+  }
+  render(get());
 }
 
 // ---------------------------------------------------------------- knee demo
@@ -491,6 +531,7 @@ function renderSequence(state) {
 
   byId('select-all').disabled = list.length === 0;
   byId('deselect-all').disabled = list.length === 0;
+  byId('save-sequence').disabled = list.length === 0;
 
   // Rebuild only when the sequence itself changed. The 3s status poll notifies
   // every render module; rebuilding this list on each one would take the focus
@@ -719,4 +760,5 @@ function restoreFocus(key) {
   const node = document.querySelector(`[data-focus-key="${key}"]`);
   if (node && node !== document.activeElement && !node.disabled) node.focus();
 }
+
 

@@ -253,6 +253,7 @@ function render(state) {
 
 async function boot() {
   workspace.init();
+  runner.savedCollections.init();
   runner.restore();
 
   editor.init();

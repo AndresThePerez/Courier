@@ -1,8 +1,10 @@
-// render-sidebar.js — curated collections, the visitor workspace, and history.
+// render-sidebar.js — curated collections, the visitor workspace (saved
+// requests and saved collections), and history.
 
 import { set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as workspace from './workspace.js';
+import { savedCollections } from './render-runner.js';
 
 // onSelect / onAdd are wired by main.js so this module stays a pure function
 // of state plus its two callbacks.
@@ -81,18 +83,21 @@ function showResetConfirm() {
   ]);
 }
 
-// deleteRequest deletes at once and offers the request back, rather than
+// deleteWithUndo deletes at once and offers the entry back, rather than
 // asking first: an inline undo costs a visitor nothing when they meant it, and
-// window.confirm would block the page (see showResetConfirm).
-function deleteRequest(id) {
-  const { request, ok } = workspace.remove(id);
+// window.confirm would block the page (see showResetConfirm). remove answers
+// { ok, entry } and restore(entry) { ok, deleted }, so saved requests and
+// saved collections share it.
+function deleteWithUndo(remove, restore) {
+  const { entry, ok } = remove();
   const note = byId('workspace-note');
-  if (!request) {
+  if (!entry) {
     note.hidden = true;
     return;
   }
+  const label = entry.name || entry.id;
   replace(note, [
-    el('span', { text: `Deleted "${request.name || request.id}". ` }),
+    el('span', { text: `Deleted "${label}". ` }),
     el('button', {
       class: 'link-btn',
       type: 'button',
@@ -100,14 +105,14 @@ function deleteRequest(id) {
       on: {
         click: () => {
           // An undo that did not land must say so: hiding the note would
-          // leave the visitor believing the request is back.
-          const restored = workspace.save(request);
+          // leave the visitor believing the entry is back.
+          const restored = restore(entry);
           if (restored.ok) {
             note.hidden = true;
             return;
           }
           const why = restored.deleted
-            ? `Could not restore "${request.name || request.id}".`
+            ? `Could not restore "${label}".`
             : workspace.WRITE_REFUSED;
           replace(note, [el('span', { text: why })]);
           note.hidden = false;
@@ -117,6 +122,20 @@ function deleteRequest(id) {
     ok ? null : el('span', { text: ` ${workspace.WRITE_REFUSED}` }),
   ]);
   note.hidden = false;
+}
+
+function deleteRequest(id) {
+  deleteWithUndo(() => {
+    const { request, ok } = workspace.remove(id);
+    return { entry: request, ok };
+  }, (request) => workspace.save(request));
+}
+
+function deleteCollection(id) {
+  deleteWithUndo(() => {
+    const { collection, ok } = savedCollections.remove(id);
+    return { entry: collection, ok };
+  }, (collection) => savedCollections.save(collection));
 }
 
 function requestRow(request, selectedId) {
@@ -160,6 +179,63 @@ function collectionNode(collection, selectedId) {
   const node = el('details', { class: 'collection' }, [summary, body, actions]);
   if (collection.description) summary.title = collection.description;
   return node;
+}
+
+// savedNode lists a saved collection's requests as text: they are copies
+// taken when the sequence was saved, so opening one in the editor would edit
+// nothing the visitor could find again. Adding it to the run copies them anew.
+function savedNode(collection) {
+  const name = collection.name || 'Untitled';
+  const summary = el('summary', {}, [
+    el('span', { class: 'collection-name', text: name }),
+    el('span', { class: 'badge', text: 'saved' }),
+  ]);
+  const body = el('div', { class: 'collection-body' }, collection.requests.map((r) => el('div', { class: 'req-row' }, [
+    el('span', { class: 'method', text: 'GET' }),
+    ' ',
+    el('span', { text: r.name || r.id }),
+  ])));
+  const actions = el('div', { class: 'collection-actions' }, [
+    el('button', {
+      class: 'btn btn-mini',
+      type: 'button',
+      text: `Add all ${collection.requests.length} to run`,
+      on: { click: () => hooks.addAll(collection) },
+    }),
+    ' ',
+    el('button', {
+      class: 'btn btn-mini',
+      type: 'button',
+      text: 'x',
+      title: 'Delete this saved collection',
+      attrs: { 'aria-label': `Delete saved collection "${name}"` },
+      on: { click: () => deleteCollection(collection.id) },
+    }),
+  ]);
+  const node = el('details', { class: 'collection' }, [summary, body, actions]);
+  node.dataset.id = collection.id;
+  return node;
+}
+
+// The saved collections are rebuilt only when the list itself changes: the
+// status poll notifies every few seconds, and a long list rebuilt on each one
+// would cost the page for nothing. Which ones are open is read back from the
+// tree, as for the curated collections.
+let lastSaved = null;
+
+function renderSaved(list) {
+  if (list === lastSaved) return;
+  lastSaved = list;
+  const tree = byId('saved-collections');
+  const open = new Set();
+  for (const node of tree.querySelectorAll('details[data-id]')) {
+    if (node.open) open.add(node.dataset.id);
+  }
+  replace(tree, list.map((c) => {
+    const node = savedNode(c);
+    node.open = open.has(c.id);
+    return node;
+  }));
 }
 
 function historyRow(entry) {
@@ -225,6 +301,8 @@ export function render(state) {
       return row;
     }));
   }
+
+  renderSaved(state.savedCollections);
 
   const hist = byId('history-list');
   // The five most recent runs, list and click-to-reopen only.

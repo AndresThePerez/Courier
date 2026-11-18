@@ -1,5 +1,6 @@
 // run-config.js — the run setup (sequence, mode and options) kept in this
-// browser, so a reload does not throw away a run the visitor configured.
+// browser, so a reload does not throw away a run the visitor configured, and
+// run sequences the visitor saved as collections.
 //
 // The server stores none of it and is not asked to: this is the visitor's
 // data, in this browser's localStorage, and every request restored from it is
@@ -8,6 +9,7 @@
 import * as storage from './storage.js';
 
 const SETUP_KEY = 'courier.runner.v1';
+const SAVED_LIST = 'courier.collections.v1';
 const VERSION = 1;
 
 export const SETUP_REFUSED = 'Could not save the run setup in this browser.';
@@ -102,4 +104,62 @@ export function createRunConfig({ storage: area, limits, maxSequence }) {
   }
 
   return { load, save };
+}
+
+
+// MaxCollectionName matches the editor's name field.
+export const MaxCollectionName = 120;
+
+// createSavedCollections keeps the visitor's saved sequences, a list shared by
+// every tab and merged by id under the same rules as saved requests
+// (createSyncedList in storage.js), published as state.savedCollections.
+//
+// A saved collection holds copies of the requests as they were queued, never
+// references: deleting a saved request, or the collection itself, leaves
+// whatever is queued alone, and adding one to the run copies it again.
+// maxRequests is the runner's cap; a stored collection holding more is cut to
+// it, since no more than that could ever be added to a run.
+export function createSavedCollections({ storage: area, get, set, target = null, maxRequests }) {
+  function collectionOf(value) {
+    if (!isPlain(value)) return null;
+    const { id, name, requests } = value;
+    if (typeof id !== 'string' || id === '' || typeof name !== 'string' || !Array.isArray(requests)) return null;
+    const kept = [];
+    for (const r of requests) {
+      if (kept.length >= maxRequests) break;
+      const request = requestOf(r);
+      if (request) kept.push(request);
+    }
+    return { id, name: name.slice(0, MaxCollectionName), requests: kept };
+  }
+
+  function decode(raw) {
+    const saved = storage.parseJSON(raw);
+    if (!isPlain(saved) || saved.version !== VERSION || !Array.isArray(saved.collections)) return { items: [] };
+    return { items: saved.collections.map(collectionOf).filter(Boolean) };
+  }
+
+  const encode = (collections) => JSON.stringify({ version: VERSION, collections });
+
+  const list = storage.createSyncedList({ storage: area, key: SAVED_LIST, field: 'savedCollections', decode, encode, get, set, target });
+
+  const named = ({ item, ...result }) => ({ ...result, collection: item });
+
+  // create saves requests as a new collection under a fresh id.
+  function create(name, requests) {
+    const collection = collectionOf({ id: storage.randomId('wc-'), name: String(name).trim(), requests });
+    return { ...list.save(collection), collection };
+  }
+
+  // save stores a collection again by id; the Undo of a delete.
+  function save(collection) {
+    const copy = collectionOf(collection);
+    if (!copy) return { ok: false, deleted: false, collection: null };
+    return { ...list.save(copy), collection: copy };
+  }
+
+  const remove = (id) => named(list.remove(id));
+
+  const { init, stop, load, find, reset, queued } = list;
+  return { init, stop, load, find, create, save, remove, reset, queued };
 }

@@ -17,6 +17,7 @@ const initialState = () => ({
 
   // sidebar / editor selection
   workspace: [],
+  savedCollections: [], // run sequences saved as collections in this browser
   selectedId: null,
   draft: null, // the request the editor is editing (a copy, never a catalog object)
   editorNotice: '', // why the editor closed a request it had open, until another is opened
