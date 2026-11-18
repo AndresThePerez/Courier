@@ -106,6 +106,11 @@ type RequestResult struct {
 	Skipped       bool             `json:"skipped"`
 	BodyPreview   string           `json:"body_preview,omitempty"`
 	BodyTruncated bool             `json:"body_truncated"`
+
+	// Cause is the raw transport error behind Error. It names the target's
+	// internal address, so it is never serialized: it rides on the emitted row
+	// only as far as the run manager, which logs it and drops it.
+	Cause error `json:"-"`
 }
 
 // SLO is the gate a performance run was judged by, recorded on the report so

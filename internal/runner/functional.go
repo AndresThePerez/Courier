@@ -100,8 +100,11 @@ func runFunctional(ctx context.Context, ex *Executor, rr sandbox.RunRequest, emi
 				skipping = true
 			}
 		}
-		f.Results = append(f.Results, res)
 		emit(Event{Type: EventRequestResult, Data: res})
+		// The cause travels with the event, for the log; the stored row has no
+		// use for it.
+		res.Cause = nil
+		f.Results = append(f.Results, res)
 	}
 
 	return Result{Status: status, Functional: f}
@@ -169,8 +172,9 @@ func functionalResult(i int, r sandbox.Request, ex *Executor, resp Response) rep
 		SizeBytes: resp.Size,
 	}
 	if resp.Err != nil {
-		res.Error = resp.Err.Error()
+		res.Error = resp.PublicError()
 		res.ErrorKind = resp.ErrKind
+		res.Cause = resp.Err
 		if resp.ErrKind == ErrKindAborted {
 			res.Skipped = true
 			res.Assertions = []assert.Outcome{}

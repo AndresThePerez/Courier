@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -377,4 +378,108 @@ func TestFunctionalRunStartedIsStampedInUTC(t *testing.T) {
 	if at := e.Data.(RunStarted).StartedAt; at.Location() != time.UTC {
 		t.Errorf("run_started started_at = %v, want UTC", at)
 	}
+}
+
+// redirectLoopTarget answers every request with a redirect to itself.
+func redirectLoopTarget(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", r.URL.Path)
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A functional row, as stored and as streamed, carries a fixed sentence for a
+// failed dispatch: never Go's error text, never the target's address.
+func TestFunctionalRowsCarryFixedMessagesAndNoAddress(t *testing.T) {
+	type scenario struct {
+		name, msg string
+		ex        func() (*Executor, string)
+	}
+	plain := func(base string) (*Executor, string) { return NewExecutor(base), base }
+	cases := []scenario{
+		{"refused", MsgConnection, func() (*Executor, string) { return plain(closedTarget(t)) }},
+		{"unresolvable host", MsgConnection, func() (*Executor, string) { return plain("http://target.invalid") }},
+		{"dropped mid-body", MsgDropped, func() (*Executor, string) { return plain(droppingTarget(t).URL) }},
+		{"timeout", MsgTimeout, func() (*Executor, string) {
+			base := hangingTarget(t).URL
+			return withTimeout(NewExecutor(base), 150*time.Millisecond), base
+		}},
+		{"tls to a plain server", MsgConnection, func() (*Executor, string) {
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			t.Cleanup(srv.Close)
+			return plain(strings.Replace(srv.URL, "http://", "https://", 1))
+		}},
+		// A loop is either recorded as the redirect it is or reported in a
+		// fixed sentence; it never echoes the address it bounced between.
+		{"redirect loop", "", func() (*Executor, string) { return plain(redirectLoopTarget(t).URL) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ex, base := tc.ex()
+			rec := &recorder{}
+			res := RunFunctional(context.Background(), ex, sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+				Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search", Params: map[string]string{"q": "a"},
+					Assertions: []assert.Assertion{{Type: "status", Op: "eq", Value: float64(200)}}}}}, rec.emit)
+			row := res.Functional.Results[0]
+			if tc.msg != "" && row.Error != tc.msg {
+				t.Errorf("row error = %q, want %q", row.Error, tc.msg)
+			}
+			stored, err := json.Marshal(res.Functional)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkNoLeak(t, "the stored functional result", stored, base)
+			rec.mu.Lock()
+			streamed, err := json.Marshal(rec.events)
+			rec.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkNoLeak(t, "the streamed events", streamed, base)
+		})
+	}
+}
+
+// A dispatch Courier stopped reads as Courier's doing, in a fixed sentence.
+func TestFunctionalAbortedRowCarriesTheFixedMessage(t *testing.T) {
+	srv := hangingTarget(t)
+	ctx, abort := context.WithCancelCause(context.Background())
+	time.AfterFunc(100*time.Millisecond, func() { abort(ErrRunAborted) })
+	rec := &recorder{}
+	res := RunFunctional(ctx, NewExecutor(srv.URL), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search"}}}, rec.emit)
+	row := res.Functional.Results[0]
+	if !row.Skipped || row.ErrorKind != ErrKindAborted || row.Error != MsgAborted {
+		t.Errorf("aborted row = skipped %v kind %q error %q, want skipped, aborted, %q", row.Skipped, row.ErrorKind, row.Error, MsgAborted)
+	}
+	b, _ := json.Marshal(res.Functional)
+	checkNoLeak(t, "the aborted run", b, srv.URL)
+}
+
+// The raw error rides on the emitted row so the manager can log it, and is
+// dropped by every encoding of that row.
+func TestTheRawErrorIsNeverSerialized(t *testing.T) {
+	base := closedTarget(t)
+	rec := &recorder{}
+	RunFunctional(context.Background(), NewExecutor(base), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search"}}}, rec.emit)
+	e, ok := rec.first(EventRequestResult)
+	if !ok {
+		t.Fatal("no request_result")
+	}
+	row := e.Data.(report.RequestResult)
+	if row.Cause == nil || !strings.Contains(row.Cause.Error(), "connection refused") {
+		t.Fatalf("the emitted row carries cause %v, want the raw transport error", row.Cause)
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), row.Cause.Error()) || strings.Contains(string(b), "connection refused") {
+		t.Errorf("the raw error was serialized: %s", b)
+	}
+	checkNoLeak(t, "the encoded event", b, base)
 }

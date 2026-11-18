@@ -408,9 +408,23 @@ func (m *Manager) Budget() *budget.Bucket { return m.bucket }
 
 // emitter stamps the run id onto every event, folds it into the live partial
 // report, and forwards it to the broadcaster.
+//
+// A row's raw transport error is logged here, where the run id is known, and
+// dropped before the row goes anywhere a visitor can read it.
 func (m *Manager) emitter(id string) Emitter {
 	return func(e Event) {
 		e.RunID = id
+		if rr, ok := e.Data.(report.RequestResult); ok && rr.Cause != nil {
+			m.log.Warn("dispatch failed",
+				"event", EventDispatchFailed,
+				"run_id", id,
+				"index", rr.Index,
+				"endpoint", rr.Endpoint,
+				"error_kind", rr.ErrorKind,
+				"err", rr.Cause.Error())
+			rr.Cause = nil
+			e.Data = rr
+		}
 		m.absorb(id, e)
 		m.pub.Publish(e)
 	}
