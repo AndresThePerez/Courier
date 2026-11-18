@@ -324,15 +324,24 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 
-	// checkBody has already held every key and value to v's shape, so this
-	// decode cannot meet an unknown field, and a second Decoder would only
-	// buffer the body over again.
-	if err := json.Unmarshal(body, v); err != nil {
+	// checkBody has already held every key and value to v's shape; this decode
+	// cannot meet an unknown field unless the walk and the type have drifted.
+	if err := decodeChecked(body, v); err != nil {
 		// A backstop; its text is Go's and is not shown.
 		writeError(w, http.StatusBadRequest, "body", "the body does not match the expected shape")
 		return false
 	}
 	return true
+}
+
+// decodeChecked is the decode that follows checkBody. The walk has already
+// refused every key v lacks; the decoder refuses them again so that a payload
+// type growing a shape the walk does not model is still held to its fields,
+// rather than having an unknown key silently dropped.
+func decodeChecked(body []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
 }
 
 // isJSONContentType accepts exactly one Content-Type naming application/json,
@@ -494,9 +503,12 @@ func clipRunes(s string, n int) string {
 }
 
 // shapeWalk checks a JSON value against a Go type by reading its bytes in
-// place. The value has already been through the decoder once, so it is known
-// to be well-formed and at most the decoder's nesting limit deep, which is
-// what bounds the recursion here.
+// place. checkBody hands it only a value the decoder has already accepted, so
+// it is well-formed and at most the decoder's nesting limit deep, which is
+// what bounds the recursion here. The walk does not rely on that to be safe:
+// every byte read is bounds-checked, and bytes that are not JSON end the walk
+// with a malformed-JSON error, never a panic or a loop. Each step consumes at
+// least one byte, so the recursion is bounded by the input on any bytes.
 //
 // A walk over encoding/json's tokens would cost a decode, an interface value
 // and, after every key, a syntax error allocated and thrown away: a few hundred
@@ -505,6 +517,37 @@ type shapeWalk struct {
 	b    []byte
 	i    int
 	path shapePath
+}
+
+// malformed is the walk's answer to bytes that are not JSON.
+func (w *shapeWalk) malformed() *shapeError {
+	return &shapeError{"body", fmt.Sprintf("malformed JSON at byte %d", w.i)}
+}
+
+// peek returns the byte at w.i, or false at the end of the input.
+func (w *shapeWalk) peek() (byte, bool) {
+	if w.i >= len(w.b) {
+		return 0, false
+	}
+	return w.b[w.i], true
+}
+
+// expect moves past c, or reports that the next byte is not c.
+func (w *shapeWalk) expect(c byte) bool {
+	if b, ok := w.peek(); !ok || b != c {
+		return false
+	}
+	w.i++
+	return true
+}
+
+// literal moves past lit, or reports that the input does not hold it here.
+func (w *shapeWalk) literal(lit string) bool {
+	if !bytes.HasPrefix(w.b[w.i:], []byte(lit)) {
+		return false
+	}
+	w.i += len(lit)
+	return true
 }
 
 func (w *shapeWalk) skipSpace() {
@@ -519,32 +562,38 @@ func (w *shapeWalk) skipSpace() {
 }
 
 // skipString moves past the string starting at w.i and returns its bytes,
-// quotes included.
-func (w *shapeWalk) skipString() []byte {
+// quotes included, or false when there is no whole string there.
+func (w *shapeWalk) skipString() ([]byte, bool) {
 	start := w.i
-	for w.i++; w.i < len(w.b); w.i++ {
+	if !w.expect('"') {
+		return nil, false
+	}
+	for ; w.i < len(w.b); w.i++ {
 		switch w.b[w.i] {
 		case '\\':
 			w.i++
 		case '"':
 			w.i++
-			return w.b[start:w.i]
+			return w.b[start:w.i], true
 		}
 	}
-	return w.b[start:]
+	return nil, false
 }
 
 // key reads an object key as encoding/json will see it, escapes resolved and
 // invalid UTF-8 replaced, so the key checked is the key decoded.
-func (w *shapeWalk) key() string {
-	quoted := w.skipString()
+func (w *shapeWalk) key() (string, bool) {
+	quoted, ok := w.skipString()
+	if !ok {
+		return "", false
+	}
 	inner := quoted[1 : len(quoted)-1]
 	if bytes.IndexByte(inner, '\\') < 0 && utf8.Valid(inner) {
-		return string(inner)
+		return string(inner), true
 	}
 	var k string
 	_ = json.Unmarshal(quoted, &k)
-	return k
+	return k, true
 }
 
 // value checks the value at w.i against t. A nil t (an `any` field) accepts
@@ -555,9 +604,14 @@ func (w *shapeWalk) value(t reflect.Type, typed int) *shapeError {
 	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	c := w.b[w.i]
+	c, ok := w.peek()
+	if !ok {
+		return w.malformed()
+	}
 	if c == 'n' { // null leaves a field at its zero value
-		w.i += len("null")
+		if !w.literal("null") {
+			return w.malformed()
+		}
 		return nil
 	}
 	if t != nil {
@@ -576,15 +630,19 @@ func (w *shapeWalk) value(t reflect.Type, typed int) *shapeError {
 	case '[':
 		return w.array(t, typed)
 	case '"':
-		w.skipString()
+		if _, ok := w.skipString(); !ok {
+			return w.malformed()
+		}
 		if t != nil && t.Kind() != reflect.String {
 			return mismatch("a string")
 		}
 	case 't', 'f':
+		lit := "false"
 		if c == 't' {
-			w.i += len("true")
-		} else {
-			w.i += len("false")
+			lit = "true"
+		}
+		if !w.literal(lit) {
+			return w.malformed()
 		}
 		if t != nil && t.Kind() != reflect.Bool {
 			return mismatch("a boolean")
@@ -593,6 +651,9 @@ func (w *shapeWalk) value(t reflect.Type, typed int) *shapeError {
 		start := w.i
 		for w.i < len(w.b) && strings.IndexByte("+-.0123456789eE", w.b[w.i]) >= 0 {
 			w.i++
+		}
+		if w.i == start {
+			return w.malformed()
 		}
 		n := json.Number(w.b[start:w.i])
 		return checkNumber(n, t, func() *shapeError {
@@ -620,17 +681,26 @@ func (w *shapeWalk) object(t reflect.Type, typed int) *shapeError {
 	var seen map[string]bool
 	for n := 0; ; n++ {
 		w.skipSpace()
-		if w.b[w.i] == '}' {
+		if c, ok := w.peek(); !ok {
+			return w.malformed()
+		} else if c == '}' {
 			w.i++
 			return nil
 		}
 		if n > 0 {
-			w.i++ // ','
+			if !w.expect(',') {
+				return w.malformed()
+			}
 			w.skipSpace()
 		}
-		key := w.key()
+		key, ok := w.key()
+		if !ok {
+			return w.malformed()
+		}
 		w.skipSpace()
-		w.i++ // ':'
+		if !w.expect(':') {
+			return w.malformed()
+		}
 
 		if seen[key] || (seen == nil && slices.Contains(keys, key)) {
 			w.path.push(pathSeg{key: key, isKey: true}, typed)
@@ -683,12 +753,14 @@ func (w *shapeWalk) array(t reflect.Type, typed int) *shapeError {
 	w.i++ // '['
 	for i := 0; ; i++ {
 		w.skipSpace()
-		if w.b[w.i] == ']' {
+		if c, ok := w.peek(); !ok {
+			return w.malformed()
+		} else if c == ']' {
 			w.i++
 			return nil
 		}
-		if i > 0 {
-			w.i++ // ','
+		if i > 0 && !w.expect(',') {
+			return w.malformed()
 		}
 		w.path.push(pathSeg{index: i}, typed)
 		se := w.value(elem, typed)

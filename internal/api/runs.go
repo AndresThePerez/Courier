@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/pdf"
 	"github.com/AndresThePerez/courier/internal/report"
 	"github.com/AndresThePerez/courier/internal/runner"
@@ -127,7 +128,7 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	rep, ok := s.mgr.Report(r.PathValue("id"))
 	if !ok {
-		writeError(w, http.StatusNotFound, "", "no run %q", r.PathValue("id"))
+		writeError(w, http.StatusNotFound, "", "no run %q", assert.Clip(r.PathValue("id")))
 		return
 	}
 	writeJSON(w, http.StatusOK, rep)
@@ -147,7 +148,7 @@ func (s *Server) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rep, ok := s.mgr.Report(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "", "no run %q", id)
+		writeError(w, http.StatusNotFound, "", "no run %q", assert.Clip(id))
 		return
 	}
 
@@ -201,7 +202,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rep, ok := s.mgr.Report(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "", "no run %q", id)
+		writeError(w, http.StatusNotFound, "", "no run %q", assert.Clip(id))
 		return
 	}
 

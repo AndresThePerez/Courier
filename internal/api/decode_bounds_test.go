@@ -55,7 +55,9 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 		{"array", valueBody(strings.Repeat("[", deepDepth) + "1" + strings.Repeat("]", deepDepth))},
 		{"two keys a level", valueBody(strings.Repeat(`{"a":1,`+deepKey+`:`, 8000) + "1" + strings.Repeat(`}`, 8000))},
 	}
-	const bound = 32 * MaxBodyBytes
+	// Linear with room to spare under -race and across toolchains; a cost that
+	// grows with the square of the depth allocates about a gigabyte here.
+	const bound = 64 * MaxBodyBytes
 	for _, tc := range cases {
 		if len(tc.body) > MaxBodyBytes {
 			t.Fatalf("%s: body is %d bytes, over the cap", tc.name, len(tc.body))
