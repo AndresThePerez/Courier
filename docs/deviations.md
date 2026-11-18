@@ -1160,3 +1160,57 @@ responses; every count, band, bucket, ladder share, min, max and average exact),
 percentile points, every kept sample a recorded latency),
 `TestBelowTheCapEverySampleIsKept`; `internal/runner/perf_test.go`:
 `TestAggregatorBoundsTheSamplesARunKeeps`.
+
+## N40 — The run setup and saved sequences persist in this browser; the server stores nothing
+
+**What the page did:** the run sequence, the mode and the options lived in page state only.
+Queue requests, pick performance at 25 workers, reload: the sequence was empty, the mode was
+functional and the options were the defaults. A sequence could not be saved at all.
+
+**What it does now:** two `localStorage` keys in the visitor's browser. The server stores
+none of it, gains no route, and is sent nothing it was not sent before.
+
+- `courier.runner.v1` holds the run setup as one value:
+  `{"version":1,"sequence":[{"enabled":true,"request":{…}}],"mode":"performance","options":{"stop_on_failure":false,"delay_ms":0,"concurrency":25,"duration_secs":20}}`.
+  Every change to the sequence, the mode or an option writes it whole, and the page restores
+  it once at load.
+- `courier.collections.v1` holds the sequences saved with "Save sequence as collection":
+  `{"version":1,"collections":[{"id":"wc-<random>","name":"…","requests":[{…}]}]}`. They are
+  listed under My Workspace with "Add all N to run" (which queues them again in order, up to
+  the 50-request cap, with the same cap note as a curated collection) and a delete control
+  with an inline Undo. A page saves at most 50 of them; the name is cut to 120 characters
+  and shown as text.
+
+**Across tabs.** The run setup is last-writer-wins, one whole value, and is **not** adopted
+from another tab's storage event: a second tab must not have its queued sequence replaced
+under the visitor's hands, so a tab only ever reads the setup when it loads. Saved
+collections merge by id across tabs and follow other tabs live through `storage` events,
+under the same rules and the same code as saved requests (`createSyncedList` in
+`web/js/storage.js`): only a current read counts, a delete wins over an edit, and a
+collection deleted in another tab disappears here.
+
+**Copies.** A queued request is a copy of the request as it was when it was queued (as
+before), and persisting the sequence persists those copies. Saving a sequence stores copies
+too, of every queued request, checked or not; adding a saved collection to the run copies
+them again. Deleting a saved request or a saved collection does not change the queued
+sequence.
+
+**What a stored value cannot do.** Every read and write answers instead of throwing: a
+refused or impossible read loads the defaults (an empty sequence, functional, the default
+options) or an empty list, and a refused write keeps the change on the page and says so
+(`Could not save the run setup in this browser.` beside the sequence; the saved-requests
+message for a saved collection). A wrong version, garbage, `null` or a non-object loads the
+defaults. A stored sequence is cut to 50 entries, a saved collection to 50 requests, and
+stored options are clamped by the same rules as the inputs; a mode other than `functional`
+or `performance` loads as functional. Entries that are not objects and requests with a
+malformed field are dropped. A restored request keeps only `id`, `name`, `endpoint`,
+`params` (string values) and `assertions`, the fields a run sends, so a stored value cannot
+put a URL, host or method on the wire. A request whose endpoint is no longer in the catalog
+is kept, and the server refuses the run naming the field, as it would any request.
+
+**Proof:** `web/test/run-config.test.mjs` (the reload, the bad values, the clamps, refused
+reads and writes, another tab's write, the payload keys);
+`web/test/saved-collections.test.mjs` (saving, listing, Add all at the cap, delete and
+Undo, two tabs, garbage by load and by event, 1,000 collections, a 5 MB value);
+`web/test/workspace-model.test.mjs` runs its 300 seeded tab, storage and event orderings
+over saved collections as well as saved requests.
