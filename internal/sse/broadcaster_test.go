@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -326,3 +327,86 @@ func TestSubscriberLifecycleIsLogged(t *testing.T) {
 // The broadcaster is the manager's Publisher. If that ever stops being true the
 // compiler should say so here, not in cmd/server.
 var _ runner.Publisher = (*Broadcaster)(nil)
+
+// Ids are what Last-Event-ID resumes from, so they must rise strictly within a
+// run, reach live subscribers and the replay alike, and restart with the next
+// run's log.
+func TestEventsAreNumberedWithinARun(t *testing.T) {
+	b := New(nil)
+	b.Reset("run-1")
+	ch, cancel, err := b.Subscribe()
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	for i := range 3 {
+		b.Publish(result(i))
+	}
+	cancel()
+	for i, e := range drain(ch) {
+		if e.ID != uint64(i+1) {
+			t.Errorf("live event %d has id %d, want %d", i, e.ID, i+1)
+		}
+	}
+	for i, e := range b.Replay() {
+		if e.ID != uint64(i+1) {
+			t.Errorf("replayed event %d has id %d, want %d", i, e.ID, i+1)
+		}
+	}
+	if last, ok := b.LastID("run-1"); !ok || last != 3 {
+		t.Errorf("LastID(run-1) = %d, %v; want 3, true", last, ok)
+	}
+
+	b.Reset("run-2")
+	b.Publish(result(0))
+	if got := b.Replay(); len(got) != 1 || got[0].ID != 1 {
+		t.Errorf("first event of the next run = %+v, want id 1", got)
+	}
+	if last, ok := b.LastID("run-1"); !ok || last != 3 {
+		t.Errorf("LastID(run-1) after the log moved on = %d, %v; want 3, true", last, ok)
+	}
+	if _, ok := b.LastID("run-never"); ok {
+		t.Error("LastID reports an id for a run the broadcaster never carried")
+	}
+}
+
+// A reconnecting viewer gets only what it has not seen, and the coalesced
+// progress event counts as new when its id is.
+func TestSubscribeAfterAnIDReplaysOnlyNewerEvents(t *testing.T) {
+	b := New(nil)
+	b.Reset("run-1")
+	b.Publish(runner.Event{Type: runner.EventRunStarted, RunID: "run-1"}) // 1
+	b.Publish(progress(1))                                                // 2, replaced below
+	b.Publish(result(0))                                                  // 3
+	b.Publish(progress(2))                                                // 4, the latest progress
+	b.Publish(result(1))                                                  // 5
+
+	ids := func(es []runner.Event) []uint64 {
+		var out []uint64
+		for _, e := range es {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		after uint64
+		want  []uint64
+	}{
+		{0, []uint64{1, 3, 4, 5}},
+		{3, []uint64{4, 5}},
+		{4, []uint64{5}},
+		{5, nil},
+		{99, nil},
+	} {
+		sub, err := b.SubscribeRun(tc.after)
+		if err != nil {
+			t.Fatalf("subscribe after %d: %v", tc.after, err)
+		}
+		if got := ids(sub.Replay); !slices.Equal(got, tc.want) {
+			t.Errorf("after %d replayed ids %v, want %v", tc.after, got, tc.want)
+		}
+		if sub.RunID != "run-1" {
+			t.Errorf("subscription run = %q, want run-1", sub.RunID)
+		}
+		sub.Cancel()
+	}
+}

@@ -925,3 +925,137 @@ func TestFinishedStreamsReleaseTheirSlots(t *testing.T) {
 	readers.Wait()
 	waitIdle(t, s)
 }
+
+// ---- event ids ----------------------------------------------------------
+
+// idFrame is one SSE frame with its id: line.
+type idFrame struct {
+	id   string
+	name string
+}
+
+// framesWithIDs reads a stream to EOF (the stream ends after run_finished) and
+// returns its frames in order.
+func framesWithIDs(t *testing.T, base, id, lastEventID string) []idFrame {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/runs/"+id+"/stream", nil)
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer resp.Body.Close()
+	var out []idFrame
+	cur := idFrame{}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	for sc.Scan() {
+		switch line := sc.Text(); {
+		case strings.HasPrefix(line, "id: "):
+			cur.id = strings.TrimPrefix(line, "id: ")
+		case strings.HasPrefix(line, "event: "):
+			cur.name = strings.TrimPrefix(line, "event: ")
+		case line == "":
+			if cur.name != "" {
+				out = append(out, cur)
+			}
+			cur = idFrame{}
+		}
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("stream did not end: %+v", out)
+	}
+	return out
+}
+
+func idOf(t *testing.T, f idFrame) uint64 {
+	t.Helper()
+	n, err := strconv.ParseUint(f.id, 10, 64)
+	if err != nil {
+		t.Fatalf("frame %q has id %q, want a number", f.name, f.id)
+	}
+	return n
+}
+
+func TestStreamFramesCarryRisingIDsAndResume(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	id := startRun(t, s, payload(3, 50))
+	waitIdle(t, s)
+
+	all := framesWithIDs(t, srv.URL, id, "")
+	if len(all) != 5 || all[0].name != runner.EventRunStarted || all[4].name != runner.EventRunFinished {
+		t.Fatalf("full stream = %+v, want run_started, 3 results, run_finished", all)
+	}
+	var prev uint64
+	for _, f := range all {
+		n := idOf(t, f)
+		if n <= prev {
+			t.Errorf("id %d follows %d; ids must rise strictly within a run", n, prev)
+		}
+		prev = n
+	}
+
+	k := all[1].id
+	resumed := framesWithIDs(t, srv.URL, id, k)
+	if len(resumed) != 3 || resumed[0].id != all[2].id {
+		t.Errorf("after Last-Event-ID %s got %+v, want the 3 frames after it", k, resumed)
+	}
+
+	for _, junk := range []string{"abc", "-1", "1.5"} {
+		if got := framesWithIDs(t, srv.URL, id, junk); len(got) != len(all) {
+			t.Errorf("Last-Event-ID %q replayed %d frames, want the full %d", junk, len(got), len(all))
+		}
+	}
+
+	// A viewer that already saw run_finished and reconnects anyway is told
+	// again that the run is over, rather than parked.
+	again := framesWithIDs(t, srv.URL, id, all[4].id)
+	if len(again) != 1 || again[0].name != runner.EventRunFinished {
+		t.Errorf("Last-Event-ID at run_finished got %+v, want run_finished again", again)
+	}
+}
+
+// Once the broadcaster has moved on, the rebuilt terminal event carries the
+// last id the run's own events reached, and it is sent whatever the client
+// says it has seen.
+func TestSynthesizedTerminalEventCarriesTheRunsLastID(t *testing.T) {
+	c := &clock{}
+	s := newServer(t, newTarget(t, 0), c)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	first := startRun(t, s, payload(2, 0))
+	waitIdle(t, s)
+	live := framesWithIDs(t, srv.URL, first, "")
+	last := live[len(live)-1].id
+
+	c.advance(10 * time.Second)
+	startRun(t, s, payload(1, 0))
+	waitIdle(t, s)
+
+	for _, lei := range []string{"", last, "999"} {
+		got := framesWithIDs(t, srv.URL, first, lei)
+		if len(got) != 1 || got[0].name != runner.EventRunFinished {
+			t.Fatalf("Last-Event-ID %q: stream = %+v, want one run_finished", lei, got)
+		}
+		if got[0].id != last {
+			t.Errorf("Last-Event-ID %q: terminal id = %s, want the run's last id %s", lei, got[0].id, last)
+		}
+	}
+}
+
+// A run the broadcaster no longer remembers still gets a usable id.
+func TestSynthesizedTerminalEventFallsBackToIDOne(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	e := s.terminalEvent(&report.Report{ID: "run-forgotten", Status: report.StatusCompleted})
+	if e.ID != 1 {
+		t.Errorf("terminal id = %d, want 1 when no id was recorded", e.ID)
+	}
+}

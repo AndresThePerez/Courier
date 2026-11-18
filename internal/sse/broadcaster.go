@@ -32,6 +32,11 @@ const (
 	// disconnected. 64 events is roughly 16 seconds of performance progress or
 	// the whole of a functional run.
 	SubscriberBuffer = 64
+
+	// PastRuns is how many finished runs keep their last event id after the
+	// log has moved on. It covers the manager's history of 20 with room to
+	// spare, so every run a viewer can still open a stream on has one.
+	PastRuns = 32
 )
 
 // Log event names. They follow internal/runner's vocabulary: an "event"
@@ -79,6 +84,19 @@ type Broadcaster struct {
 	progressAt int
 
 	runID string
+
+	// seq is the id of the last event published for runID. Ids start at 1 for
+	// each run, which is what lets a reconnecting viewer's Last-Event-ID
+	// resume within the run its stream URL names.
+	seq uint64
+
+	// past holds the last id of earlier runs, oldest first.
+	past []pastRun
+}
+
+type pastRun struct {
+	runID  string
+	lastID uint64
 }
 
 // New builds a broadcaster. The logger is passed explicitly rather than taken
@@ -101,9 +119,16 @@ func New(log *slog.Logger) *Broadcaster {
 // next.
 func (b *Broadcaster) Reset(runID string) {
 	b.mu.Lock()
+	if b.runID != "" && b.seq > 0 {
+		b.past = append(b.past, pastRun{b.runID, b.seq})
+		if over := len(b.past) - PastRuns; over > 0 {
+			b.past = slices.Delete(b.past, 0, over)
+		}
+	}
 	b.replay = nil
 	b.progressAt = -1
 	b.runID = runID
+	b.seq = 0
 	b.mu.Unlock()
 }
 
@@ -115,8 +140,13 @@ func (b *Broadcaster) Reset(runID string) {
 // no liveness check ever fires, and the visitor sees holes in the results table
 // that look like Courier bugs. Disconnecting self-heals for free, because
 // EventSource reconnects on its own and the replay log restores complete state.
+//
+// Publish numbers the event: ids rise by one per event within a run, so the
+// replay log and every live subscriber see the same id for the same event.
 func (b *Broadcaster) Publish(e runner.Event) {
 	b.mu.Lock()
+	b.seq++
+	e.ID = b.seq
 	b.record(e)
 
 	var dropped []chan runner.Event
@@ -167,7 +197,7 @@ func (b *Broadcaster) Subscribe() (<-chan runner.Event, func(), error) {
 // between the two calls lands in both the snapshot and the channel, and the
 // viewer renders a duplicate result row that no run ever produced.
 func (b *Broadcaster) SubscribeReplay() ([]runner.Event, <-chan runner.Event, func(), error) {
-	sub, err := b.SubscribeRun()
+	sub, err := b.SubscribeRun(0)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -183,14 +213,20 @@ type Subscription struct {
 	// subscription will ever say so.
 	RunID  string
 	Replay []runner.Event
-	Events <-chan runner.Event
+	// Terminal is the run's run_finished when the log holds one, whether or
+	// not Replay includes it. A viewer that saw it and reconnected anyway must
+	// still be told the run is over rather than left waiting on a quiet run.
+	Terminal *runner.Event
+	Events   <-chan runner.Event
 	// Cancel detaches the viewer. It is safe to call more than once.
 	Cancel func()
 }
 
 // SubscribeRun is SubscribeReplay that also reports which run the replay
-// describes, read under the same lock.
-func (b *Broadcaster) SubscribeRun() (Subscription, error) {
+// describes, read under the same lock. The replay holds only events with an id
+// above after, the Last-Event-ID of a reconnecting viewer (0 for everything).
+// The coalesced progress event is included when its own id is above after.
+func (b *Broadcaster) SubscribeRun(after uint64) (Subscription, error) {
 	b.mu.Lock()
 	if len(b.subs) >= MaxSubscribers {
 		runID := b.runID
@@ -204,7 +240,17 @@ func (b *Broadcaster) SubscribeRun() (Subscription, error) {
 
 	ch := make(chan runner.Event, SubscriberBuffer)
 	b.subs[ch] = struct{}{}
-	history := slices.Clone(b.replay)
+	var history []runner.Event
+	var terminal *runner.Event
+	for _, e := range b.replay {
+		if e.ID > after {
+			history = append(history, e)
+		}
+		if e.Type == runner.EventRunFinished {
+			t := e
+			terminal = &t
+		}
+	}
 	n, runID := len(b.subs), b.runID
 	b.mu.Unlock()
 
@@ -233,7 +279,7 @@ func (b *Broadcaster) SubscribeRun() (Subscription, error) {
 				"subscribers", remaining)
 		})
 	}
-	return Subscription{RunID: runID, Replay: history, Events: ch, Cancel: cancel}, nil
+	return Subscription{RunID: runID, Replay: history, Terminal: terminal, Events: ch, Cancel: cancel}, nil
 }
 
 // Subscribers is the live stream count, for /metrics.
@@ -241,6 +287,23 @@ func (b *Broadcaster) Subscribers() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.subs)
+}
+
+// LastID is the id of the last event published for runID, for a terminal
+// event rebuilt after the log has moved on. It reports false for a run the
+// broadcaster never numbered an event for, or one too old to remember.
+func (b *Broadcaster) LastID(runID string) (uint64, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if runID == b.runID && b.seq > 0 {
+		return b.seq, true
+	}
+	for i := len(b.past) - 1; i >= 0; i-- {
+		if b.past[i].runID == runID {
+			return b.past[i].lastID, true
+		}
+	}
+	return 0, false
 }
 
 // RunID is the run the replay log currently describes, or "" before the first

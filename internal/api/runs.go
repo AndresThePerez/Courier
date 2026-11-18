@@ -214,7 +214,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub, err := s.bus.SubscribeRun()
+	sub, err := s.bus.SubscribeRun(lastEventID(r))
 	if err != nil {
 		// The one deliberate ceiling on this fan-out. {"poll": true} is an
 		// immediate fallback trigger, not something the client should retry.
@@ -253,6 +253,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			endStream(w, rc)
 			return
 		}
+	}
+	// The run is over and the viewer's Last-Event-ID is at or past its end:
+	// tell it again rather than leave it waiting on a run that will never
+	// publish another event.
+	if sub.Terminal != nil && belongsTo(*sub.Terminal, id) {
+		if writeEvent(w, rc, *sub.Terminal) == nil {
+			endStream(w, rc)
+		}
+		return
 	}
 
 	ping := time.NewTicker(Heartbeat)
@@ -331,31 +340,50 @@ func (s *Server) streamHeaders(w http.ResponseWriter) {
 	h.Set("X-Accel-Buffering", "no")
 }
 
+// lastEventID is the id a reconnecting EventSource says it saw last. Anything
+// that is not a plain non-negative integer replays the whole log: a viewer
+// with a duplicate row is better off than one with a missing one.
+func lastEventID(r *http.Request) uint64 {
+	n, err := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // writeEvent renders one event in SSE wire format and flushes it.
 //
 // Both the event name and the full envelope are sent: the name lets a client
 // use addEventListener per type, and the envelope carries type and run_id so a
-// single handler can switch on Type instead. json.Marshal never emits a raw
-// newline, so one data: line is always enough.
+// single handler can switch on Type instead. The id: line is what the browser
+// sends back as Last-Event-ID when it reconnects. json.Marshal never emits a
+// raw newline, so one data: line is always enough.
 func writeEvent(w http.ResponseWriter, rc *http.ResponseController, e runner.Event) error {
 	payload, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, payload); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Type, payload); err != nil {
 		return err
 	}
 	return rc.Flush()
 }
 
 // terminalEvent reconstructs run_finished from a stored report, for a viewer
-// who attached after the broadcaster moved on.
+// who attached after the broadcaster moved on. It carries the last id the
+// run's own events reached, so a client resuming from it is not sent back to
+// the start; 1 stands in when the broadcaster no longer remembers the run.
 func (s *Server) terminalEvent(rep *report.Report) runner.Event {
 	var cooldown time.Time
 	if until := s.mgr.Status().CooldownUntil; until != nil {
 		cooldown = *until
 	}
+	id, ok := s.bus.LastID(rep.ID)
+	if !ok {
+		id = 1
+	}
 	return runner.Event{
+		ID:    id,
 		Type:  runner.EventRunFinished,
 		RunID: rep.ID,
 		Data: runner.RunFinished{

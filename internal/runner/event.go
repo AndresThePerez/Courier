@@ -21,7 +21,13 @@ const (
 // RunID is stamped by the manager rather than by the modes, which do not know
 // their run's identity. Carrying it on the envelope means a spectator attaching
 // mid-run can tell a replayed event from a live one without inspecting Data.
+//
+// ID is assigned by the broadcaster on publish and travels as the SSE id:
+// line, not in the JSON envelope: it is a position in one run's stream, which
+// is what Last-Event-ID resumes from, and the polling fallback has no use for
+// it.
 type Event struct {
+	ID    uint64 `json:"-"`
 	Type  string `json:"type"`
 	RunID string `json:"run_id,omitempty"`
 	Data  any    `json:"data"`
