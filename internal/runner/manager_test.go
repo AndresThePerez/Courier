@@ -583,3 +583,24 @@ func TestFunctionalRunFinishedCarriesTheVerdict(t *testing.T) {
 		}
 	}
 }
+
+// Everything the manager hands the stream layer for a run against a dead
+// target is free of the target's address, and the cause is gone from it.
+func TestPublishedEventsCarryNoRawError(t *testing.T) {
+	base := closedTarget(t)
+	m, _, pub := newTestManager(t, base)
+	if _, err := m.Start(context.Background(), functionalRun()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.Wait()
+	for _, e := range pub.Replay() {
+		if rr, ok := e.Data.(report.RequestResult); ok && rr.Cause != nil {
+			t.Errorf("a published row still holds its cause: %v", rr.Cause)
+		}
+		b, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkNoLeak(t, "a published "+e.Type, b, base)
+	}
+}

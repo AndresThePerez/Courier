@@ -31,4 +31,10 @@ const (
 	// EventBudgetCharged is the debit at the end of a run: what it actually
 	// consumed, the balance either side of it, and the cooldown that bought.
 	EventBudgetCharged = "budget_charged"
+
+	// EventDispatchFailed carries a failed dispatch's raw transport error,
+	// which no visitor-facing surface may show. Functional runs and the API's
+	// Send write one per failed dispatch; performance runs write none, since
+	// a dead target fails hundreds of dispatches a second.
+	EventDispatchFailed = "dispatch_failed"
 )

@@ -90,9 +90,21 @@ func NewExecutor(baseURL string) *Executor {
 	tr.MaxIdleConns = 256
 	tr.MaxIdleConnsPerHost = 256
 	tr.IdleConnTimeout = 90 * time.Second
+	// The target is fixed by configuration and reached directly. A proxy taken
+	// from the environment would put another host on the path of every
+	// dispatch, and a followed redirect would send one wherever the target's
+	// Location header points: both reach past the one target the sandbox names.
+	// A redirect is the target's answer, and is recorded as one.
+	tr.Proxy = nil
 	return &Executor{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  &http.Client{Timeout: ClientTimeout, Transport: tr},
+		client: &http.Client{
+			Timeout:   ClientTimeout,
+			Transport: tr,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 

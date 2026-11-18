@@ -27,6 +27,9 @@
 //	                  Unset ⇒ the two target-manipulation tests skip.
 //	STUB_TARGET_URL   base URL of the stub itself, for its /__mode control
 //	                  plane. Required alongside STUB_URL.
+//	ACCEPTANCE_SELF_CONTAINED
+//	                  1 ⇒ the three above are set by TestMain, which starts an
+//	                  in-process stub and both Couriers itself (stub_test.go).
 //
 // # Ordering
 //
@@ -49,6 +52,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +85,9 @@ func envOr(k, fallback string) string {
 }
 
 func TestMain(m *testing.M) {
+	if selfContained() {
+		os.Exit(runSelfContained(m))
+	}
 	if err := ping(courierURL); err != nil {
 		fmt.Fprintf(os.Stderr, "acceptance: COURIER_URL %s is not answering: %v\n"+
 			"start one with: PORT=8084 TARGET_URL=http://127.0.0.1:8081 PPROF_ADDR=off go run ./cmd/server\n",
@@ -684,7 +691,9 @@ func openStream(ctx context.Context, base, id string) (<-chan sseFrame, func(), 
 		return nil, nil, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	// No timeout: an SSE response never ends on its own.
+	// No client timeout: a stream lasts as long as its run, which can be the
+	// functional deadline, so ctx bounds it instead. The server ends it after
+	// the run's run_finished and a retry: line.
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -995,10 +1004,14 @@ func TestCourierStartsWithItsTargetDown(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
+	port, err := freePort()
+	if err != nil {
+		t.Fatalf("free port: %v", err)
+	}
 	// 127.0.0.1:1 is reserved and closed: connections are refused instantly.
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(),
-		"PORT=8094",
+		"PORT="+strconv.Itoa(port),
 		"TARGET_URL=http://127.0.0.1:1",
 		"TARGET_DISPLAY=dead-target",
 		"PPROF_ADDR=off",
@@ -1013,7 +1026,7 @@ func TestCourierStartsWithItsTargetDown(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 	})
 
-	base := "http://127.0.0.1:8094"
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
 	var up bool
 	for range 60 {
 		if ping(base) == nil {

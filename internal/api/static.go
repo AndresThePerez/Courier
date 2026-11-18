@@ -48,12 +48,18 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p == "/" {
 		p = "/index.html"
 	}
-	if tag, ok := h.etags[p]; ok {
-		w.Header().Set("ETag", tag)
-		if etagMatches(r.Header.Get("If-None-Match"), tag) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
+	// The tag table holds exactly the embedded files, so it doubles as the
+	// allowlist: anything else, a directory included, is a 404. Left to the
+	// file server, a directory answers with a listing of its files.
+	tag, ok := h.etags[p]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("ETag", tag)
+	if etagMatches(r.Header.Get("If-None-Match"), tag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	h.files.ServeHTTP(w, r)
 }

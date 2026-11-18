@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/pdf"
 	"github.com/AndresThePerez/courier/internal/report"
 	"github.com/AndresThePerez/courier/internal/runner"
@@ -42,8 +43,12 @@ type conflictBody struct {
 }
 
 // startedBody is the 202. The client opens the stream with this id.
+//
+// Truncated names the payload strings that were cut to a length cap, in the
+// validator's field notation (sequence[0].params.q); absent when none were.
 type startedBody struct {
-	RunID string `json:"run_id"`
+	RunID     string   `json:"run_id"`
+	Truncated []string `json:"truncated,omitempty"`
 }
 
 // historyEntry is one row of GET /api/runs. It is a summary, not a report: the
@@ -71,7 +76,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		s.metrics.runStarted()
-		writeJSON(w, http.StatusAccepted, startedBody{RunID: id})
+		writeJSON(w, http.StatusAccepted, startedBody{RunID: id, Truncated: sandbox.Truncations(rr)})
 
 	case isValidationError(err):
 		var ve sandbox.ValidationError
@@ -123,7 +128,7 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	rep, ok := s.mgr.Report(r.PathValue("id"))
 	if !ok {
-		writeError(w, http.StatusNotFound, "", "no run %q", r.PathValue("id"))
+		writeError(w, http.StatusNotFound, "", "no run %q", assert.Clip(r.PathValue("id")))
 		return
 	}
 	writeJSON(w, http.StatusOK, rep)
@@ -143,7 +148,7 @@ func (s *Server) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rep, ok := s.mgr.Report(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "", "no run %q", id)
+		writeError(w, http.StatusNotFound, "", "no run %q", assert.Clip(id))
 		return
 	}
 
@@ -197,7 +202,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rep, ok := s.mgr.Report(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "", "no run %q", id)
+		writeError(w, http.StatusNotFound, "", "no run %q", assert.Clip(id))
 		return
 	}
 

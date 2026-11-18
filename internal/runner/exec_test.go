@@ -3,9 +3,13 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -228,5 +232,218 @@ func TestEntriesResolvePathsFromTheCatalog(t *testing.T) {
 	}
 	if got[1].Path != "/healthz" || got[1].Query != "" || got[1].Index != 1 {
 		t.Errorf("entry 1 = %+v", got[1])
+	}
+}
+
+// closedTarget is the base URL of a port nothing listens on any more.
+func closedTarget(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := srv.URL
+	srv.Close()
+	return addr
+}
+
+// droppingTarget sends a status line and half a body, then hangs up.
+func droppingTarget(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{\"total\":")
+		_ = buf.Flush()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// hangingTarget never answers until the client gives up.
+func hangingTarget(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// withTimeout is the executor with its per-request ceiling shortened, so a
+// test of the timeout path does not wait out the real one.
+func withTimeout(ex *Executor, d time.Duration) *Executor {
+	ex.client.Timeout = d
+	return ex
+}
+
+// goErrorText is text only a Go transport error carries. None of it may reach
+// a visitor.
+var goErrorText = []string{
+	"dial tcp", "lookup", "connection refused", "i/o timeout", "context deadline",
+	"EOF", "Client.Timeout", "x509", "tls:", "http: ", "Get \"", "stopped after",
+	"no such host", "connect:", "reset by peer", "run aborted by courier",
+}
+
+// checkNoLeak fails when b carries the target's address or Go's error text.
+func checkNoLeak(t *testing.T, where string, b []byte, base string) {
+	t.Helper()
+	s := string(b)
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("parse %q: %v", base, err)
+	}
+	for _, bad := range []string{u.Host, u.Hostname(), u.Scheme + "://" + u.Hostname()} {
+		if bad != "" && strings.Contains(s, bad) {
+			t.Errorf("%s carries the target address %q: %.400s", where, bad, s)
+		}
+	}
+	if port := u.Port(); port != "" {
+		if regexp.MustCompile(`(^|[^0-9.])` + port + `([^0-9]|$)`).MatchString(s) {
+			t.Errorf("%s carries the target port %s: %.400s", where, port, s)
+		}
+	}
+	for _, bad := range goErrorText {
+		if strings.Contains(s, bad) {
+			t.Errorf("%s carries Go error text %q: %.400s", where, bad, s)
+		}
+	}
+}
+
+// Every failure a visitor can see reads as one of four fixed sentences, and the
+// kind that classifies it is unchanged.
+func TestFailedDispatchesCarryFixedMessages(t *testing.T) {
+	if MsgTimeout != "the target did not respond within 10s" {
+		t.Errorf("MsgTimeout = %q", MsgTimeout)
+	}
+	cases := []struct {
+		name, kind, msg string
+		do              func() (Response, string)
+	}{
+		{"refused", ErrKindConnection, "could not connect to the target", func() (Response, string) {
+			base := closedTarget(t)
+			return NewExecutor(base).Do(context.Background(), searchReq(nil), true), base
+		}},
+		{"unresolvable host", ErrKindConnection, "could not connect to the target", func() (Response, string) {
+			base := "http://target.invalid"
+			return NewExecutor(base).Do(context.Background(), searchReq(nil), true), base
+		}},
+		{"tls to a plain server", ErrKindConnection, "could not connect to the target", func() (Response, string) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+			t.Cleanup(srv.Close)
+			base := strings.Replace(srv.URL, "http://", "https://", 1)
+			return NewExecutor(base).Do(context.Background(), searchReq(nil), true), base
+		}},
+		{"untrusted certificate", ErrKindConnection, "could not connect to the target", func() (Response, string) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+			t.Cleanup(srv.Close)
+			srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+			return NewExecutor(srv.URL).Do(context.Background(), searchReq(nil), true), srv.URL
+		}},
+		{"timeout", ErrKindTimeout, "the target did not respond within 10s", func() (Response, string) {
+			srv := hangingTarget(t)
+			return withTimeout(NewExecutor(srv.URL), 150*time.Millisecond).Do(context.Background(), searchReq(nil), true), srv.URL
+		}},
+		{"dropped mid-body", ErrKindConnection, "the connection dropped while reading the response", func() (Response, string) {
+			srv := droppingTarget(t)
+			return NewExecutor(srv.URL).Do(context.Background(), searchReq(nil), true), srv.URL
+		}},
+		{"aborted", ErrKindAborted, "stopped by Courier before a response arrived", func() (Response, string) {
+			srv := hangingTarget(t)
+			ctx, abort := context.WithCancelCause(context.Background())
+			time.AfterFunc(50*time.Millisecond, func() { abort(ErrRunAborted) })
+			return NewExecutor(srv.URL).Do(ctx, searchReq(nil), true), srv.URL
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, base := tc.do()
+			if resp.Err == nil {
+				t.Fatalf("dispatch succeeded: status %d", resp.Status)
+			}
+			if resp.ErrKind != tc.kind {
+				t.Errorf("ErrKind = %q, want %q (err %v)", resp.ErrKind, tc.kind, resp.Err)
+			}
+			got := resp.PublicError()
+			if got != tc.msg {
+				t.Errorf("PublicError() = %q, want %q", got, tc.msg)
+			}
+			checkNoLeak(t, "the public message", []byte(got), base)
+		})
+	}
+
+	if got := (Response{Status: 200}).PublicError(); got != "" {
+		t.Errorf("a response with no error has the public error %q, want none", got)
+	}
+}
+
+// transportOf exposes the executor's transport to the tests in this package.
+func transportOf(e *Executor) *http.Transport { return e.client.Transport.(*http.Transport) }
+
+// The target is fixed by configuration; a proxy from the environment would
+// put another host on the path of every dispatch.
+func TestExecutorUsesNoProxy(t *testing.T) {
+	if transportOf(NewExecutor("http://192.0.2.10")).Proxy != nil {
+		t.Error("the executor's transport consults a proxy")
+	}
+}
+
+// redirecting is a target that answers every request with code and Location,
+// and counts what it is asked; elsewhere counts what reaches a second server.
+type redirecting struct {
+	target, elsewhere *httptest.Server
+	hits, away        atomic.Int64
+}
+
+func newRedirecting(t *testing.T, code int, location func(elsewhere string) string) *redirecting {
+	t.Helper()
+	rd := &redirecting{}
+	rd.elsewhere = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rd.away.Add(1)
+		fmt.Fprint(w, `{"total":1}`)
+	}))
+	t.Cleanup(rd.elsewhere.Close)
+	loc := location(rd.elsewhere.URL)
+	rd.target = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rd.hits.Add(1)
+		w.Header().Set("Location", loc)
+		w.WriteHeader(code)
+	}))
+	t.Cleanup(rd.target.Close)
+	return rd
+}
+
+var redirectCodes = []int{
+	http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+	http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+}
+
+var redirectLocations = map[string]func(elsewhere string) string{
+	"another server":  func(e string) string { return e + "/api/search" },
+	"relative":        func(string) string { return "/elsewhere" },
+	"another scheme":  func(e string) string { return strings.Replace(e, "http://", "https://", 1) + "/api/search" },
+	"another host":    func(string) string { return "http://target.invalid/api/search" },
+	"a non-http host": func(string) string { return "ftp://192.0.2.10/x" },
+}
+
+// A redirect is the target's answer, recorded as it stands; following it would
+// send a dispatch somewhere the sandbox never named.
+func TestRedirectsAreRecordedNotFollowed(t *testing.T) {
+	for _, code := range redirectCodes {
+		for name, loc := range redirectLocations {
+			t.Run(fmt.Sprintf("%d %s", code, name), func(t *testing.T) {
+				rd := newRedirecting(t, code, loc)
+				res := NewExecutor(rd.target.URL).Do(context.Background(), searchReq(nil), true)
+				if res.Err != nil || res.Status != code {
+					t.Errorf("status %d err %v, want %d recorded as the response", res.Status, res.Err, code)
+				}
+				if n := rd.hits.Load(); n != 1 {
+					t.Errorf("the target was asked %d times, want once", n)
+				}
+				if n := rd.away.Load(); n != 0 {
+					t.Errorf("the second server was asked %d times, want never", n)
+				}
+			})
+		}
 	}
 }

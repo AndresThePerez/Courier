@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -376,5 +377,179 @@ func TestFunctionalRunStartedIsStampedInUTC(t *testing.T) {
 	}
 	if at := e.Data.(RunStarted).StartedAt; at.Location() != time.UTC {
 		t.Errorf("run_started started_at = %v, want UTC", at)
+	}
+}
+
+// redirectLoopTarget answers every request with a redirect to itself.
+func redirectLoopTarget(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", r.URL.Path)
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A functional row, as stored and as streamed, carries a fixed sentence for a
+// failed dispatch: never Go's error text, never the target's address.
+func TestFunctionalRowsCarryFixedMessagesAndNoAddress(t *testing.T) {
+	type scenario struct {
+		name, msg string
+		ex        func() (*Executor, string)
+	}
+	plain := func(base string) (*Executor, string) { return NewExecutor(base), base }
+	cases := []scenario{
+		{"refused", MsgConnection, func() (*Executor, string) { return plain(closedTarget(t)) }},
+		{"unresolvable host", MsgConnection, func() (*Executor, string) { return plain("http://target.invalid") }},
+		{"dropped mid-body", MsgDropped, func() (*Executor, string) { return plain(droppingTarget(t).URL) }},
+		{"timeout", MsgTimeout, func() (*Executor, string) {
+			base := hangingTarget(t).URL
+			return withTimeout(NewExecutor(base), 150*time.Millisecond), base
+		}},
+		{"tls to a plain server", MsgConnection, func() (*Executor, string) {
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			t.Cleanup(srv.Close)
+			return plain(strings.Replace(srv.URL, "http://", "https://", 1))
+		}},
+		// A loop is either recorded as the redirect it is or reported in a
+		// fixed sentence; it never echoes the address it bounced between.
+		{"redirect loop", "", func() (*Executor, string) { return plain(redirectLoopTarget(t).URL) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ex, base := tc.ex()
+			rec := &recorder{}
+			res := RunFunctional(context.Background(), ex, sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+				Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search", Params: map[string]string{"q": "a"},
+					Assertions: []assert.Assertion{{Type: "status", Op: "eq", Value: float64(200)}}}}}, rec.emit)
+			row := res.Functional.Results[0]
+			if tc.msg != "" && row.Error != tc.msg {
+				t.Errorf("row error = %q, want %q", row.Error, tc.msg)
+			}
+			stored, err := json.Marshal(res.Functional)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkNoLeak(t, "the stored functional result", stored, base)
+			rec.mu.Lock()
+			streamed, err := json.Marshal(rec.events)
+			rec.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkNoLeak(t, "the streamed events", streamed, base)
+		})
+	}
+}
+
+// A dispatch Courier stopped reads as Courier's doing, in a fixed sentence.
+func TestFunctionalAbortedRowCarriesTheFixedMessage(t *testing.T) {
+	srv := hangingTarget(t)
+	ctx, abort := context.WithCancelCause(context.Background())
+	time.AfterFunc(100*time.Millisecond, func() { abort(ErrRunAborted) })
+	rec := &recorder{}
+	res := RunFunctional(ctx, NewExecutor(srv.URL), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search"}}}, rec.emit)
+	row := res.Functional.Results[0]
+	if !row.Skipped || row.ErrorKind != ErrKindAborted || row.Error != MsgAborted {
+		t.Errorf("aborted row = skipped %v kind %q error %q, want skipped, aborted, %q", row.Skipped, row.ErrorKind, row.Error, MsgAborted)
+	}
+	b, _ := json.Marshal(res.Functional)
+	checkNoLeak(t, "the aborted run", b, srv.URL)
+}
+
+// The raw error rides on the emitted row so the manager can log it, and is
+// dropped by every encoding of that row.
+func TestTheRawErrorIsNeverSerialized(t *testing.T) {
+	base := closedTarget(t)
+	rec := &recorder{}
+	RunFunctional(context.Background(), NewExecutor(base), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search"}}}, rec.emit)
+	e, ok := rec.first(EventRequestResult)
+	if !ok {
+		t.Fatal("no request_result")
+	}
+	row := e.Data.(report.RequestResult)
+	if row.Cause == nil || !strings.Contains(row.Cause.Error(), "connection refused") {
+		t.Fatalf("the emitted row carries cause %v, want the raw transport error", row.Cause)
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), row.Cause.Error()) || strings.Contains(string(b), "connection refused") {
+		t.Errorf("the raw error was serialized: %s", b)
+	}
+	checkNoLeak(t, "the encoded event", b, base)
+}
+
+// everyKind is one assertion of each type, including two that a request with
+// no response used to satisfy: a latency bound (the failure was fast) and a
+// negated status (0 is not 200).
+func everyKind() []assert.Assertion {
+	return []assert.Assertion{
+		{Type: assert.TypeStatus, Op: "eq", Value: float64(200)},
+		{Type: assert.TypeStatus, Op: "neq", Value: float64(500)},
+		{Type: assert.TypeLatency, Op: "lt", Value: float64(150)},
+		{Type: assert.TypeBodyContains, Op: "contains", Value: "total"},
+		{Type: assert.TypeJSON, Path: "$.total", Op: "gt", Value: float64(0)},
+	}
+}
+
+// Without a response there is nothing to hold an assertion to: every outcome
+// fails as not evaluated, rather than a latency bound passing on a request
+// that never connected.
+func TestAssertionsAreNotEvaluatedWithoutAResponse(t *testing.T) {
+	for name, ex := range map[string]*Executor{
+		"refused": NewExecutor(closedTarget(t)),
+		"timeout": withTimeout(NewExecutor(hangingTarget(t).URL), 150*time.Millisecond),
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := RunFunctional(context.Background(), ex, sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+				Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search", Assertions: everyKind()}}}, nil)
+			row := res.Functional.Results[0]
+			if row.Passed || res.Functional.Failed != 1 {
+				t.Errorf("row passed = %v, failed count %d; a request with no response fails", row.Passed, res.Functional.Failed)
+			}
+			if len(row.Assertions) != len(everyKind()) {
+				t.Fatalf("%d outcomes, want %d", len(row.Assertions), len(everyKind()))
+			}
+			for _, o := range row.Assertions {
+				if o.Passed || o.Actual != NoResponse || o.Error != NotEvaluated || o.Expected == "" {
+					t.Errorf("outcome %+v, want failed, actual %q, error %q, and the expectation kept", o, NoResponse, NotEvaluated)
+				}
+			}
+			if v := report.FunctionalVerdict(res.Status, res.Functional); v != report.VerdictFail {
+				t.Errorf("verdict = %q, want FAIL", v)
+			}
+		})
+	}
+}
+
+// A body that dropped after its status line did get a response: its status is
+// real and is what a status assertion reads.
+func TestAssertionsReadTheStatusOfADroppedBody(t *testing.T) {
+	res := RunFunctional(context.Background(), NewExecutor(droppingTarget(t).URL), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search",
+			Assertions: []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: float64(200)}}}}}, nil)
+	row := res.Functional.Results[0]
+	if row.Passed || row.Status != 200 || len(row.Assertions) != 1 || row.Assertions[0].Actual != "200" {
+		t.Errorf("row = passed %v status %d outcomes %+v, want a failed row whose status assertion read 200", row.Passed, row.Status, row.Assertions)
+	}
+}
+
+// A functional row records the redirect itself and the walk goes no further.
+func TestFunctionalRecordsARedirectWithoutFollowingIt(t *testing.T) {
+	rd := newRedirecting(t, http.StatusFound, redirectLocations["another server"])
+	res := RunFunctional(context.Background(), NewExecutor(rd.target.URL), sandbox.RunRequest{Mode: sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search",
+			Assertions: []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: float64(302)}}}}}, nil)
+	row := res.Functional.Results[0]
+	if row.Status != http.StatusFound || row.Error != "" || !row.Passed {
+		t.Errorf("row = status %d error %q passed %v, want the 302 recorded and asserted", row.Status, row.Error, row.Passed)
+	}
+	if n := rd.away.Load(); n != 0 {
+		t.Errorf("the second server was asked %d times, want never", n)
 	}
 }

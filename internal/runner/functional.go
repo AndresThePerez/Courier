@@ -100,8 +100,11 @@ func runFunctional(ctx context.Context, ex *Executor, rr sandbox.RunRequest, emi
 				skipping = true
 			}
 		}
-		f.Results = append(f.Results, res)
 		emit(Event{Type: EventRequestResult, Data: res})
+		// The cause travels with the event, for the log; the stored row has no
+		// use for it.
+		res.Cause = nil
+		f.Results = append(f.Results, res)
 	}
 
 	return Result{Status: status, Functional: f}
@@ -155,9 +158,10 @@ func skippedResult(i int, r sandbox.Request, ex *Executor) report.RequestResult 
 //
 // An aborted dispatch is reported as skipped rather than failed: Courier killed
 // it, so calling it a failure would let a visitor pressing Cancel manufacture a
-// red row the target never earned. Assertions are still evaluated against a
-// genuinely failed request — a "status eq 200" outcome reading "actual: 0" is
-// far more useful than an empty assertion list beside an error string.
+// red row the target never earned. A genuinely failed request still lists
+// every assertion, each failed and marked as not evaluated when no response
+// arrived (see EvaluateResponse): the row shows what was expected beside why
+// nothing could be checked, rather than an empty list beside an error string.
 func functionalResult(i int, r sandbox.Request, ex *Executor, resp Response) report.RequestResult {
 	res := report.RequestResult{
 		Index:     i,
@@ -169,8 +173,9 @@ func functionalResult(i int, r sandbox.Request, ex *Executor, resp Response) rep
 		SizeBytes: resp.Size,
 	}
 	if resp.Err != nil {
-		res.Error = resp.Err.Error()
+		res.Error = resp.PublicError()
 		res.ErrorKind = resp.ErrKind
+		res.Cause = resp.Err
 		if resp.ErrKind == ErrKindAborted {
 			res.Skipped = true
 			res.Assertions = []assert.Outcome{}
@@ -181,14 +186,37 @@ func functionalResult(i int, r sandbox.Request, ex *Executor, resp Response) rep
 	preview, truncated := Preview(resp.Body)
 	res.BodyPreview, res.BodyTruncated = preview, truncated
 
-	target := assert.NewTarget(resp.Status, resp.LatencyMs, resp.Body)
-	outcomes, allPassed := assert.EvaluateAll(r.Assertions, target)
-	if outcomes == nil {
-		outcomes = []assert.Outcome{}
-	}
+	outcomes, allPassed := EvaluateResponse(r.Assertions, resp)
 	res.Assertions = outcomes
 	res.Passed = allPassed && resp.Err == nil
 	return res
+}
+
+// EvaluateResponse holds assertions to one dispatch's response, and never
+// returns a nil slice.
+//
+// A dispatch that failed before a status line arrived has no response to hold
+// them to, so every outcome fails as not evaluated and keeps its expectation.
+// Evaluated against the zero status and the time the failure took, a latency
+// bound would pass on a refusal that was quick and "status neq 500" would pass
+// on the 0 that stands for nothing. A body that broke off after its status
+// line is still evaluated: that status is real.
+func EvaluateResponse(as []assert.Assertion, resp Response) ([]assert.Outcome, bool) {
+	if resp.Err != nil && resp.Status == 0 {
+		blank := assert.NewTarget(0, 0, nil)
+		outcomes := make([]assert.Outcome, 0, len(as))
+		for _, a := range as {
+			o := assert.Evaluate(a, blank)
+			o.Passed, o.Actual, o.Error = false, NoResponse, NotEvaluated
+			outcomes = append(outcomes, o)
+		}
+		return outcomes, false
+	}
+	outcomes, allPassed := assert.EvaluateAll(as, assert.NewTarget(resp.Status, resp.LatencyMs, resp.Body))
+	if outcomes == nil {
+		outcomes = []assert.Outcome{}
+	}
+	return outcomes, allPassed
 }
 
 // Preview truncates to report.MaxBodyPreview.

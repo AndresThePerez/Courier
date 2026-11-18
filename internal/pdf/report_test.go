@@ -2,12 +2,18 @@ package pdf
 
 import (
 	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/report"
+	"github.com/AndresThePerez/courier/internal/runner"
+	"github.com/AndresThePerez/courier/internal/sandbox"
 )
 
 // fixtureStart is the one timestamp every fixture starts at, so a rendered
@@ -402,5 +408,62 @@ func TestFunctionalVerdictLabelsAreUnchanged(t *testing.T) {
 		if body := text(t, tc.rep); !strings.Contains(body, "VERDICT: "+tc.want) {
 			t.Errorf("%s: the page does not read VERDICT: %s", tc.name, tc.want)
 		}
+	}
+}
+
+// runAgainst runs a functional sequence through the real engine and returns
+// the finished report, as the API would hand it to Render.
+func runAgainst(t *testing.T, base string, assertions []assert.Assertion) *report.Report {
+	t.Helper()
+	m := runner.NewManager(runner.NewExecutor(base), "test-target", nil, nil)
+	id, err := m.Start(context.Background(), sandbox.RunRequest{Mode: sandbox.ModeFunctional, Sequence: []sandbox.Request{
+		{ID: "1", Name: "search", Endpoint: "search", Params: map[string]string{"q": "a"}, Assertions: assertions},
+	}})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.Wait()
+	rep, ok := m.Report(id)
+	if !ok {
+		t.Fatal("no report")
+	}
+	return rep
+}
+
+// The printed report of a run against a dead target carries a fixed sentence
+// and nothing of the target's address.
+func TestRenderedFailureCarriesNoTargetAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close()
+	u, _ := url.Parse(base)
+
+	rep := runAgainst(t, base, []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: float64(200)}})
+	body := strings.ReplaceAll(text(t, rep), "%%EOF", "")
+	for _, bad := range []string{u.Host, u.Hostname(), ":" + u.Port(), "dial tcp", "connection refused", "lookup", "EOF", "Get "} {
+		if strings.Contains(body, bad) {
+			t.Errorf("the PDF carries %q", bad)
+		}
+	}
+	if !strings.Contains(body, runner.MsgConnection) {
+		t.Error("the PDF does not carry the fixed connection sentence")
+	}
+}
+
+// A run whose only request got no response is a failed run on paper too, even
+// when its only assertion is a latency bound the failure was quick enough for.
+func TestRenderedRunWithNoResponseFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close()
+	rep := runAgainst(t, base, []assert.Assertion{{Type: assert.TypeLatency, Op: "lt", Value: float64(150)}})
+	if rep.Functional.Verdict != report.VerdictFail {
+		t.Errorf("verdict = %q, want FAIL", rep.Functional.Verdict)
+	}
+	if o := rep.Functional.Results[0].Assertions[0]; o.Passed || o.Actual != runner.NoResponse {
+		t.Errorf("outcome = %+v, want failed with actual %q", o, runner.NoResponse)
+	}
+	if body := text(t, rep); !strings.Contains(body, "VERDICT: FAIL") {
+		t.Error("the PDF does not print VERDICT: FAIL")
 	}
 }

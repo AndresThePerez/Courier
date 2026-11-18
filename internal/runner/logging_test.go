@@ -284,3 +284,82 @@ func TestNoUnstructuredLoggingInProductionCode(t *testing.T) {
 		t.Fatalf("walk: %v", err)
 	}
 }
+
+// linesContaining counts captured lines that carry s anywhere.
+func linesContaining(sink *logSink, s string) int {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	n := 0
+	for _, line := range strings.Split(sink.buf.String(), "\n") {
+		if strings.Contains(line, s) {
+			n++
+		}
+	}
+	return n
+}
+
+// The raw transport error is the operator's, not the visitor's: it is logged
+// once per failed dispatch, under its own event and the run's id, and nowhere
+// a visitor can read it.
+func TestDispatchFailedIsLoggedOncePerFailedDispatch(t *testing.T) {
+	base := closedTarget(t)
+	m, sink := newLoggedManager(t, base)
+	rr := sandbox.RunRequest{Mode: sandbox.ModeFunctional, Sequence: []sandbox.Request{
+		{ID: "1", Name: "a", Endpoint: "search"},
+		{ID: "2", Name: "b", Endpoint: "suggest", Params: map[string]string{"q": "a"}},
+		{ID: "3", Name: "c", Endpoint: "healthz"},
+	}}
+	id, err := m.Start(context.Background(), rr)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.Wait()
+
+	var failed []map[string]any
+	for _, l := range sink.lines(t) {
+		if l["event"] == EventDispatchFailed {
+			failed = append(failed, l)
+		}
+	}
+	if len(failed) != 3 {
+		t.Fatalf("%d %s lines, want one per failed dispatch (3)", len(failed), EventDispatchFailed)
+	}
+	for _, l := range failed {
+		errText, _ := l["err"].(string)
+		if l["run_id"] != id || !strings.Contains(errText, "connection refused") {
+			t.Errorf("%s line = %v, want run_id %s and the raw error", EventDispatchFailed, l, id)
+		}
+	}
+	host := strings.TrimPrefix(base, "http://")
+	if n := linesContaining(sink, host); n != 3 {
+		t.Errorf("%d log lines carry the target address, want exactly the 3 %s lines", n, EventDispatchFailed)
+	}
+
+	rep, _ := m.Report(id)
+	b, _ := json.Marshal(rep)
+	checkNoLeak(t, "the stored report", b, base)
+}
+
+// A performance run against a dead target dials hundreds of times a second; it
+// logs no line per dispatch.
+func TestPerformanceRunsLogNoPerDispatchLines(t *testing.T) {
+	base := closedTarget(t)
+	m, sink := newLoggedManager(t, base)
+	id, err := m.Start(context.Background(), perfRun(oneRequest(), 2, 1))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.Wait()
+	if findEvent(sink.lines(t), EventDispatchFailed) != nil {
+		t.Errorf("a performance run logged %s", EventDispatchFailed)
+	}
+	if n := linesContaining(sink, strings.TrimPrefix(base, "http://")); n != 0 {
+		t.Errorf("%d log lines carry the target address", n)
+	}
+	rep, _ := m.Report(id)
+	if rep.Performance.Overall.Requests == 0 {
+		t.Fatal("the run dispatched nothing")
+	}
+	b, _ := json.Marshal(rep)
+	checkNoLeak(t, "the performance report", b, base)
+}
