@@ -134,7 +134,16 @@ function renderSummary(state, rep, run, mode) {
   // A new run id or a new status (started, completed, cancelled, expired) is
   // announced straight away; a run that is merely still running waits out the
   // interval. Nothing here leaves the module, so no store state is involved.
-  const shown = `${status}|${outcome && outcome.report === 'failed' ? 'no report' : ''}`;
+  // What the run is counts as its state too: a tab attaches before run_started
+  // arrives, so the first paint has no start time and no config, and the one
+  // that fills them in must not wait out the interval. These change once per
+  // run; the counters, which the interval exists for, are not part of it.
+  const shown = [
+    status,
+    outcome && outcome.report === 'failed' ? 'no report' : '',
+    startedAt,
+    configText(mode, config),
+  ].join('|');
   const stateChanged = id !== lastSummaryRunId || shown !== lastSummaryStatus;
   const now = Date.now();
   const throttled =

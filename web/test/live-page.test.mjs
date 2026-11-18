@@ -951,3 +951,66 @@ test('a Start answer read after status already led the tab through the whole run
   assert.notEqual(byId('run-status-banner').textContent, 'A run is live - Watch to follow it.');
   assert.deepEqual(listenerErrors, []);
 });
+
+// ------------------------------------------------------------------ what the summary says of a run just attached
+
+const metaText = () => byId('results-summary').querySelector('.results-meta').textContent;
+const perfStarted = (id) => frame('run_started', id, { mode: 'performance', total: 1, started_at: '2026-11-17T12:00:00Z', config: { concurrency: 25, duration_secs: 20 } });
+
+test('a performance run shows its workers and duration as soon as run_started says them, however the tab attached', async (t) => {
+  // This tab's own Start.
+  const server = makeServer();
+  await bootPage(t, server);
+  runner.add(req(1));
+  set({ mode: 'performance' });
+  byId('start-run').click();
+  await flush();
+  const mine = server.status.run_id;
+  assert.equal(get().run.mode, 'performance');
+  streamsFor(mine)[0].emit('run_started', perfStarted(mine));
+  assert.match(metaText(), /25 workers x 20s/, `after Start: "${metaText()}"`);
+
+  // Watch, from a tab showing that finished run.
+  server.end();
+  streamsFor(mine)[0].emit('run_finished', frame('run_finished', mine, { status: 'completed', duration_ms: 1200 }));
+  await flush();
+  const theirs = server.begin('performance');
+  t.mock.timers.tick(3000);
+  await flush();
+  byId('watch-run').click();
+  await flush();
+  streamsFor(theirs)[0].emit('run_started', perfStarted(theirs));
+  assert.match(metaText(), /25 workers x 20s/, `after Watch: "${metaText()}"`);
+
+  // A tab that loads mid-run and attaches by itself.
+  unsubscribe();
+  resetBrowser();
+  resetState();
+  t.mock.timers.reset();
+  const again = makeServer();
+  const live = again.begin('performance');
+  await bootPage(t, again);
+  streamsFor(live)[0].emit('run_started', perfStarted(live));
+  assert.match(metaText(), /25 workers x 20s/, `after a load mid-run: "${metaText()}"`);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('progress ticks still do not redraw the summary of a running performance run inside its interval', async (t) => {
+  const server = makeServer();
+  const id = server.begin('performance');
+  await bootPage(t, server);
+  const stream = streamsFor(id)[0];
+  stream.emit('run_started', perfStarted(id));
+  const progress = (requests) => frame('progress', id, { elapsed_ms: requests, requests, errors: 0, aborted: 0, rps: 100, avg_latency_ms: 5 });
+
+  stream.emit('progress', progress(100));
+  const first = metaText();
+  const node = byId('results-summary').querySelector('.results-meta');
+  stream.emit('progress', progress(200));
+  stream.emit('progress', progress(300));
+
+  assert.equal(metaText(), first, 'the summary, a live region, was not rewritten by the ticks');
+  assert.equal(byId('results-summary').querySelector('.results-meta'), node, 'nor replaced');
+  assert.match(byId('perf-counters').textContent, /^300 requests/, 'the live counters did follow');
+  assert.equal(get().progress.requests, 300);
+});
