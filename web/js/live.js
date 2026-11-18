@@ -42,8 +42,8 @@
 // figure was not adopted, because the documented one is authoritative (see docs/deviations.md N26).
 export const StatusPollMs = 3000;
 
-// MaxEnded bounds the memory of runs this tab watched end. The server keeps
-// 20 runs; an id older than that can no longer be reported as live.
+// MaxEnded bounds the memory of runs this tab watched end or lose. The server
+// keeps 20 runs; an id older than that can no longer be reported as live.
 const MaxEnded = 32;
 
 // ---------------------------------------------------------------- the rules
@@ -68,7 +68,7 @@ export function initialLive() {
 
     attached: '', // the run whose events are applied; '' when none
     ended: [], // runs this tab saw end
-    gone: '', // the run that answered 404, until status stops naming it
+    gone: [], // runs that answered 404, each until status stops naming it
     opening: '', // the history entry the visitor asked for and is waiting on
     checked: '', // the last disagreement between status and the attachment that was looked into
   };
@@ -113,7 +113,7 @@ export function decideSync(live, status) {
     if (live.checked === `${live.attached}>${id}`) return none();
     return { action: 'check', runId: live.attached };
   }
-  if (!id || id === live.gone || live.ended.includes(id)) return none();
+  if (!id || live.gone.includes(id) || live.ended.includes(id)) return none();
   // Rule 1: anything on screen, or a report the visitor is waiting for, holds
   // the view.
   if (live.run || live.report || live.opening) return none();
@@ -134,16 +134,18 @@ function follow(live, id, mode, startedAt, spectator) {
     opening: '',
     checked: '',
     ended: live.ended.filter((x) => x !== id),
-    gone: live.gone === id ? '' : live.gone,
+    gone: live.gone.includes(id) ? live.gone.filter((x) => x !== id) : live.gone,
   };
 }
 
-// forgetGone is the second half of rule 8: the id is held only while status
-// goes on naming it. A live run status does not name says nothing either way.
+// forgetGone is the second half of rule 8: an id is held only while status
+// goes on naming it. A status naming another run, or none, releases it; a
+// live run status does not name says nothing either way.
 function forgetGone(live, status) {
-  if (!live.gone || !status) return live;
-  if (status.running && (!status.run_id || status.run_id === live.gone)) return live;
-  return { ...live, gone: '' };
+  if (live.gone.length === 0 || !status) return live;
+  if (status.running && !status.run_id) return live;
+  const kept = status.running ? live.gone.filter((x) => x === status.run_id) : [];
+  return kept.length === live.gone.length ? live : { ...live, gone: kept };
 }
 
 function onStatus(before, status) {
@@ -178,7 +180,7 @@ function onWatch(live, e) {
   if (!id) return same(live);
   // Rules 4 and 8: a status that still names a run this tab saw end, or one
   // the server no longer has, is stale. Read it again rather than follow it.
-  if (id === live.gone || live.ended.includes(id)) return { live, effects: [{ type: 'status' }] };
+  if (live.gone.includes(id) || live.ended.includes(id)) return { live, effects: [{ type: 'status' }] };
   // Already following: the replay has arrived and does not arrive twice, so
   // the only thing left to say is that this tab is a spectator.
   if (live.attached === id) return same({ ...live, spectator: true, opening: '' });
@@ -296,7 +298,8 @@ function onRunEvent(live, e) {
 function onGone(live, e) {
   const id = e.run_id;
   if (!id || live.attached !== id) return same(live);
-  let next = { ...live, attached: '', checked: '', gone: id, spectator: false };
+  const gone = [...live.gone.filter((x) => x !== id), id].slice(-MaxEnded);
+  let next = { ...live, attached: '', checked: '', gone, spectator: false };
   if (next.run && next.run.id === id) {
     if (next.results.length === 0 && !next.progress) {
       next = { ...next, run: null, results: [], progress: null, report: null, outcome: null };

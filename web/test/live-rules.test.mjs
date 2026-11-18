@@ -247,14 +247,14 @@ test('a run that answered 404 ends the attachment, asks for status once, and is 
   const out = gone(watching, 'a');
   assert.deepEqual(out.effects, [{ type: 'status' }]);
   assert.equal(out.live.attached, '');
-  assert.equal(out.live.gone, 'a');
+  assert.deepEqual(out.live.gone, ['a']);
   assert.equal(out.live.spectator, false);
   assert.deepEqual(out.live.outcome, { run_id: 'a', status: 'unavailable', duration_ms: null, verdict: '' });
   assert.equal(out.live.results.length, 1, 'what arrived stays on screen');
 
   // Nothing had arrived: there is nothing to keep, and the tab shows nothing again.
   const empty = gone(attachedTo('a'), 'a').live;
-  assert.deepEqual([empty.run, empty.outcome, empty.results.length, empty.gone], [null, null, 0, 'a']);
+  assert.deepEqual([empty.run, empty.outcome, empty.results.length, empty.gone], [null, null, 0, ['a']]);
 
   // Only the attached run can be reported gone.
   assert.deepEqual(gone(watching, 'b').live, watching);
@@ -275,17 +275,17 @@ test('a gone run is not attached again until status reports a different run or n
   assert.equal(watched.live.attached, '');
   assert.deepEqual(watched.effects, [{ type: 'status' }]);
   // A live run that is not named, or no status at all, changes nothing.
-  assert.equal(reduce(lost, { type: 'status', status: { running: true } }).gone, 'a');
-  assert.equal(reduce(lost, { type: 'status', status: null }).gone, 'a');
+  assert.deepEqual(reduce(lost, { type: 'status', status: { running: true } }).gone, ['a']);
+  assert.deepEqual(reduce(lost, { type: 'status', status: null }).gone, ['a']);
 
   // No run: the id is forgotten, and if the server names it again it is a new fact.
   const cleared = reduce(lost, { type: 'status', status: idleStatus });
-  assert.equal(cleared.gone, '');
+  assert.deepEqual(cleared.gone, []);
   assert.equal(reduce(cleared, { type: 'status', status: running('a') }).attached, 'a');
 
   // A different run: forgotten, and a tab showing nothing follows the new one.
   const moved = reduce(lost, { type: 'status', status: running('b') });
-  assert.equal(moved.gone, '');
+  assert.deepEqual(moved.gone, []);
   assert.equal(moved.attached, 'b');
 
   // This tab's own Start is never refused.
@@ -297,5 +297,23 @@ test('a tab still showing rows of a gone run keeps them when another run starts'
   const next = step(lost, { type: 'status', status: running('b') });
   assert.equal(next.live.attached, '');
   assert.equal(next.live.run.id, 'a');
-  assert.equal(next.live.gone, '');
+  assert.deepEqual(next.live.gone, []);
+});
+
+// Found by the seeded model: with one slot for the gone run, a second run
+// going the same way made the tab forget the first while status still named it.
+test('two runs gone in a row are both held: the first is not attached again while status names it', () => {
+  let live = gone(attachedTo('a'), 'a').live;
+  live = reduce(live, { type: 'watch', run_id: 'b', mode: 'functional' });
+  assert.equal(live.attached, 'b');
+  live = gone(live, 'b').live;
+
+  const named = step(live, { type: 'status', status: running('a') });
+  assert.equal(named.live.attached, '', 'status naming the first gone run does not attach it');
+  const watched = step(named.live, { type: 'watch', run_id: 'a', mode: 'functional' });
+  assert.equal(watched.live.attached, '');
+  assert.deepEqual(watched.effects, [{ type: 'status' }]);
+
+  // Status naming a now forgets b, which it no longer names, and only b.
+  assert.equal(reduce(named.live, { type: 'watch', run_id: 'b', mode: 'functional' }).attached, 'b');
 });
