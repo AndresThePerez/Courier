@@ -110,7 +110,6 @@ let ticker = null;
 let lastPhase = null;
 let lastLive = ''; // the run last seen live in this tab's status or view
 let kneeNote = '';
-let kneeBuilt = false;
 // addNote is what the add-note live region says about the last add, and
 // addNoteCount the number queued it states: a note whose count is no longer
 // true is not left on screen.
@@ -312,19 +311,32 @@ function saveSequence() {
 // Replacing rather than appending is the point. Adding to whatever was already
 // queued would reproduce a *different* run than the one the table measured,
 // and the table would then be describing something the button does not do.
+//
+// Replacing is also why the note says what went: a visitor who had queued
+// requests of their own would otherwise find them gone without a word.
 function preloadKnee(workers) {
-  const collection = (get().collections || []).find((c) => c.id === KneeCollection);
+  const state = get();
+  const collections = state.collections || [];
+  const collection = collections.find((c) => c.id === KneeCollection);
   const requests = (collection && collection.requests) || [];
   if (requests.length === 0) {
-    kneeNote = 'The curated collections have not loaded yet - give the page a moment and try again.';
+    kneeNote = kneeUnavailable(state, collections);
     render(get());
     return;
   }
   sequenceNote = '';
   startNote = '';
   sayAdded('', -1);
-  kneeNote = `Loaded ${requests.length} search requests at ${workers} worker${workers === 1 ? '' : 's'}`
-    + ` for ${KneeDuration}s. Press Start run to take your own reading.`;
+  const at = `at ${workers} worker${workers === 1 ? '' : 's'} for ${KneeDuration}s`;
+  const queued = state.sequence.length;
+  const press = 'Press Start run to take your own reading.';
+  if (queued === 0) {
+    kneeNote = `Loaded ${requests.length} search requests ${at}. ${press}`;
+  } else {
+    const switched = state.mode === 'performance' ? '' : ' and switched to Performance';
+    kneeNote = `Replaced the ${queued} queued request${queued === 1 ? '' : 's'} with the`
+      + ` ${requests.length} ${KneeCollection} requests ${at}${switched}. ${press}`;
+  }
   setSetup({
     sequence: requests.map((r) => entryFor(r)),
     mode: 'performance',
@@ -332,16 +344,29 @@ function preloadKnee(workers) {
   });
 }
 
+// kneeUnavailable says why a preset replaced nothing. preloadKnee reads the
+// catalog, which is empty while it loads and after a load failed, and the two
+// call for different things from the visitor.
+function kneeUnavailable(state, collections) {
+  if (collections.length > 0) {
+    return `The ${KneeCollection} collection is not in the catalog the server sent - nothing was replaced.`;
+  }
+  if (state.notice) {
+    return 'The curated collections could not be loaded - press Retry under Collections, then try a preset again. Nothing was replaced.';
+  }
+  return 'The curated collections have not loaded yet - give the page a moment and try again.';
+}
+
 function renderKnee(state) {
   const note = byId('knee-note');
   note.hidden = !kneeNote;
   setText(note, kneeNote);
 
-  // The table and the buttons are constants, so they are built once. Rebuilding
-  // them on every status poll would take focus off a button mid-keyboard-press
-  // for no gain, the same reason renderSequence keeps a signature.
-  if (kneeBuilt) return;
-  kneeBuilt = true;
+  // The table and the buttons are constants, so they are built once per page.
+  // Rebuilding them on every status poll would take focus off a button
+  // mid-keyboard-press for no gain, the same reason renderSequence keeps a
+  // signature.
+  if (byId('knee-buttons').firstChild) return;
 
   const head = el('tr', {}, [
     el('th', { text: 'workers' }),

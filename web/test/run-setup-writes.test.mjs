@@ -2,8 +2,8 @@
 // must not: a setup written in a loop, or by a poll, would hammer storage and
 // overwrite another tab's last word.
 //
-// This file renders the runner for the first time in its first test: the knee
-// buttons are built once per module, and this test clicks one.
+// The knee buttons are built on the first render of a page, and this file's
+// first test renders the runner before it clicks one.
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
