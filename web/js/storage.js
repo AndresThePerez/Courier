@@ -102,3 +102,239 @@ export function subscribe(target, storage, key, fn) {
   target.addEventListener('storage', onStorage);
   return () => target.removeEventListener('storage', onStorage);
 }
+
+// randomId gives two tabs creating an entry at the same moment different ids
+// without any coordination between them. randomUUID needs a secure context,
+// so the fallbacks keep a page served over plain http working.
+export function randomId(prefix) {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return `${prefix}${c.randomUUID()}`;
+  if (c && typeof c.getRandomValues === 'function') {
+    const bytes = c.getRandomValues(new Uint8Array(16));
+    return `${prefix}${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+  }
+  return `${prefix}${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+// removeKey is remove under a name createSyncedList does not shadow.
+const removeKey = remove;
+
+// createSyncedList keeps one list of entries with string ids in one key that
+// every tab of the page shares, and publishes it into state[field]. Each list
+// the visitor owns in this browser (saved requests, saved collections) is an
+// instance of it, so they all keep the same rules below.
+//
+// decode(raw) turns a stored string into { items, extra } and never throws;
+// whatever it cannot use is dropped, and an unusable value reads as an empty
+// list. extra is whatever else the value carries, handed back to
+// encode(items, extra) so a write keeps it. hooks lets the owner react to the
+// list: published(isKnown) after every change shown, removing(id) when this tab
+// deletes an entry, cleared() after an accepted reset.
+export function createSyncedList({ storage: area, key, field, decode, encode, get, set, target = null, hooks = {} }) {
+  // What this tab may conclude from storage, because two tabs share it and
+  // either may be refused a read or a write at any moment:
+  //
+  //   1. Only a current read counts. A storage event's newValue, or anything
+  //      else of unknown age, never replaces what this tab knows; when the
+  //      read is refused, the tab keeps its view until a read succeeds.
+  //   2. An entry this tab deleted stays deleted by this tab until this tab
+  //      stores it again (Undo), or a current read lists it while this tab
+  //      has no delete of it waiting. Until then, its Undo is never refused
+  //      as "deleted in another tab". An Undo that comes before storage
+  //      accepted the delete withdraws the delete instead, and the entry is
+  //      again one this tab knows (rule 3).
+  //   3. "Deleted in another tab" is concluded only from a current read that
+  //      lacks an entry this tab saw in an earlier current read or stored
+  //      itself, and that this tab did not delete. An entry this tab has
+  //      only queued has never been stored, so its absence proves nothing.
+  //   4. Changes the browser refused are this tab's intent: one per entry,
+  //      replayed over every current read, and dropped only when the entry
+  //      was deleted in another tab (the delete wins), which the published
+  //      hook can tell the visitor about.
+  //
+  // known holds the entries of rule 3, deletedHere those of rule 2; no id is
+  // in both. stored is the list as of the last current read or accepted
+  // write, and pending the refused changes of rule 4, oldest first.
+  let known = new Set();
+  let deletedHere = new Set();
+  let stored = [];
+  let pending = [];
+  let unsubscribe = null;
+
+  function load() {
+    const r = read(area, key);
+    return r.ok ? decode(r.value).items : [];
+  }
+
+  function init() {
+    stop();
+    const items = load();
+    known = new Set(items.map((r) => r.id));
+    deletedHere = new Set();
+    stored = items;
+    pending = [];
+    set({ [field]: items });
+    if (target) unsubscribe = subscribe(target, area, key, onExternal);
+  }
+
+  function stop() {
+    if (unsubscribe) unsubscribe();
+    unsubscribe = null;
+  }
+
+  const removing = (id) => pending.some((op) => op.type === 'remove' && op.id === id);
+
+  // observe takes in one current read (rules 2 and 3).
+  function observe(items) {
+    for (const r of items) {
+      if (deletedHere.has(r.id)) {
+        if (removing(r.id)) continue;
+        deletedHere.delete(r.id);
+      }
+      known.add(r.id);
+    }
+    stored = items;
+  }
+
+  function onExternal(raw) {
+    observe(decode(raw).items);
+    publish(applyAll(stored, pending));
+  }
+
+  // apply folds one change into a list.
+  //
+  // Merge rules, because two tabs can change the same stored value:
+  //   - Changes merge by id into the value as stored now; a tab never writes
+  //     its whole loaded list back, so another tab's entries survive.
+  //   - Two tabs editing the same entry: the last write wins for that entry,
+  //     whole. Entries are small and edited by one person, so a field-level
+  //     merge would buy nothing a visitor could tell apart.
+  //   - Delete against edit of the same entry: the delete wins whichever came
+  //     first, so an entry deleted in one tab is never resurrected by a
+  //     keystroke in another that had not yet heard about it.
+  function apply(list, op) {
+    const out = list.slice();
+    if (op.type === 'remove') return { list: out.filter((r) => r.id !== op.id), blocked: false };
+    const i = out.findIndex((r) => r.id === op.item.id);
+    if (i >= 0) out[i] = op.item;
+    else if (known.has(op.item.id)) return { list: out, blocked: true };
+    else out.push(op.item);
+    return { list: out, blocked: false };
+  }
+
+  const opId = (op) => (op.type === 'remove' ? op.id : op.item.id);
+
+  function applyAll(list, ops) {
+    let out = list;
+    const blocked = new Set();
+    let changed = false;
+    for (const op of ops) {
+      const r = apply(out, op);
+      out = r.list;
+      if (r.blocked) blocked.add(op.item.id);
+      else changed = true;
+    }
+    return { list: out, blocked, changed };
+  }
+
+  // publish shows the merged list and forgets changes that lost to a delete.
+  function publish(result) {
+    pending = pending.filter((op) => op.type !== 'save' || !result.blocked.has(op.item.id));
+    set({ [field]: result.list });
+    if (hooks.published) hooks.published((id) => known.has(id));
+  }
+
+  // commit stores one change and returns { ok, deleted }: ok only when the
+  // browser accepted the write, deleted when the change lost to a delete made
+  // in another tab.
+  function commit(op) {
+    // Only the latest change per entry matters, and every keystroke is a
+    // change: without this a store that stays unwritable would grow the
+    // queue, and the cost of every later write, by one entry per keystroke.
+    const id = opId(op);
+    const replaced = pending.find((p) => opId(p) === id);
+    if (op.type === 'save' && replaced && replaced.type === 'remove') withdraw(replaced);
+    pending = pending.filter((p) => p !== replaced);
+    pending.push(op);
+    let result = null;
+    const written = update(area, key, (raw) => {
+      const saved = decode(raw);
+      observe(saved.items);
+      result = applyAll(saved.items, pending);
+      return result.changed ? encode(result.list, saved.extra) : undefined;
+    });
+    if (!written.read.ok) {
+      // A store that cannot be read cannot be merged into, so nothing was
+      // written; the page carries on from what this tab last saw.
+      result = applyAll(stored, pending);
+    } else if (!written.ok) {
+      console.warn(`${key} not persisted`, written.error);
+    } else {
+      stored = result.list;
+      for (const p of pending) {
+        if (p.type !== 'save' || result.blocked.has(p.item.id)) continue;
+        known.add(p.item.id);
+        deletedHere.delete(p.item.id);
+      }
+      pending = [];
+    }
+    const deleted = op.type === 'save' && result.blocked.has(op.item.id);
+    publish(result);
+    return { ok: written.ok && !deleted, deleted };
+  }
+
+  function find(id) {
+    return get()[field].find((r) => r.id === id) || null;
+  }
+
+  // save stores an entry, inserting or replacing by id. The caller hands over
+  // an entry nothing else holds.
+  function save(item) {
+    return commit({ type: 'save', item });
+  }
+
+  // remove deletes an entry, returning what was deleted so the caller can
+  // offer it back.
+  function remove(id) {
+    const item = find(id);
+    const wasKnown = known.has(id);
+    known.delete(id);
+    deletedHere.add(id);
+    if (hooks.removing) hooks.removing(id);
+    return { ...commit({ type: 'remove', id, wasKnown }), item };
+  }
+
+  // withdraw takes back a delete storage never saw, for an Undo that came
+  // before the browser accepted it: the tab is back where it was before the
+  // delete, so a delete made in another tab meanwhile wins over the Undo, as
+  // it would over any edit.
+  function withdraw(op) {
+    deletedHere.delete(op.id);
+    if (op.wasKnown) known.add(op.id);
+  }
+
+  // reset clears the stored list and returns { ok }. A refused removal leaves
+  // everything as it was: clearing only this page would show an empty list
+  // that the next accepted write quietly merges the stored entries back into.
+  function reset() {
+    const removed = removeKey(area, key);
+    if (!removed.ok) {
+      console.warn(`${key} not reset`, removed.error);
+      return { ok: false };
+    }
+    known = new Set();
+    deletedHere = new Set();
+    stored = [];
+    pending = [];
+    if (hooks.cleared) hooks.cleared();
+    set({ [field]: [] });
+    return { ok: true };
+  }
+
+  // queued is how many changes are waiting for the browser to accept a write.
+  function queued() {
+    return pending.length;
+  }
+
+  return { load, init, stop, find, save, remove, reset, queued };
+}
