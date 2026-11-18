@@ -249,12 +249,11 @@ type errorBody struct {
 	Poll  bool   `json:"poll,omitempty"`
 }
 
+// writeError answers with errorBody. The message never repeats the field: the
+// field has its own key, and a client that shows the two side by side would
+// otherwise print it twice.
 func writeError(w http.ResponseWriter, status int, field, format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	if field != "" {
-		msg = field + ": " + msg
-	}
-	writeJSON(w, status, errorBody{Error: msg, Field: field})
+	writeJSON(w, status, errorBody{Error: fmt.Sprintf(format, args...), Field: field})
 }
 
 // decodeJSON reads a capped, single-value JSON body. It answers the client and

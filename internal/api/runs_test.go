@@ -1448,3 +1448,28 @@ func TestStreamWaitingForItsRunEndsAtShutdown(t *testing.T) {
 		t.Errorf("close: %v", err)
 	}
 }
+
+// The field travels in its own key, so the message must not carry it again:
+// a client that prints "<field>: <error>" would otherwise say it twice.
+func TestErrorBodiesStateTheFieldOnce(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+
+	rr := payload(6, 0)
+	rr.Sequence[5].Assertions = []assert.Assertion{{Type: assert.TypeStatus, Op: "x", Value: 200}}
+	rec := do(t, s, http.MethodPost, "/api/runs", rr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	want := `{"error":"operator \"x\" is not valid for a status assertion (allowed: [eq neq])","field":"sequence[5].assertions[0]"}` + "\n"
+	if got := rec.Body.String(); got != want {
+		t.Errorf("body = %s, want %s", got, want)
+	}
+
+	req := sendable()
+	req.Params = map[string]string{"highlight": "1"}
+	rec = do(t, s, http.MethodPost, "/api/send", req)
+	body := decode[errorBody](t, rec)
+	if body.Field != "params" || strings.HasPrefix(body.Error, "params") {
+		t.Errorf("send error = %+v, want field params stated once", body)
+	}
+}
