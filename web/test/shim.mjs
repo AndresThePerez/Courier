@@ -26,8 +26,12 @@
 //     matchMedia with scriptable matches, location with hashchange.
 //   - localStorage / sessionStorage: Map-backed, each method can be told to
 //     throw; a write "from another tab" fires a storage event here.
+//   - NodeList (querySelectorAll, childNodes) and HTMLCollection (children,
+//     options): list objects with only the real interfaces' methods, no
+//     array methods.
 //   - fetch: per-URL scripted responses, rejections and deferred responses,
-//     with every call recorded. An unscripted URL rejects loudly.
+//     with every call recorded. An unscripted URL rejects loudly. An abort
+//     signal rejects the call with AbortError, up front or while pending.
 //   - EventSource: every instance recorded; tests open it, emit named events,
 //     fire errors, and read how many were opened and closed.
 //   - navigator.clipboard.writeText, recording what was written.
@@ -71,13 +75,18 @@ function removeListener(target, type, fn, options) {
   const list = map.get(type);
   if (!list) return;
   const i = list.findIndex((l) => l.fn === fn && l.capture === capture);
-  if (i >= 0) list.splice(i, 1);
+  if (i < 0) return;
+  // A dispatch already under way holds a copy of the list; the flag is what
+  // tells it to skip this listener, as the DOM's removed flag does.
+  list[i].removed = true;
+  list.splice(i, 1);
 }
 
 function invoke(target, event, phase) {
   const list = (listenersOf(target).get(event.type) || []).slice();
   for (const l of list) {
     if (event.__stopImmediate) return;
+    if (l.removed) continue;
     if (phase === 1 && !l.capture) continue;
     if (phase === 3 && l.capture) continue;
     if (l.once) removeListener(target, event.type, l.fn, { capture: l.capture });
@@ -202,32 +211,138 @@ export class HashChangeEvent extends Event {
   }
 }
 
+// ------------------------------------------------------------------ collections
+
+// NodeList and HTMLCollection are not arrays, and client code that calls map,
+// filter or find on one throws on the page; these offer only what the real
+// interfaces offer. Each reads its items through a function, so childNodes,
+// children and options stay live while querySelectorAll hands out a snapshot.
+
+const ITEMS = Symbol('items');
+const INDEX = /^(?:0|[1-9]\d*)$/;
+
+function collection(Kind, items) {
+  const list = Object.create(Kind.prototype);
+  Object.defineProperty(list, ITEMS, { value: items });
+  return new Proxy(list, {
+    get(target, prop) {
+      if (typeof prop === 'string' && INDEX.test(prop)) return items()[Number(prop)];
+      return Reflect.get(target, prop, target);
+    },
+    set(target, prop, value) {
+      // Index slots are read-only on a real collection; a write is ignored.
+      if (typeof prop === 'string' && INDEX.test(prop)) return true;
+      return Reflect.set(target, prop, value, target);
+    },
+    has(target, prop) {
+      if (typeof prop === 'string' && INDEX.test(prop)) return Number(prop) < items().length;
+      return Reflect.has(target, prop);
+    },
+    ownKeys(target) {
+      return [...items().keys()].map(String).concat(Reflect.ownKeys(target));
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (typeof prop === 'string' && INDEX.test(prop)) {
+        const all = items();
+        const i = Number(prop);
+        return i < all.length ? { value: all[i], writable: false, enumerable: true, configurable: true } : undefined;
+      }
+      return Reflect.getOwnPropertyDescriptor(target, prop);
+    },
+  });
+}
+
+export class NodeList {
+  get length() {
+    return this[ITEMS]().length;
+  }
+
+  item(i) {
+    return this[ITEMS]()[i] ?? null;
+  }
+
+  // Iteration reads the current contents at every step, as the browser's
+  // index-based iterator does over a live list.
+  forEach(fn, thisArg) {
+    for (let i = 0; i < this[ITEMS]().length; i += 1) fn.call(thisArg, this[ITEMS]()[i], i, this);
+  }
+
+  * entries() {
+    for (let i = 0; i < this[ITEMS]().length; i += 1) yield [i, this[ITEMS]()[i]];
+  }
+
+  * keys() {
+    for (let i = 0; i < this[ITEMS]().length; i += 1) yield i;
+  }
+
+  * values() {
+    for (let i = 0; i < this[ITEMS]().length; i += 1) yield this[ITEMS]()[i];
+  }
+
+  [Symbol.iterator]() {
+    return this.values();
+  }
+}
+
+export class HTMLCollection {
+  get length() {
+    return this[ITEMS]().length;
+  }
+
+  item(i) {
+    return this[ITEMS]()[i] ?? null;
+  }
+
+  namedItem(name) {
+    const want = String(name);
+    return this[ITEMS]().find((el) => el.getAttribute('id') === want || el.getAttribute('name') === want) ?? null;
+  }
+
+  * [Symbol.iterator]() {
+    for (let i = 0; i < this[ITEMS]().length; i += 1) yield this[ITEMS]()[i];
+  }
+}
+
+function staticNodeList(nodes) {
+  const frozen = Object.freeze(nodes.slice());
+  return collection(NodeList, () => frozen);
+}
+
+function elementsOf(node) {
+  return node.childList.filter((c) => c instanceof FakeElement);
+}
+
 // ------------------------------------------------------------------ nodes
 
 class FakeNode {
   constructor(doc) {
     this.ownerDocument = doc;
     this.parentNode = null;
-    this.childNodes = [];
+    // The backing array; childNodes is the live NodeList view over it.
+    this.childList = [];
+  }
+
+  get childNodes() {
+    return collection(NodeList, () => this.childList);
   }
 
   get firstChild() {
-    return this.childNodes[0] || null;
+    return this.childList[0] || null;
   }
 
   get lastChild() {
-    return this.childNodes[this.childNodes.length - 1] || null;
+    return this.childList[this.childList.length - 1] || null;
   }
 
   get nextSibling() {
     if (!this.parentNode) return null;
-    const sibs = this.parentNode.childNodes;
+    const sibs = this.parentNode.childList;
     return sibs[sibs.indexOf(this) + 1] || null;
   }
 
   get previousSibling() {
     if (!this.parentNode) return null;
-    const sibs = this.parentNode.childNodes;
+    const sibs = this.parentNode.childList;
     return sibs[sibs.indexOf(this) - 1] || null;
   }
 
@@ -242,17 +357,17 @@ class FakeNode {
   }
 
   get textContent() {
-    return this.childNodes.map((c) => c.textContent).join('');
+    return this.childList.map((c) => c.textContent).join('');
   }
 
   set textContent(value) {
-    while (this.childNodes.length) this.removeChild(this.childNodes[0]);
+    while (this.childList.length) this.removeChild(this.childList[0]);
     const text = value === null || value === undefined ? '' : String(value);
     if (text !== '') this.appendChild(this.ownerDocument.createTextNode(text));
   }
 
   hasChildNodes() {
-    return this.childNodes.length > 0;
+    return this.childList.length > 0;
   }
 
   contains(node) {
@@ -269,24 +384,24 @@ class FakeNode {
     if (child.contains(this)) throw new DOMException('the new child contains the parent', 'HierarchyRequestError');
     if (ref && ref.parentNode !== this) throw new DOMException('reference node is not a child', 'NotFoundError');
     if (child instanceof FakeFragment) {
-      for (const c of child.childNodes.slice()) this.insertBefore(c, ref);
+      for (const c of child.childList.slice()) this.insertBefore(c, ref);
       return child;
     }
     if (child.parentNode) child.parentNode.removeChild(child);
-    const at = ref ? this.childNodes.indexOf(ref) : this.childNodes.length;
-    this.childNodes.splice(at, 0, child);
+    const at = ref ? this.childList.indexOf(ref) : this.childList.length;
+    this.childList.splice(at, 0, child);
     child.parentNode = this;
     return child;
   }
 
   removeChild(child) {
-    const i = this.childNodes.indexOf(child);
+    const i = this.childList.indexOf(child);
     if (i < 0) throw new DOMException('not a child of this node', 'NotFoundError');
     const doc = this.ownerDocument || this;
     // A browser moves focus to <body> when the focused element leaves the
     // document; focus-restoring code depends on seeing exactly that.
     const lostFocus = doc.activeElement && child.contains(doc.activeElement);
-    this.childNodes.splice(i, 1);
+    this.childList.splice(i, 1);
     child.parentNode = null;
     if (lostFocus) doc.activeElement = doc.body;
     return child;
@@ -298,7 +413,7 @@ class FakeNode {
   }
 
   replaceChildren(...nodes) {
-    while (this.childNodes.length) this.removeChild(this.childNodes[0]);
+    while (this.childList.length) this.removeChild(this.childList[0]);
     this.append(...nodes);
   }
 
@@ -358,15 +473,15 @@ class FakeFragment extends FakeNode {
   }
 
   get children() {
-    return this.childNodes.filter((c) => c instanceof FakeElement);
+    return collection(HTMLCollection, () => elementsOf(this));
   }
 
   querySelector(selector) {
-    return this.querySelectorAll(selector)[0] || null;
+    return queryAll(this, selector)[0] || null;
   }
 
   querySelectorAll(selector) {
-    return queryAll(this, selector);
+    return staticNodeList(queryAll(this, selector));
   }
 }
 
@@ -516,19 +631,19 @@ class FakeElement extends FakeNode {
   }
 
   get children() {
-    return this.childNodes.filter((c) => c instanceof FakeElement);
+    return collection(HTMLCollection, () => elementsOf(this));
   }
 
   get childElementCount() {
-    return this.children.length;
+    return elementsOf(this).length;
   }
 
   get firstElementChild() {
-    return this.children[0] || null;
+    return elementsOf(this)[0] || null;
   }
 
   get lastElementChild() {
-    const kids = this.children;
+    const kids = elementsOf(this);
     return kids[kids.length - 1] || null;
   }
 
@@ -617,23 +732,23 @@ class FakeElement extends FakeNode {
   }
 
   get options() {
-    return this.localName === 'select' ? this.querySelectorAll('option') : undefined;
+    return this.localName === 'select' ? collection(HTMLCollection, () => queryAll(this, 'option')) : undefined;
   }
 
   selectedOption() {
-    const opts = this.options;
+    const opts = [...this.options];
     return opts.find((o) => o.selected) || opts[0] || null;
   }
 
   get selectedIndex() {
     if (this.localName !== 'select') return undefined;
-    const opts = this.options;
+    const opts = [...this.options];
     const i = opts.findIndex((o) => o.selected);
     return i >= 0 ? i : (opts.length ? 0 : -1);
   }
 
   set selectedIndex(i) {
-    this.options.forEach((o, j) => { o.dirtySelected = j === i; });
+    [...this.options].forEach((o, j) => { o.dirtySelected = j === i; });
   }
 
   get selected() {
@@ -691,11 +806,11 @@ class FakeElement extends FakeNode {
   }
 
   querySelector(selector) {
-    return this.querySelectorAll(selector)[0] || null;
+    return queryAll(this, selector)[0] || null;
   }
 
   querySelectorAll(selector) {
-    return queryAll(this, selector);
+    return staticNodeList(queryAll(this, selector));
   }
 
   // ---------------------------------------------------------- focus and click
@@ -772,7 +887,7 @@ function isFocusable(el) {
 function radioGroup(el) {
   const doc = el.ownerDocument;
   const root = el.closest('form') || doc;
-  return root.querySelectorAll('input').filter((i) => i.type === 'radio' && i.name === el.name);
+  return [...root.querySelectorAll('input')].filter((i) => i.type === 'radio' && i.name === el.name);
 }
 
 function radioSnapshot(el) {
@@ -813,7 +928,7 @@ class FakeDocument extends FakeNode {
   }
 
   get documentElement() {
-    return this.childNodes.find((c) => c instanceof FakeElement) || null;
+    return this.childList.find((c) => c instanceof FakeElement) || null;
   }
 
   get head() {
@@ -825,7 +940,7 @@ class FakeDocument extends FakeNode {
   }
 
   get children() {
-    return this.childNodes.filter((c) => c instanceof FakeElement);
+    return collection(HTMLCollection, () => elementsOf(this));
   }
 
   createElement(tag) {
@@ -844,7 +959,7 @@ class FakeDocument extends FakeNode {
   getElementById(id) {
     const want = String(id);
     const walk = (node) => {
-      for (const c of node.childNodes) {
+      for (const c of node.childList) {
         if (!(c instanceof FakeElement)) continue;
         if (c.getAttribute('id') === want) return c;
         const hit = walk(c);
@@ -856,11 +971,11 @@ class FakeDocument extends FakeNode {
   }
 
   querySelector(selector) {
-    return this.querySelectorAll(selector)[0] || null;
+    return queryAll(this, selector)[0] || null;
   }
 
   querySelectorAll(selector) {
-    return queryAll(this, selector);
+    return staticNodeList(queryAll(this, selector));
   }
 }
 
@@ -995,7 +1110,7 @@ function queryAll(root, selector) {
   const groups = parseSelector(selector);
   const out = [];
   const walk = (node) => {
-    for (const c of node.childNodes) {
+    for (const c of node.childList) {
       if (!(c instanceof FakeElement)) continue;
       if (groups.some((complex) => matchesComplex(c, complex, complex.length - 1))) out.push(c);
       walk(c);
@@ -1192,6 +1307,12 @@ function buildResponse(spec = {}) {
   return new Response(body ?? null, { status, statusText: spec.statusText ?? '', headers });
 }
 
+// abortReason is what a browser's fetch rejects with on abort: the signal's
+// reason, which abort() with no argument sets to an AbortError DOMException.
+function abortReason(signal) {
+  return signal.reason ?? new DOMException('This operation was aborted', 'AbortError');
+}
+
 // FetchStub is the scriptable fetch. Routes are keyed by URL (exactly as the
 // module passes it) and optionally by method; each scripted answer is used
 // `times` times (default once) in the order it was scripted.
@@ -1250,6 +1371,9 @@ export class FetchStub {
       },
     };
     this.calls.push(call);
+    const signal = init.signal ?? (input && input.signal) ?? null;
+    // An aborted request never reaches the server, so it uses up no answer.
+    if (signal && signal.aborted) return Promise.reject(abortReason(signal));
     const i = this.#routes.findIndex((r) => r.url === url && (!r.method || r.method === method));
     if (i < 0) {
       this.unmatched.push(call);
@@ -1258,7 +1382,16 @@ export class FetchStub {
     const route = this.#routes[i];
     route.times -= 1;
     if (route.times <= 0) this.#routes.splice(i, 1);
-    return route.answer();
+    const answer = route.answer();
+    if (!signal) return answer;
+    return new Promise((resolve, reject) => {
+      const onAbort = () => reject(abortReason(signal));
+      signal.addEventListener('abort', onAbort, { once: true });
+      answer.then(
+        (res) => { signal.removeEventListener('abort', onAbort); resolve(res); },
+        (err) => { signal.removeEventListener('abort', onAbort); reject(err); },
+      );
+    });
   };
 
   reset() {
@@ -1517,6 +1650,8 @@ define('KeyboardEvent', KeyboardEvent);
 define('FocusEvent', FocusEvent);
 define('StorageEvent', StorageEvent);
 define('HashChangeEvent', HashChangeEvent);
+define('NodeList', NodeList);
+define('HTMLCollection', HTMLCollection);
 define('Node', FakeNode);
 define('Element', FakeElement);
 define('HTMLElement', FakeElement);
