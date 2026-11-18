@@ -68,7 +68,7 @@ var requiredIDs = []string{
 // globs js/*.js, so a file that is never written is not a build error — it is
 // a 404 at runtime, in the console, on the visitor's machine.
 var requiredScripts = []string{
-	"js/main.js", "js/store.js", "js/api.js", "js/dom.js",
+	"js/main.js", "js/store.js", "js/api.js", "js/live.js", "js/dom.js",
 	"js/workspace.js", "js/storage.js", "js/render-sidebar.js", "js/render-editor.js",
 	"js/render-runner.js", "js/run-config.js", "js/render-results.js", "js/json-view.js",
 }

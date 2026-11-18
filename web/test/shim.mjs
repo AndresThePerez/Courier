@@ -33,7 +33,7 @@
 //     options): list objects with only the real interfaces' methods, no
 //     array methods.
 //   - fetch: per-URL scripted responses, rejections and deferred responses,
-//     with every call recorded. An unscripted URL rejects loudly. An abort
+//     or a function standing for the server, with every call recorded. An unscripted URL rejects loudly. An abort
 //     signal rejects the call with AbortError, up front or while pending, and
 //     after the answer arrived it errors the body's unread part.
 //   - EventSource: every instance recorded; tests open it, emit named events,
@@ -1396,6 +1396,21 @@ export class FetchStub {
     return handle;
   }
 
+  // serve scripts a route a function answers every time it is asked, for a
+  // test that models a server rather than scripting each answer. fn(call)
+  // returns a response spec or a promise of one; throwing, or a rejected
+  // promise, is a network failure. url may be a RegExp here, tested against
+  // the URL as the module passed it.
+  serve(url, fn, { method } = {}) {
+    this.#routes.push({
+      url,
+      method: method && method.toUpperCase(),
+      times: Infinity,
+      answer: (call) => new Promise((resolve) => { resolve(fn(call)); }).then(buildResponse),
+    });
+    return this;
+  }
+
   pending() {
     return this.#routes.map((r) => `${r.method || '*'} ${r.url}`);
   }
@@ -1417,7 +1432,7 @@ export class FetchStub {
     const signal = init.signal ?? (input && input.signal) ?? null;
     // An aborted request never reaches the server, so it uses up no answer.
     if (signal && signal.aborted) return Promise.reject(abortReason(signal));
-    const i = this.#routes.findIndex((r) => r.url === url && (!r.method || r.method === method));
+    const i = this.#routes.findIndex((r) => (r.url instanceof RegExp ? r.url.test(url) : r.url === url) && (!r.method || r.method === method));
     if (i < 0) {
       this.unmatched.push(call);
       return Promise.reject(new TypeError(`shim fetch: nothing scripted for ${method} ${url}`));
@@ -1425,7 +1440,7 @@ export class FetchStub {
     const route = this.#routes[i];
     route.times -= 1;
     if (route.times <= 0) this.#routes.splice(i, 1);
-    const answer = route.answer();
+    const answer = route.answer(call);
     if (!signal) return answer;
     return new Promise((resolve, reject) => {
       const onAbort = () => reject(abortReason(signal));
