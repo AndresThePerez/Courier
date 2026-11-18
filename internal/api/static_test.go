@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -61,5 +62,42 @@ func TestETagsDifferBetweenAssets(t *testing.T) {
 			t.Errorf("%s and %s share the ETag %s", path, other, tag)
 		}
 		seen[tag] = path
+	}
+}
+
+// Only the embedded files are served. A directory is not a file, so it is a
+// 404 and never a listing of the scripts inside it.
+func TestDirectoriesAreNotListed(t *testing.T) {
+	files := etagStatic()
+	files["js/main.js"] = &fstest.MapFile{Data: []byte("import './api.js';")}
+	files["js/api.js"] = &fstest.MapFile{Data: []byte("export {};")}
+	srv := New(files, Options{TargetURL: "http://127.0.0.1:8081", TargetDisplay: "test-target"})
+
+	for _, path := range []string{"/js/", "/js"} {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, rec.Code)
+		}
+		if body := rec.Body.String(); strings.Contains(body, "main.js") || strings.Contains(body, "api.js") {
+			t.Errorf("GET %s lists files: %q", path, body)
+		}
+		if rec.Header().Get("Content-Security-Policy") == "" || rec.Header().Get("ETag") != "" {
+			t.Errorf("GET %s headers = %v, want the security headers and no ETag", path, rec.Header())
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/js/main.js", nil))
+	tag := rec.Header().Get("ETag")
+	if rec.Code != http.StatusOK || tag == "" || rec.Body.String() != "import './api.js';" {
+		t.Fatalf("GET /js/main.js = %d, ETag %q, body %q; want the file with its tag", rec.Code, tag, rec.Body.String())
+	}
+	again := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/js/main.js", nil)
+	req.Header.Set("If-None-Match", tag)
+	srv.ServeHTTP(again, req)
+	if again.Code != http.StatusNotModified {
+		t.Errorf("GET /js/main.js with its ETag = %d, want 304", again.Code)
 	}
 }
