@@ -1255,7 +1255,9 @@ of the history, or the server restarted) is not followed again: the tab closes t
 transport, reads status once, and does not attach to that id until status reports a
 different run or none, however long status goes on naming it. What had arrived stays on
 screen marked `unavailable`; a tab that had been sent nothing goes back to showing nothing.
-One stream request and one report request is all a vanished run costs. When status says
+A vanished run costs one stream request; while the server cannot be reached its report is
+read at the polling fallback's pace, one request at a time every 500 ms, and once it answers
+404 nothing more is asked for that run. When status says
 the followed run is not the live one, the tab reads that run's report once rather than
 detaching, since status can be a moment ahead of the stream.
 
@@ -1267,7 +1269,10 @@ whose finished report cannot be fetched shows the status its terminal event carr
 **Requests.** No call the page makes throws. One that cannot reach Courier, gets no answer
 in time (10 s for reads and cancel, 20 s for Send and Start), or loses its body after the
 headers arrived is answered as `Could not reach Courier`, and the control that made it
-returns to idle with a sentence saying what did not happen. A catalog that cannot be loaded
+returns to idle with a sentence saying what did not happen. So is a 2xx whose body is not a
+JSON object (a proxy's holding page, a body cut short, a JSON `null`), and a 202 to Start
+that names no run; each reader also refuses an object without the fields it reads, keeping
+what the page held. Cancel's empty 204 is still a cancel. A catalog that cannot be loaded
 says so with a Retry. The status poll (still 3 s, still gated on the transport, N26 and
 N27) keeps one request in flight, and an answer that was already on its way when the tab
 learned something newer is read again instead of applied. A Send answer that arrives after
@@ -1286,4 +1291,7 @@ history answers, one status request at a time); `web/test/live.test.mjs` (the tr
 the end of a stream, the 404, the polled verdict, rows across the two transports);
 `web/test/api.test.mjs` (every call's network, timeout and cut-off-body outcomes);
 `web/test/live-model.test.mjs` (500 seeded event sequences over the pure functions and 120
-seeded sequences over the wired page, with the rules checked after every step).
+seeded sequences over the wired page, with the rules checked after every step);
+`web/test/live-races.test.mjs` and `web/test/live-orderings.test.mjs` (another visitor's run
+at every moment of this tab's own, every call failing every way); `web/test/read-shapes.test.mjs`
+(every reader against a 2xx that is not what it reads).

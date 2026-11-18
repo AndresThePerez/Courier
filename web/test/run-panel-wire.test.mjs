@@ -206,7 +206,9 @@ test('a JSON path or assertion value the editor accepts at 600 characters is not
   assert.equal(typed[0].path.length, 602, 'the editor took the whole path');
   assert.equal(typed[1].value.length, 600, 'the editor took the whole value');
 
-  // The server at this point accepts them: Send posts them whole.
+  // Send posts them whole. The answer here only lets the post be read: the
+  // server itself refuses an assertion string value or JSON path over 500
+  // characters with a 400 naming the field.
   fetchStub.respond('/api/send', { status: 200, body: { status: 200, headers: {}, body: '', assertions: [] } }, { method: 'POST' });
   byId('send-request').click();
   await flush();

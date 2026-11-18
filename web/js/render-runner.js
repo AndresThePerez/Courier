@@ -90,7 +90,7 @@ const KneePoints = [
 
 // refresh / showTab are wired by main.js, which owns the status poll and the
 // tab routing. Reaching into main.js from here would be an import cycle.
-let hooks = { refresh: async () => {}, showTab: () => {}, watch: () => {} };
+let hooks = { refresh: async () => {}, showTab: () => {}, watch: () => {}, over: () => false };
 
 // Module-local render memory and notes, the same arrangement render-editor.js
 // uses: none of this is application state, it is what this module has last
@@ -107,6 +107,7 @@ let cancelling = false;
 let startedRunId = '';
 let ticker = null;
 let lastPhase = null;
+let lastLive = ''; // the run last seen live in this tab's status or view
 let kneeNote = '';
 let kneeBuilt = false;
 
@@ -408,6 +409,8 @@ function applyStartOutcome(outcome, mode) {
   if (outcome.ok) {
     startNote = '';
     startedRunId = outcome.runId;
+    // A 202 read after this tab saw its run end says nothing about now.
+    if (hooks.over(outcome.runId)) return;
     adoptStatus({
       running: true,
       run_id: outcome.runId,
@@ -744,8 +747,16 @@ function renderControls(state) {
 
   // Start and Cancel each say their own piece, so neither request settling
   // can wipe what the other reported. A failed cancel is about one run, and
-  // its note leaves with that run.
+  // its note leaves with that run. What a Start said is about a run that did
+  // not start, and goes when a run goes live: this tab's own whose 202 was
+  // lost, or another visitor's.
   if (cancelNote && runId !== cancelNoteRun) cancelNote = '';
+  const live = phase === 'running' ? runId || 'running'
+    : (state.transport !== 'idle' && state.run ? state.run.id : '');
+  if (!starting) {
+    if (live && live !== lastLive) startNote = '';
+    lastLive = live;
+  }
   const note = byId('start-note');
   const said = [
     starting ? 'Starting...' : startNote,

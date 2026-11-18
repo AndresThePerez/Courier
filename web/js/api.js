@@ -21,6 +21,15 @@ function parse(text) {
   }
 }
 
+// isRecord is the least any 2xx body of Courier's is: a JSON object. Every
+// read route, Send and Start answer one. A 2xx whose body is anything else (a
+// proxy's holding page, a body cut short that the browser reports as complete,
+// a JSON null) was not written by Courier, and is the network outcome rather
+// than an answer a reader would have to second-guess.
+export function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 // How long a request may take before the page stops waiting for it. A read,
 // or a cancel, is answered from memory and is slow only when something is
 // wrong. Send and Start can sit behind the server's own 10s timeout towards
@@ -58,6 +67,7 @@ async function getJSON(url) {
   const res = await call(url, { headers: { Accept: 'application/json' } }, ReadTimeoutMs);
   if (!res) return unreachable();
   if (!res.ok) return { ok: false, kind: 'error', status: res.status, error: said(res), body: res.body };
+  if (!isRecord(res.body)) return unreachable();
   return { ok: true, body: res.body };
 }
 
@@ -106,6 +116,10 @@ export async function startRun(payload) {
   if (!res) return unreachable();
   const body = res.body || {};
   if (res.status === 202) {
+    // A 202 that names no run cannot be followed or cancelled: the page
+    // learns of the run, if there is one, from status, as it does when the
+    // answer is lost altogether.
+    if (!isRecord(res.body) || typeof body.run_id !== 'string' || !body.run_id) return unreachable();
     startedHook(body.run_id, payload && payload.mode);
     return { ok: true, runId: body.run_id };
   }
@@ -138,7 +152,8 @@ export async function send(request) {
   }, WriteTimeoutMs);
   if (!res) return unreachable();
   const body = res.body || {};
-  if (res.ok) return { ok: true, result: body };
+  // A result always carries the target's status, 0 when it did not answer.
+  if (res.ok) return isRecord(res.body) && typeof body.status === 'number' ? { ok: true, result: body } : unreachable();
   if (res.status === 429) return { ok: false, kind: 'busy', error: body.error || 'another send is in flight' };
   if (res.status === 400) return { ok: false, kind: 'invalid', error: body.error || 'invalid request', field: body.field || '' };
   return { ok: false, kind: 'error', error: said(res) };
@@ -341,7 +356,9 @@ export function openLive(runId, handlers) {
   // than aspirational: everything downstream sees run_started, request_result,
   // progress, run_finished, whatever carried them.
   function absorb(rep) {
-    if (!rep) return;
+    // Only this run's report says anything about this run: another run's
+    // status: completed must not end it.
+    if (!isRecord(rep) || rep.id !== runId) return;
     if (!started) {
       started = true;
       emit({

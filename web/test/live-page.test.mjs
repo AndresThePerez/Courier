@@ -383,7 +383,7 @@ test('a history entry that cannot be fetched says so and leaves the view as it w
   await flush();
   assert.equal(get().report, null);
   assert.equal(get().run, null);
-  assert.match(byId('history-list').textContent, /Could not open that run - Could not reach Courier\./);
+  assert.match(byId('history-list').textContent, /Could not open that run - Courier could not be reached\./);
   assert.deepEqual(listenerErrors, []);
 
   server.down.clear();

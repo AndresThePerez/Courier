@@ -26,8 +26,11 @@
 //      flight at any time, and an answer written before something this tab
 //      knows of happened is not applied.
 //   8. A run that answered 404 is not attached again until status reports a
-//      different run or no run, however long status goes on naming it. One
-//      stream and one poll is all a vanished run ever costs.
+//      different run or no run, however long status goes on naming it. A
+//      vanished run costs one stream request; while the server cannot be
+//      reached its report is read at the polling fallback's pace, one request
+//      at a time every 500 ms, and once it answers 404 nothing more is asked
+//      for that run.
 //
 // The rules live in two pure functions, step and decideSync, over one plain
 // object; they touch no document, timer or network. createLive is the only
@@ -193,11 +196,19 @@ function onWatch(live, e) {
   return same(follow(live, id, e.mode || '', e.started_at || '', true));
 }
 
+// reportOf answers whether rep is run id's report. An answer that arrived but
+// is not one settles what was waiting for it all the same: nothing may go on
+// waiting for an answer that is already here.
+export function reportOf(rep, id) {
+  return rep !== null && typeof rep === 'object' && !Array.isArray(rep) && Boolean(id) && rep.id === id;
+}
+
 // onOpened shows a stored run the visitor asked for. Rule 6: only the entry
 // asked for last, and only if nothing was asked for since.
 function onOpened(live, e) {
   const rep = e.report;
-  if (!e.run_id || live.opening !== e.run_id || !rep) return same(live);
+  if (!e.run_id || live.opening !== e.run_id) return same(live);
+  if (!reportOf(rep, e.run_id)) return same({ ...live, opening: '' });
   return same({
     ...live,
     run: runShape(rep.id || e.run_id, { ...rep, total: (rep.entries || []).length }),
@@ -218,7 +229,7 @@ const showsEndOf = (live, id) => Boolean(id && live.outcome && live.outcome.run_
 
 function onReport(live, e) {
   const rep = e.report;
-  if (!showsEndOf(live, e.run_id) || !rep || rep.id !== e.run_id || rep.status === 'running') return same(live);
+  if (!showsEndOf(live, e.run_id) || !reportOf(rep, e.run_id) || rep.status === 'running') return same(live);
   return same({
     ...live,
     run: runShape(rep.id, { ...rep, total: (rep.entries || []).length }),
@@ -388,7 +399,7 @@ export function reduce(live, event) {
 // historyRefusal is what the history rail says when an entry could not be
 // opened. A 404 is the run having aged out of the server's ring of 20.
 function historyRefusal(res) {
-  if (res.kind === 'network') return 'Could not open that run - Could not reach Courier.';
+  if (res.kind === 'network') return 'Could not open that run - Courier could not be reached.';
   if (res.status === 404) return 'That run is no longer stored on the server.';
   return `Could not open that run - ${res.error}`;
 }
@@ -519,14 +530,16 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     else if (effect.type === 'probe' && conn && conn.runId === effect.runId && conn.stop.probe) conn.stop.probe();
   }
 
+  // Each reader takes only the shape it reads. Anything else is a read that
+  // failed: what the page held stays, and the next read tries again.
   const status = oneAtATime(api.getStatus, (res) => {
-    if (res.ok) set({ status: res.body });
-    else console.warn('status poll failed', res.error);
+    if (res.ok && typeof res.body.running === 'boolean') set({ status: res.body });
+    else console.warn('status poll failed', res.ok ? 'not a status' : res.error);
   });
 
   const history = oneAtATime(api.getHistory, (res) => {
-    if (res.ok) set({ history: (res.body && res.body.runs) || [] });
-    else console.warn('history fetch failed', res.error);
+    if (res.ok && Array.isArray(res.body.runs)) set({ history: res.body.runs });
+    else console.warn('history fetch failed', res.ok ? 'not a list of runs' : res.error);
   });
 
   // refresh is what a module calls after it changed the run state itself (a
@@ -553,18 +566,18 @@ export function createLive({ api, get, set, showTab = () => {} }) {
   async function readCatalog() {
     set({ catalogLoading: true });
     const res = await api.getCollections();
-    if (!res.ok) {
-      console.warn('could not load /api/collections', res.error);
+    if (!res.ok || !Array.isArray(res.body.collections)) {
+      console.warn('could not load /api/collections', res.ok ? 'not a catalog' : res.error);
       set({ catalogLoading: false, notice: 'Could not load collections from the server.' });
       return;
     }
-    const body = res.body || {};
+    const body = res.body;
     set({
       catalogLoading: false,
       notice: null,
-      collections: body.collections || [],
-      endpoints: body.endpoints || [],
-      target: body.target || '',
+      collections: body.collections,
+      endpoints: Array.isArray(body.endpoints) ? body.endpoints : [],
+      target: typeof body.target === 'string' ? body.target : '',
     });
   }
 
@@ -592,7 +605,10 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     }
 
     const [res] = await Promise.all([api.getRun(runId), refresh()]);
-    if (res.ok) {
+    // The run said it ended, so an answer that is not its finished report (a
+    // report still running, another run's, or no report at all) will not
+    // become one, and the run is shown as ended without it.
+    if (res.ok && reportOf(res.body, runId) && res.body.status !== 'running') {
       dispatch({ type: 'report', run_id: runId, report: res.body });
     } else {
       console.warn('could not fetch the finished report', res.error);
@@ -611,16 +627,24 @@ export function createLive({ api, get, set, showTab = () => {} }) {
   }
 
   async function fetchStored(id) {
-    const res = await api.getRun(id);
-    if (res.ok) {
-      dispatch({ type: 'opened', run_id: id, report: res.body });
+    const got = await api.getRun(id);
+    if (got.ok && reportOf(got.body, id)) {
+      dispatch({ type: 'opened', run_id: id, report: got.body });
       return;
     }
-    console.warn('could not reopen run', id, res.error);
+    // An answer that is not this run's report was not written by Courier
+    // for this click, and reads as one that never arrived.
+    const res = got.ok ? { ok: false, kind: 'network' } : got;
+    console.warn('could not reopen run', id, got.ok ? 'not that run\'s report' : got.error);
     // Only the entry still being waited for may say it failed.
     const wanted = track.opening === id;
     dispatch({ type: 'open_failed', run_id: id });
     if (wanted) set({ historyNote: historyRefusal(res) });
+  }
+
+  // over says whether this tab has seen run id end, or be lost.
+  function over(id) {
+    return track.ended.includes(id) || track.gone.includes(id);
   }
 
   // watch is the Watch button: follow the run status names, as a spectator.
@@ -636,8 +660,10 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     if (!id) return;
     // The 202 is the server saying this run is live. Status says so in the
     // same turn, so nothing reads the attachment against a status from before
-    // the run existed.
-    set({
+    // the run existed. A 202 read after this tab saw the run end is old news,
+    // and believing it would show a finished run as in progress until the
+    // next status read.
+    if (!over(id)) set({
       status: {
         ...(get().status || {}),
         running: true,
@@ -695,7 +721,7 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     // The hooks each render module is initialised with, so the page and its
     // tests wire the same functions under the same names.
     hooks: {
-      runner: { refresh, showTab, watch },
+      runner: { refresh, showTab, watch, over },
       sidebar: {
         openRun,
         retryCatalog: () => { void loadCatalog(); },
