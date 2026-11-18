@@ -121,6 +121,9 @@ func do(t *testing.T, s *Server, method, path string, body any) *httptest.Respon
 		}
 		r = httptest.NewRequest(method, path, strings.NewReader(string(raw)))
 	}
+	if body != nil {
+		r.Header.Set("Content-Type", "application/json")
+	}
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, r)
 	return rec
@@ -201,8 +204,8 @@ func TestPostRunsValidatesAndAccepts(t *testing.T) {
 		huge := `{"mode":"functional","sequence":[{"endpoint":"search","params":{"q":"` +
 			strings.Repeat("a", MaxBodyBytes+1024) + `"}}]}`
 		rec := do(t, s, http.MethodPost, "/api/runs", huge)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400", rec.Code)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413", rec.Code)
 		}
 	})
 }
@@ -1447,4 +1450,62 @@ func TestStreamWaitingForItsRunEndsAtShutdown(t *testing.T) {
 	if err := <-closed; err != nil {
 		t.Errorf("close: %v", err)
 	}
+}
+
+// The field travels in its own key, so the message must not carry it again:
+// a client that prints "<field>: <error>" would otherwise say it twice.
+func TestErrorBodiesStateTheFieldOnce(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+
+	rr := payload(6, 0)
+	rr.Sequence[5].Assertions = []assert.Assertion{{Type: assert.TypeStatus, Op: "x", Value: 200}}
+	rec := do(t, s, http.MethodPost, "/api/runs", rr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	want := `{"error":"operator \"x\" is not valid for a status assertion (allowed: [eq neq])","field":"sequence[5].assertions[0]"}` + "\n"
+	if got := rec.Body.String(); got != want {
+		t.Errorf("body = %s, want %s", got, want)
+	}
+
+	req := sendable()
+	req.Params = map[string]string{"highlight": "1"}
+	rec = do(t, s, http.MethodPost, "/api/send", req)
+	body := decode[errorBody](t, rec)
+	if body.Field != "params" || strings.HasPrefix(body.Error, "params") {
+		t.Errorf("send error = %+v, want field params stated once", body)
+	}
+}
+
+func TestStartedRunReportsTruncatedFields(t *testing.T) {
+	c := &clock{}
+	s := newServer(t, newTarget(t, 0), c)
+
+	rr := payload(2, 0)
+	rr.Sequence[0].Params = map[string]string{"q": strings.Repeat("a", 5000)}
+	rr.Sequence[1].ID = strings.Repeat("i", sandbox.MaxNameLen+1)
+	rr.Sequence[1].Name = strings.Repeat("n", sandbox.MaxNameLen+1)
+	rec := do(t, s, http.MethodPost, "/api/runs", rr)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		RunID     string   `json:"run_id"`
+		Truncated []string `json:"truncated"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"sequence[0].params.q", "sequence[1].id", "sequence[1].name"}
+	if got.RunID == "" || !slices.Equal(got.Truncated, want) {
+		t.Errorf("202 = %s, want a run_id and truncated %v", rec.Body.String(), want)
+	}
+	waitIdle(t, s)
+	c.advance(time.Hour)
+
+	rec = do(t, s, http.MethodPost, "/api/runs", payload(1, 0))
+	if rec.Code != http.StatusAccepted || strings.Contains(rec.Body.String(), `"truncated"`) {
+		t.Errorf("a clean run = %d %s, want a 202 with no truncated key", rec.Code, rec.Body.String())
+	}
+	waitIdle(t, s)
 }

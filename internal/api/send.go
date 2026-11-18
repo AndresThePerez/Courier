@@ -39,6 +39,11 @@ type sendResult struct {
 	Passed        bool             `json:"passed"`
 	Error         string           `json:"error,omitempty"`
 	ErrorKind     string           `json:"error_kind,omitempty"`
+
+	// Truncated names the request strings that were cut to a length cap
+	// before dispatch (params.q, name, id), so the query reported above is
+	// never a silent surprise. Absent when nothing was cut.
+	Truncated []string `json:"truncated,omitempty"`
 }
 
 // handleSend executes a single request.
@@ -99,17 +104,21 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		Status:    resp.Status,
 		LatencyMs: resp.LatencyMs,
 		SizeBytes: resp.Size,
+		Truncated: sandbox.RequestTruncations(req),
 	}
 	if resp.Err != nil {
-		out.Error, out.ErrorKind = resp.Err.Error(), resp.ErrKind
+		// The raw error names the target's internal address; it is the
+		// operator's, logged here once, and the visitor reads a fixed sentence.
+		out.Error, out.ErrorKind = resp.PublicError(), resp.ErrKind
+		s.log.Warn("dispatch failed",
+			"event", runner.EventDispatchFailed,
+			"endpoint", out.Endpoint,
+			"error_kind", resp.ErrKind,
+			"err", resp.Err.Error())
 	}
 	out.Body, out.BodyTruncated = runner.PreviewN(resp.Body, SendBodyMax)
 
-	target := assert.NewTarget(resp.Status, resp.LatencyMs, resp.Body)
-	outcomes, allPassed := assert.EvaluateAll(clean.Assertions, target)
-	if outcomes == nil {
-		outcomes = []assert.Outcome{}
-	}
+	outcomes, allPassed := runner.EvaluateResponse(clean.Assertions, resp)
 	out.Assertions = outcomes
 	out.Passed = allPassed && resp.Err == nil
 

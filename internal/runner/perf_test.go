@@ -490,3 +490,19 @@ func TestAggregatorBoundsTheSamplesARunKeeps(t *testing.T) {
 		t.Errorf("overall counted %d requests, want %d", all[0].Requests, n)
 	}
 }
+
+// A load run counts the redirect as the answer it is and never loads the
+// server it points at.
+func TestPerfRecordsRedirectsWithoutFollowingThem(t *testing.T) {
+	rd := newRedirecting(t, http.StatusFound, redirectLocations["another server"])
+	o := RunPerformance(context.Background(), NewExecutor(rd.target.URL), perfRun(oneRequest(), 2, 1), nil).Performance.Overall
+	if o.Requests == 0 || o.StatusCounts[http.StatusFound] != o.Requests {
+		t.Errorf("status counts %v over %d requests, want every one a 302", o.StatusCounts, o.Requests)
+	}
+	if o.Requests != o.OK+o.Errors+o.Aborted {
+		t.Errorf("requests %d != ok %d + errors %d + aborted %d", o.Requests, o.OK, o.Errors, o.Aborted)
+	}
+	if n := rd.away.Load(); n != 0 {
+		t.Errorf("the second server was asked %d times, want never", n)
+	}
+}

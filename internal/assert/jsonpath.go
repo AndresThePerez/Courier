@@ -27,7 +27,7 @@ type segment struct {
 // time, because "out of range" is a miss, not a malformed path.
 func parsePath(path string) ([]segment, error) {
 	if path != "$" && !strings.HasPrefix(path, "$.") && !strings.HasPrefix(path, "$[") {
-		return nil, fmt.Errorf("path must start with $: %q", path)
+		return nil, fmt.Errorf("path must start with $: %q", Clip(path))
 	}
 	var segs []segment
 	rest := path[1:]
@@ -41,23 +41,23 @@ func parsePath(path string) ([]segment, error) {
 			}
 			field := rest[:end]
 			if field == "" {
-				return nil, fmt.Errorf("empty field name in %q", path)
+				return nil, fmt.Errorf("empty field name in %q", Clip(path))
 			}
 			segs = append(segs, segment{field: field})
 			rest = rest[end:]
 		case '[':
 			closing := strings.IndexByte(rest, ']')
 			if closing < 0 {
-				return nil, fmt.Errorf("unclosed [ in %q", path)
+				return nil, fmt.Errorf("unclosed [ in %q", Clip(path))
 			}
 			idx, err := strconv.Atoi(rest[1:closing])
 			if err != nil {
-				return nil, fmt.Errorf("bad array index in %q", path)
+				return nil, fmt.Errorf("bad array index in %q", Clip(path))
 			}
 			segs = append(segs, segment{index: idx, isIndex: true})
 			rest = rest[closing+1:]
 		default:
-			return nil, fmt.Errorf("unexpected %q in %q", rest[0], path)
+			return nil, fmt.Errorf("unexpected %q in %q", rest[0], Clip(path))
 		}
 	}
 	return segs, nil
