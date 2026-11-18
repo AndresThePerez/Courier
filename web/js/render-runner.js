@@ -110,9 +110,15 @@ let lastPhase = null;
 let lastLive = ''; // the run last seen live in this tab's status or view
 let kneeNote = '';
 let kneeBuilt = false;
+// addNote is what the add-note live region says about the last add, and
+// addNoteCount the number queued it states: a note whose count is no longer
+// true is not left on screen.
+let addNote = '';
+let addNoteCount = -1;
 
 export function init(h) {
   hooks = { ...hooks, ...h };
+  sayAdded('', -1);
 
   byId('select-all').addEventListener('click', () => setAllEnabled(true));
   byId('save-sequence').addEventListener('click', saveSequence);
@@ -139,6 +145,7 @@ export function init(h) {
 
 // restore puts back the run setup this browser kept, at page load only.
 export function restore() {
+  sayAdded('', -1);
   set(setup.load());
 }
 
@@ -161,15 +168,35 @@ function entryFor(request) {
   return { key: `seq-${counter}`, enabled: true, request: deepCopy(request) };
 }
 
+// sayAdded sets what the add-note live region says. The `+` and "Add all"
+// are pressed in the sidebar, usually with the Request tab showing and the
+// sequence out of sight, so this sentence and the count on the Runner tab are
+// the only places the visitor learns the press did anything.
+function sayAdded(text, count) {
+  addNote = text;
+  addNoteCount = count;
+}
+
+// nameOf is how a note names a request or a collection: by name, else by id.
+function nameOf(thing, fallback) {
+  const name = thing && typeof thing.name === 'string' && thing.name ? thing.name : '';
+  const id = thing && typeof thing.id === 'string' ? thing.id : '';
+  return name || id || fallback;
+}
+
+const capReached = (name) => `Could not add "${name}" - the run already holds ${MaxSequence} requests, the cap.`;
+
 // add is main.js's sidebar hook for the per-request `+` button.
 export function add(request) {
   const list = get().sequence;
   if (list.length >= MaxSequence) {
     sequenceNote = `${MaxSequence} requests is the cap - remove one before adding another.`;
+    sayAdded(capReached(nameOf(request, 'that request')), list.length);
     render(get());
     return;
   }
   sequenceNote = '';
+  sayAdded(`Added "${nameOf(request, 'that request')}" to the run - ${list.length + 1} queued.`, list.length + 1);
   setSetup({ sequence: [...list, entryFor(request)] });
 }
 
@@ -182,16 +209,23 @@ export function addAll(collection) {
   const requests = (collection && collection.requests) || [];
   const taken = requests.slice(0, Math.max(MaxSequence - list.length, 0));
 
+  const name = nameOf(collection, 'that collection');
+
   if (taken.length === 0) {
     sequenceNote = requests.length === 0
       ? 'That collection has no requests.'
       : `${MaxSequence} requests is the cap - remove one before adding another.`;
+    sayAdded(requests.length === 0 ? `Nothing added - "${name}" has no requests.` : capReached(name), list.length);
     render(get());
     return;
   }
+  const total = list.length + taken.length;
   sequenceNote = taken.length < requests.length
     ? `Added ${taken.length} of ${requests.length} - ${MaxSequence} requests is the cap.`
     : '';
+  sayAdded(taken.length < requests.length
+    ? `Added ${taken.length} of the ${requests.length} requests in "${name}" to the run - ${total} queued, the cap.`
+    : `Added the ${taken.length} request${taken.length === 1 ? '' : 's'} in "${name}" to the run - ${total} queued.`, total);
   setSetup({ sequence: [...list, ...taken.map((r) => entryFor(r))] });
 }
 
@@ -209,6 +243,7 @@ function move(index, delta) {
 
 function removeAt(index) {
   sequenceNote = '';
+  sayAdded('', -1);
   setSetup({ sequence: get().sequence.filter((_, i) => i !== index) });
 }
 
@@ -262,6 +297,7 @@ function preloadKnee(workers) {
   }
   sequenceNote = '';
   startNote = '';
+  sayAdded('', -1);
   kneeNote = `Loaded ${requests.length} search requests at ${workers} worker${workers === 1 ? '' : 's'}`
     + ` for ${KneeDuration}s. Press Start run to take your own reading.`;
   setSetup({
@@ -535,7 +571,30 @@ function tick() {
 
 // ---------------------------------------------------------------- render
 
+// runnerTabLabel is what the Runner tab reads: the number of requests queued,
+// checked or not, since an unchecked request is still in the sequence and
+// still counts against the cap. Nothing queued reads plain "Runner".
+export function runnerTabLabel(sequence) {
+  const n = Array.isArray(sequence) ? sequence.length : 0;
+  return n === 0 ? 'Runner' : `Runner (${n})`;
+}
+
+// renderTabLabel puts that count on the tab, which is the one part of the
+// runner a visitor can see from the Request and Results tabs.
+export function renderTabLabel(state) {
+  setText(byId('tab-runner'), runnerTabLabel(state.sequence));
+}
+
+function renderAddNote(state) {
+  // Only a note that is still true stays: removing a request, a knee preset
+  // or a restored setup changes the count it states.
+  if (addNote && addNoteCount !== state.sequence.length) sayAdded('', -1);
+  setText(byId('add-note'), addNote);
+}
+
 export function render(state) {
+  renderTabLabel(state);
+  renderAddNote(state);
   renderKnee(state);
   renderSequence(state);
   renderConfig(state);

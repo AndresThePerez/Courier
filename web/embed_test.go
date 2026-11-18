@@ -24,7 +24,7 @@ var requiredIDs = []string{
 
 	// sidebar
 	"collections-tree", "workspace-tree", "reset-workspace", "reset-confirm", "workspace-note",
-	"saved-collections",
+	"saved-collections", "add-note",
 	"history-list", "target-note", "target-note-name",
 
 	// request editor

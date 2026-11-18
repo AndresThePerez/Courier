@@ -1,7 +1,7 @@
 // render-sidebar.js — curated collections, the visitor workspace (saved
 // requests and saved collections), and history.
 
-import { set, deepCopy } from './store.js';
+import { get, set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as workspace from './workspace.js';
 import { savedCollections } from './render-runner.js';
@@ -88,7 +88,11 @@ function showResetConfirm() {
 // window.confirm would block the page (see showResetConfirm). remove answers
 // { ok, entry } and restore(entry) { ok, deleted }, so saved requests and
 // saved collections share it.
-function deleteWithUndo(remove, restore) {
+//
+// The control that was pressed goes with the entry, so focus moves to Undo,
+// and from a landed Undo to the entry it brought back (backTo is its focus
+// key): left where it was, focus would drop to the page.
+function deleteWithUndo(remove, restore, backTo) {
   const { entry, ok } = remove();
   const note = byId('workspace-note');
   if (!entry) {
@@ -96,83 +100,120 @@ function deleteWithUndo(remove, restore) {
     return;
   }
   const label = entry.name || entry.id;
-  replace(note, [
-    el('span', { text: `Deleted "${label}". ` }),
-    el('button', {
-      class: 'link-btn',
-      type: 'button',
-      text: 'Undo',
-      on: {
-        click: () => {
-          // An undo that did not land must say so: hiding the note would
-          // leave the visitor believing the entry is back.
-          const restored = restore(entry);
-          if (restored.ok) {
-            note.hidden = true;
-            return;
-          }
+  const undo = el('button', {
+    class: 'link-btn',
+    type: 'button',
+    text: 'Undo',
+    on: {
+      click: () => {
+        // An undo that did not land must say so: hiding the note would
+        // leave the visitor believing the entry is back.
+        const restored = restore(entry);
+        if (restored.ok) {
+          const back = keyedNode(backTo(entry));
+          if (back) back.focus();
+          note.hidden = true;
+          return;
+        }
           const why = restored.deleted
             ? `Could not restore "${label}".`
             : workspace.WRITE_REFUSED;
           replace(note, [el('span', { text: why })]);
           note.hidden = false;
+          // The Undo pressed went with the sentence it was in; the sentence
+          // that replaced it is where focus goes.
+          note.setAttribute('tabindex', '-1');
+          note.focus();
         },
-      },
-    }),
+    },
+  });
+  replace(note, [
+    el('span', { text: `Deleted "${label}". ` }),
+    undo,
     ok ? null : el('span', { text: ` ${workspace.WRITE_REFUSED}` }),
   ]);
   note.hidden = false;
+  undo.focus();
 }
 
 function deleteRequest(id) {
   deleteWithUndo(() => {
     const { request, ok } = workspace.remove(id);
     return { entry: request, ok };
-  }, (request) => workspace.save(request));
+  }, (request) => workspace.save(request), (request) => `open:workspace:${request.id}`);
 }
 
 function deleteCollection(id) {
   deleteWithUndo(() => {
     const { collection, ok } = savedCollections.remove(id);
     return { entry: collection, ok };
-  }, (collection) => savedCollections.save(collection));
+  }, (collection) => savedCollections.save(collection), (collection) => `saved:${collection.id}`);
 }
 
-function requestRow(request, selectedId) {
+// queuedCounts counts the queued entries by request id, checked or not. A
+// queued entry is a copy taken when it was added, so the id is what still
+// ties it to the request in the tree: a request edited since is still marked,
+// and one deleted since takes its mark with it while its copy stays queued.
+function queuedCounts(sequence) {
+  const counts = new Map();
+  for (const entry of sequence || []) {
+    const id = entry && entry.request && entry.request.id;
+    if (typeof id === 'string') counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  return counts;
+}
+
+// queuedMark is the tree's "already in the run" marker, or null. Its text is
+// for the eye; its role and label are what a screen reader says.
+function queuedMark(counts, id) {
+  const n = counts.get(id) || 0;
+  if (n === 0) return null;
+  return el('span', {
+    class: 'in-run',
+    text: n === 1 ? 'in run' : `in run x${n}`,
+    attrs: { role: 'img', 'aria-label': n === 1 ? 'Queued in the run once' : `Queued in the run ${n} times` },
+  });
+}
+
+function requestRow(request, selectedId, listId, counts) {
+  const name = request.name || request.id;
   return el('div', { class: 'req-row' }, [
     el('button', {
       class: `req-open${request.id === selectedId ? ' is-selected' : ''}`,
       type: 'button',
-      title: request.name || request.id,
+      title: name,
+      attrs: { 'data-focus-key': `open:${listId}:${request.id}` },
       on: { click: () => hooks.select(request) },
     }, [
-      // Plain-text method, deliberately: no coloured method badges.
       el('span', { class: 'method', text: 'GET' }),
       ' ',
-      el('span', { text: request.name || request.id }),
+      el('span', { text: name }),
     ]),
+    queuedMark(counts, request.id),
     el('button', {
       class: 'btn btn-mini',
       type: 'button',
       text: '+',
       title: 'Add to the run sequence',
+      attrs: { 'aria-label': `Add ${name} to the run`, 'data-focus-key': `add:${listId}:${request.id}` },
       on: { click: () => hooks.add(request) },
     }),
   ]);
 }
 
-function collectionNode(collection, selectedId) {
-  const summary = el('summary', {}, [
+function collectionNode(collection, selectedId, counts) {
+  const summary = el('summary', { attrs: { 'data-focus-key': `collection:${collection.id}` } }, [
     el('span', { class: 'collection-name', text: collection.name }),
     el('span', { class: 'badge', text: 'built-in' }),
   ]);
   const body = el('div', { class: 'collection-body' },
-    collection.requests.map((r) => requestRow(r, selectedId)));
+    collection.requests.map((r) => requestRow(r, selectedId, collection.id, counts)));
   const actions = el('div', { class: 'collection-actions' }, [
     el('button', {
       class: 'btn btn-mini',
       type: 'button',
       text: `Add all ${collection.requests.length} to run`,
+      attrs: { 'data-focus-key': `add-all:${collection.id}` },
       on: { click: () => hooks.addAll(collection) },
     }),
   ]);
@@ -184,23 +225,25 @@ function collectionNode(collection, selectedId) {
 // savedNode lists a saved collection's requests as text: they are copies
 // taken when the sequence was saved, so opening one in the editor would edit
 // nothing the visitor could find again. Adding it to the run copies them anew.
-function savedNode(collection) {
+function savedNode(collection, counts) {
   const name = collection.name || 'Untitled';
-  const summary = el('summary', {}, [
+  const summary = el('summary', { attrs: { 'data-focus-key': `saved:${collection.id}` } }, [
     el('span', { class: 'collection-name', text: name }),
     el('span', { class: 'badge', text: 'saved' }),
   ]);
   const body = el('div', { class: 'collection-body' }, collection.requests.map((r) => el('div', { class: 'req-row' }, [
     el('span', { class: 'method', text: 'GET' }),
     ' ',
-    el('span', { text: r.name || r.id }),
+    el('span', { class: 'req-name', text: r.name || r.id }),
+    queuedMark(counts, r.id),
   ])));
   const actions = el('div', { class: 'collection-actions' }, [
     el('button', {
       class: 'btn btn-mini',
       type: 'button',
       text: `Add all ${collection.requests.length} to run`,
-      on: { click: () => hooks.addAll(collection) },
+      attrs: { 'data-focus-key': `add-all:saved:${collection.id}` },
+      on: { click: () => hooks.addAll({ ...collection, name }) },
     }),
     ' ',
     el('button', {
@@ -208,7 +251,7 @@ function savedNode(collection) {
       type: 'button',
       text: 'x',
       title: 'Delete this saved collection',
-      attrs: { 'aria-label': `Delete saved collection "${name}"` },
+      attrs: { 'aria-label': `Delete saved collection "${name}"`, 'data-focus-key': `delete-saved:${collection.id}` },
       on: { click: () => deleteCollection(collection.id) },
     }),
   ]);
@@ -217,22 +260,26 @@ function savedNode(collection) {
   return node;
 }
 
-// The saved collections are rebuilt only when the list itself changes: the
-// status poll notifies every few seconds, and a long list rebuilt on each one
-// would cost the page for nothing. Which ones are open is read back from the
-// tree, as for the curated collections.
+// The saved collections are rebuilt only when what they show changes: the
+// list itself, or which of their requests are queued. The status poll
+// notifies every few seconds, and a long list rebuilt on each one would cost
+// the page for nothing. Which ones are open is read back from the tree, as for
+// the curated collections.
 let lastSaved = null;
+let lastSavedMarks = null;
 
-function renderSaved(list) {
-  if (list === lastSaved) return;
+function renderSaved(list, counts) {
+  const marks = [...counts].map(([id, n]) => `${id}\u0000${n}`).sort().join('\u0001');
+  if (list === lastSaved && marks === lastSavedMarks) return;
   lastSaved = list;
+  lastSavedMarks = marks;
   const tree = byId('saved-collections');
   const open = new Set();
   for (const node of tree.querySelectorAll('details[data-id]')) {
     if (node.open) open.add(node.dataset.id);
   }
   replace(tree, list.map((c) => {
-    const node = savedNode(c);
+    const node = savedNode(c, counts);
     node.open = open.has(c.id);
     return node;
   }));
@@ -261,19 +308,60 @@ let openCollections = new Set();
 // are none to list. Once a load has failed it says so and offers Retry, and it
 // keeps saying so while the retry is out: "Loading" after a failure would read
 // as progress the page cannot promise.
+//
+// Retry is never disabled while its load is out, only marked so: a disabled
+// button cannot hold focus, and a keyboard visitor who pressed it would be
+// sent back to the top of the page.
 function catalogPlaceholder(state) {
   if (!state.notice) return [el('div', { class: 'tree-empty', text: 'Loading collections...' })];
+  const loading = Boolean(state.catalogLoading);
   const retry = el('button', {
     class: 'btn btn-mini',
     type: 'button',
     text: 'Retry',
-    on: { click: () => hooks.retryCatalog() },
+    attrs: { 'data-focus-key': 'catalog-retry', 'aria-disabled': loading ? 'true' : 'false' },
+    on: { click: () => { if (!get().catalogLoading) hooks.retryCatalog(); } },
   });
-  retry.disabled = Boolean(state.catalogLoading);
   return [el('div', { class: 'tree-empty' }, [el('span', { text: state.notice }), ' ', retry])];
 }
 
+// ---------------------------------------------------------------- focus
+//
+// Every render rebuilds the trees, a status poll's every 3 seconds included,
+// and a rebuilt control is a new node: whatever had focus in the old tree is
+// gone, and focus drops to the page. Each control a visitor presses here
+// carries a data-focus-key, and the render puts focus back on the control
+// with the same key. Keys are compared as strings rather than through a
+// selector, because a request id may hold any character.
+
+function keyedNode(key) {
+  if (!key) return null;
+  for (const node of byId('panel-sidebar').querySelectorAll('[data-focus-key]')) {
+    if (node.dataset.focusKey === key) return node;
+  }
+  return null;
+}
+
+function focusedKey() {
+  const node = document.activeElement;
+  if (!node || !node.dataset || !node.dataset.focusKey) return '';
+  return byId('panel-sidebar').contains(node) ? node.dataset.focusKey : '';
+}
+
+function restoreFocus(key) {
+  if (!key) return;
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  let node = keyedNode(key);
+  // Retry leaves with the notice once the catalog is in: the collections it
+  // brought are where the visitor was headed.
+  if (!node && key === 'catalog-retry') node = byId('collections-tree').querySelector('summary');
+  if (node) node.focus();
+}
+
 export function render(state) {
+  const focus = focusedKey();
+  const counts = queuedCounts(state.sequence);
   const tree = byId('collections-tree');
   // Remember which collections the visitor had expanded, so a notify from an
   // unrelated part of the app does not collapse the tree under their cursor.
@@ -289,7 +377,7 @@ export function render(state) {
   if (detailNodes.length === 0) openCollections = previouslyOpen;
 
   replace(tree, state.collections.map((c) => {
-    const node = collectionNode(c, state.selectedId);
+    const node = collectionNode(c, state.selectedId, counts);
     node.dataset.id = c.id;
     node.open = openCollections.has(c.id);
     return node;
@@ -304,19 +392,20 @@ export function render(state) {
     })]);
   } else {
     replace(ws, state.workspace.map((r) => {
-      const row = requestRow(r, state.selectedId);
+      const row = requestRow(r, state.selectedId, 'workspace', counts);
       row.appendChild(el('button', {
         class: 'btn btn-mini',
         type: 'button',
         text: 'x',
         title: 'Delete this saved request',
+        attrs: { 'aria-label': `Delete saved request "${r.name || r.id}"`, 'data-focus-key': `delete:${r.id}` },
         on: { click: () => deleteRequest(r.id) },
       }));
       return row;
     }));
   }
 
-  renderSaved(state.savedCollections);
+  renderSaved(state.savedCollections, counts);
 
   const hist = byId('history-list');
   // The five most recent runs, list and click-to-reopen only.
@@ -333,6 +422,8 @@ export function render(state) {
   const label = byId('target-label');
   const wanted = state.target ? `target: ${state.target}` : '';
   if (label.textContent !== wanted) label.textContent = wanted;
+
+  restoreFocus(focus);
 }
 
 // selectRequest is the sidebar's half of selection: the editor owns the draft,

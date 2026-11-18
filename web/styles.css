@@ -131,6 +131,15 @@ html, body {
 .req-open:hover { background: var(--line); }
 .req-open.is-selected { background: var(--line); color: var(--accent); }
 .method { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+/* "in run" marks a request already queued; it never shrinks, so a long name
+   is what gives way. */
+.in-run { flex: 0 0 auto; font-size: 10px; color: var(--accent); white-space: nowrap; }
+.req-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The answer to + and "Add all". Empty, it takes no room; it is never hidden,
+   because a live region taken out of the page is not announced when it
+   comes back. */
+.add-note { margin: 0 0 0.6rem; color: var(--text); overflow-wrap: anywhere; }
+.add-note:empty { margin: 0; }
 
 /* ---------- buttons ---------- */
 
@@ -141,7 +150,7 @@ button { font: inherit; }
   padding: 0.35rem 0.7rem; cursor: pointer;
 }
 .btn:hover:not(:disabled) { border-color: var(--muted); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #16110d; font-weight: 600; }
 .btn-danger { border-color: var(--fail); color: var(--fail); }
 .btn-mini { padding: 0.05rem 0.35rem; font-size: 11px; line-height: 1.4; }
