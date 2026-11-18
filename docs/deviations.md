@@ -928,7 +928,7 @@ are dated measurements, and the prose no longer calls the index or the assertion
 | `search-basics/browse-all` | `$.total eq 20324` | `$.total gt 20323` |
 | `search-basics/fuzzy-typo` | `$.total eq 128` | `$.total gt 127` |
 | `search-basics/scoped-facets` | `$.total eq 221` | `$.total gt 220` |
-| `search-basics/scoped-facets` | `$.facets.types count 9` | `$.facets.types[8] exists` |
+| `search-basics/scoped-facets` | `$.facets.types count 9` | `$.total lt 20324` |
 | `search-basics/scoped-facets` | `$.facets.sets count 173` | `$.facets.sets[172] exists` |
 | `search-filters/filter-rarity` | `$.total eq 1617` | `$.total gt 1616` and `$.total lt 20324` |
 | `search-filters/filter-two-types` | `$.total eq 3992` | `$.total gt 3991` and `$.total lt 20324` |
@@ -936,22 +936,32 @@ are dated measurements, and the prose no longer calls the index or the assertion
 | `search-filters/filter-hp-range` | `$.total eq 491` | `$.total gt 490` and `$.total lt 20324` |
 | `search-filters/sort-hp-desc` | `$.results[0].hp eq 380` | `$.results[0].hp gt 379` |
 | `search-filters/sort-hp-desc` | `$.results[0].name eq "Mega Venusaur ex"` | `$.results count 24` |
+| `search-filters/sort-hp-desc` | none | `$.results[23].hp gt 299` |
 | `suggest-health/prefix-suggestions` | `$.suggestions[0] eq "Alakazam"` | `$.suggestions[0] contains "alak"` |
 | `suggest-health/health-check` | `$.docs eq 20324` | `$.docs gt 20323` |
 | `error-handling/lenient-list-member` | `$.total eq 1513` | `$.total gt 1512` and `$.total lt 20324` |
 
 Each lower bound is the 2026-08-22 measured value minus one, so a shrinking index fails it.
-The `types[8]` and `sets[172]` checks are lower bounds on an array's length, since the
-assertion language has no "at least" operator for counts. For the same reason
-`scoped-facets` no longer asserts that the type facet narrows below the browse's 11: there is
-no way to assert an upper bound on a length, and an exact 9 follows the index.
+The `sets[172]` check is a lower bound on an array's length, since the assertion language
+has no "at least" operator for counts. `scoped-facets` no longer asserts that the type facet
+narrows below the browse's 11: there is no way to assert an upper bound on a length, and an
+exact 9 follows the index. A lower bound on the type facet (`types[8] exists`) would not
+help either: the browse page's 11 types satisfy it, so a target that ignored `q=pikachu`
+would pass. The request's upper bound on `$.total` is what catches that (see below).
 
-**Upper bounds.** `lt 20324` is added only to the four totals scoped by a filter and
-measured below half the corpus (`filter-rarity`, `filter-two-types`, `filter-hp-range`,
-`lenient-list-member`). Dropping the filter makes the target answer with the whole corpus,
-which fails the bound on the old index and on any larger one. Text-query totals get a lower
-bound only: a fuzzy or relevance-scored count is not scoped by a filter, so no ceiling
-below the corpus is defensible for it.
+`sort-hp-desc` asserts the 24th card as well as the first: `$.results[23].hp gt 299`. A
+target that sorted only its top hit, or put one high card first on an unsorted page, passed
+the first-card check alone. On 2026-08-22, 491 cards had an hp between 300 and 380, so the
+24th-highest hp was at least 300, and it can only rise as the index grows.
+
+**Upper bounds.** `lt 20324` is added to the four totals scoped by a filter and measured
+below half the corpus (`filter-rarity`, `filter-two-types`, `filter-hp-range`,
+`lenient-list-member`), and to one text query, `scoped-facets` (`q=pikachu`, 221 on
+2026-08-22). Dropping the filter, or ignoring the query, makes the target answer with the
+whole corpus, which fails the bound on the old index and on any larger one. The other text
+queries (`basic-text`, `fuzzy-typo`) keep a lower bound only: their top-hit name check
+already fails a browse page, so a ceiling would add nothing to them, while `scoped-facets`
+asserts no name and had no other way to fail when its query was ignored.
 
 **`filter-two-types` loses its `facets.sets` check.** Curated requests carry 2 to 4
 assertions, and the added upper bound would have made five. `scoped-facets` still asserts
@@ -980,13 +990,16 @@ The rank-dependent values, `hp eq 380` with `Mega Venusaur ex` and `suggestions[
 only rise) and shape checks.
 
 **Proof:** `internal/collections/growth_test.go` fails if a curated `$.total` or `$.docs`
-assertion uses `eq` or `neq` outside the named allowlist, if a filter-scoped total lacks
+assertion uses `eq` or `neq` outside the named allowlist, if a scoped total lacks
 either bound, if a `count` or a rank-dependent `eq` is not on a listed allowlist with its
 reason, or if the README, the design notes, the package comment or a collection description
 calls the index pinned. It also evaluates every curated assertion with `assert.EvaluateAll`
 against synthetic responses for the 2026-08-22 index (charizard 107, 20,324 documents) and
 for the 2026-11-17 one (charizard 108, 20,635 documents, every other corpus count scaled by
-20,635/20,324 and rounded up), and checks that a dropped filter fails each upper bound.
+20,635/20,324 and rounded up), and checks that a dropped filter or an ignored query fails
+each upper bound.
+`internal/collections/bounds_edge_test.go` checks that a browse page with its full facets
+fails `scoped-facets` and that a first page whose 24th card has hp 60 fails `sort-hp-desc`.
 
 **Not verified against the real index:** the synthetic responses stand in for it. Only
 `charizard` 108 and the 20,635 document count were read off the live index. Every other

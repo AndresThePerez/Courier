@@ -102,12 +102,6 @@ func TestUnscopedFacetCountsOnlyOnBrowse(t *testing.T) {
 				if a.Type != assert.TypeJSON || a.Op != "count" || !scoped[a.Path] || isBrowse {
 					continue
 				}
-				// The one documented exception is the request whose entire
-				// point is that the number changes: types narrows below 11
-				// under q=pikachu while sets stays the whole catalog.
-				if c.ID == "search-basics" && r.ID == "scoped-facets" {
-					continue
-				}
 				t.Errorf("%s/%s asserts a count on %s outside a browse; use $.facets.sets (the whole catalog, an [n] exists bound) instead",
 					c.ID, r.ID, a.Path)
 			}

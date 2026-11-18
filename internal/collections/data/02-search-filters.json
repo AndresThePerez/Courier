@@ -47,7 +47,8 @@
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
         { "type": "json", "path": "$.results", "op": "count", "value": 24 },
-        { "type": "json", "path": "$.results[0].hp", "op": "gt", "value": 379 }
+        { "type": "json", "path": "$.results[0].hp", "op": "gt", "value": 379 },
+        { "type": "json", "path": "$.results[23].hp", "op": "gt", "value": 299 }
       ]
     }
   ]

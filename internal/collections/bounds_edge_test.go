@@ -55,7 +55,7 @@ func TestEveryLowerBoundAdmitsTheMeasuredValueAndRejectsOneLess(t *testing.T) {
 				k := key(c, r) + " " + a.Path
 				m, ok := measuredAt[k]
 				if !ok {
-					continue // the random-traffic floor of 0 has no measured value
+					continue // the random-traffic floor of 0 and the 24th sorted hp have no single measured value
 				}
 				seen[k] = true
 				if !passes(a, at(a.Path, m)) {
@@ -95,8 +95,8 @@ func TestEveryUpperBoundRejectsTheWholeCorpusOldAndGrown(t *testing.T) {
 			}
 		}
 	}
-	if n != len(filterScoped) {
-		t.Errorf("found %d upper bounds, want one per filter-scoped total (%d)", n, len(filterScoped))
+	if n != len(upperBounded) {
+		t.Errorf("found %d upper bounds, want one per scoped total (%d)", n, len(upperBounded))
 	}
 }
 
@@ -105,7 +105,7 @@ func TestEveryArrayLengthBoundFailsOneShort(t *testing.T) {
 	cases := map[string]struct {
 		facet string
 		want  int
-	}{"$.facets.types[8]": {"types", 9}, "$.facets.sets[172]": {"sets", 173}}
+	}{"$.facets.sets[172]": {"sets", 173}}
 	for _, c := range All() {
 		for _, r := range c.Requests {
 			for _, a := range r.Assertions {
@@ -213,6 +213,57 @@ func TestIgnoredQueryOrSortOrderFailsTheRequest(t *testing.T) {
 	}
 	for k := range cases {
 		t.Errorf("%s: no such curated request", k)
+	}
+}
+
+// A target that ignores q=pikachu answers the whole browse page, facets and
+// all, and a target that sorts only its top hit still puts a high card first.
+// Both must fail, on the measured index and on the grown one.
+func TestBrowseFacetsAndAPartlySortedPageFail(t *testing.T) {
+	byKey := map[string][]assert.Assertion{}
+	for _, c := range All() {
+		for _, r := range c.Requests {
+			byKey[key(c, r)] = r.Assertions
+		}
+	}
+	for _, ix := range []index{measured, grown} {
+		browseFacets, _ := json.Marshal(map[string]any{
+			"total":   ix.corpus,
+			"results": cards(24, map[string]any{"name": "Bulbasaur"}),
+			"facets": map[string]any{
+				"types": list(11, func(i int) any { return i }),
+				"sets":  list(ix.scale(173), func(i int) any { return map[string]any{"id": i} }),
+			},
+		})
+		partlySorted, _ := json.Marshal(map[string]any{
+			"results": list(24, func(i int) any {
+				switch i {
+				case 0:
+					return map[string]any{"name": "Mega Venusaur ex", "hp": 380}
+				case 23:
+					return map[string]any{"name": "Caterpie", "hp": 60}
+				}
+				return map[string]any{"name": "Filler", "hp": 300}
+			}),
+		})
+		cases := []struct {
+			key  string
+			body []byte
+			what string
+		}{
+			{"search-basics/scoped-facets", browseFacets, "an unscoped browse page with its facets"},
+			{"search-filters/sort-hp-desc", partlySorted, "a page whose 24th card has hp 60"},
+		}
+		for _, cs := range cases {
+			as, ok := byKey[cs.key]
+			if !ok {
+				t.Errorf("%s: no such curated request", cs.key)
+				continue
+			}
+			if _, passed := assert.EvaluateAll(as, assert.NewTarget(200, 5, cs.body)); passed {
+				t.Errorf("[%s] %s passes on %s", ix.name, cs.key, cs.what)
+			}
+		}
 	}
 }
 

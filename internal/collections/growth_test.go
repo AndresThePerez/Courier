@@ -18,8 +18,8 @@ import (
 // asserted exactly.
 
 // corpusCeiling is the document count the index held when the fixtures were
-// measured. A filter-scoped total sits far below it, so "lt corpusCeiling"
-// fails when the filter is dropped, and stays true as the index grows.
+// measured. A scoped total sits far below it, so "lt corpusCeiling" fails when
+// the scope is dropped, and stays true as the index grows.
 const corpusCeiling = 20324
 
 // exactIDLookups are the only requests allowed an eq on $.total. An exact-id
@@ -51,13 +51,15 @@ var exactByRank = map[string]string{
 	"search-filters/filter-rarity $.results[0].rarity": "the filter guarantees every hit carries the rarity",
 }
 
-// filterScoped are the requests whose total was measured below half the corpus
-// and is scoped by a filter, so a dropped filter must fail an upper bound.
-var filterScoped = []string{
-	"search-filters/filter-rarity",
-	"search-filters/filter-two-types",
-	"search-filters/filter-hp-range",
-	"error-handling/lenient-list-member",
+// upperBounded are the requests whose total was measured below half the corpus
+// and must fail an upper bound when the target drops their scope, each with
+// the reason the bound holds as the index grows.
+var upperBounded = map[string]string{
+	"search-filters/filter-rarity":       "a dropped filter returns the whole corpus",
+	"search-filters/filter-two-types":    "a dropped filter returns the whole corpus",
+	"search-filters/filter-hp-range":     "a dropped filter returns the whole corpus",
+	"error-handling/lenient-list-member": "a dropped filter returns the whole corpus",
+	"search-basics/scoped-facets":        "an ignored query returns the whole corpus",
 }
 
 func key(c Collection, r sandbox.Request) string { return c.ID + "/" + r.ID }
@@ -88,14 +90,14 @@ func TestNoCuratedTotalOrDocsIsAnExactCount(t *testing.T) {
 	}
 }
 
-func TestFilterScopedTotalsAreBoundedBothWays(t *testing.T) {
+func TestScopedTotalsAreBoundedBothWays(t *testing.T) {
 	byKey := map[string]sandbox.Request{}
 	for _, c := range All() {
 		for _, r := range c.Requests {
 			byKey[key(c, r)] = r
 		}
 	}
-	for _, k := range filterScoped {
+	for k, reason := range upperBounded {
 		r, ok := byKey[k]
 		if !ok {
 			t.Errorf("%s: no such curated request", k)
@@ -117,7 +119,7 @@ func TestFilterScopedTotalsAreBoundedBothWays(t *testing.T) {
 			t.Errorf("%s: no lower bound on $.total", k)
 		}
 		if !upper {
-			t.Errorf("%s: no $.total lt %d, so a dropped filter would still pass", k, corpusCeiling)
+			t.Errorf("%s: no $.total lt %d, yet %s", k, corpusCeiling, reason)
 		}
 	}
 }
@@ -260,7 +262,9 @@ func responses(ix index) map[string]response {
 		"search-filters/filter-hp-range": {200, map[string]any{
 			"total": ix.scale(491), "results": cards(24, map[string]any{"hp": 300})}},
 		"search-filters/sort-hp-desc": {200, map[string]any{
-			"results": cards(24, map[string]any{"hp": 380, "name": "Mega Venusaur ex"})}},
+			"results": list(24, func(i int) any {
+				return map[string]any{"hp": 380 - 3*i, "name": fmt.Sprintf("Card %d", i)}
+			})}},
 		"suggest-health/prefix-suggestions": {200, map[string]any{"suggestions": names(8, "Alakazam")}},
 		"suggest-health/single-letter-cap":  {200, map[string]any{"suggestions": names(8, "Pidgey")}},
 		"suggest-health/no-matches":         {200, map[string]any{"suggestions": []any{}}},
@@ -310,19 +314,15 @@ func TestEveryCuratedAssertionPassesWhateverTheIndexHolds(t *testing.T) {
 	}
 }
 
-// The upper bound is only worth having if it fails when the filter is lost:
+// The upper bound is only worth having if it fails when the scope is lost:
 // the target then answers with the whole corpus.
-func TestADroppedFilterFailsTheCuratedAssertions(t *testing.T) {
+func TestADroppedScopeFailsTheCuratedAssertions(t *testing.T) {
 	for _, ix := range []index{measured, grown} {
 		bodies := responses(ix)
 		for _, c := range All() {
 			for _, r := range c.Requests {
 				k := key(c, r)
-				scoped := false
-				for _, f := range filterScoped {
-					scoped = scoped || f == k
-				}
-				if !scoped {
+				if _, scoped := upperBounded[k]; !scoped {
 					continue
 				}
 				resp := bodies[k]

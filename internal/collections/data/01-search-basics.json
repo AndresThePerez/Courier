@@ -58,7 +58,7 @@
       "assertions": [
         { "type": "status", "op": "eq", "value": 200 },
         { "type": "json", "path": "$.total", "op": "gt", "value": 220 },
-        { "type": "json", "path": "$.facets.types[8]", "op": "exists" },
+        { "type": "json", "path": "$.total", "op": "lt", "value": 20324 },
         { "type": "json", "path": "$.facets.sets[172]", "op": "exists" }
       ]
     }
