@@ -322,3 +322,12 @@ test('a 5 MB stored value loads with its name cut, and a thousand saved collecti
   paint();
   assert.equal(saved().length, 1000);
 });
+
+// ---------------------------------------------------------------- the label
+
+test('the My Workspace heading says its contents are saved in this browser only', () => {
+  const heading = byId('workspace-tree').parentNode.querySelector('h2');
+  assert.ok(heading.textContent.includes('My Workspace'));
+  const label = [...heading.querySelectorAll('span')].find((s) => s.textContent === 'Saved in this browser only');
+  assert.ok(label, 'the exact words sit in the heading beside the name');
+});
