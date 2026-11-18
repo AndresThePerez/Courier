@@ -121,6 +121,9 @@ func do(t *testing.T, s *Server, method, path string, body any) *httptest.Respon
 		}
 		r = httptest.NewRequest(method, path, strings.NewReader(string(raw)))
 	}
+	if body != nil {
+		r.Header.Set("Content-Type", "application/json")
+	}
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, r)
 	return rec
@@ -201,8 +204,8 @@ func TestPostRunsValidatesAndAccepts(t *testing.T) {
 		huge := `{"mode":"functional","sequence":[{"endpoint":"search","params":{"q":"` +
 			strings.Repeat("a", MaxBodyBytes+1024) + `"}}]}`
 		rec := do(t, s, http.MethodPost, "/api/runs", huge)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400", rec.Code)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413", rec.Code)
 		}
 	})
 }

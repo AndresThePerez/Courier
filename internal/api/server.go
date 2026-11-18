@@ -3,16 +3,23 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
+	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/collections"
 	"github.com/AndresThePerez/courier/internal/runner"
@@ -256,23 +263,308 @@ func writeError(w http.ResponseWriter, status int, field, format string, args ..
 	writeJSON(w, status, errorBody{Error: fmt.Sprintf(format, args...), Field: field})
 }
 
-// decodeJSON reads a capped, single-value JSON body. It answers the client and
-// returns false on any failure, so callers read as one guard clause.
+// decodeJSON reads a capped body holding exactly one JSON object whose shape
+// is exactly v's. It answers the client and returns false on any failure, so
+// callers read as one guard clause.
 //
 // The cap is enforced by http.MaxBytesReader rather than by trusting
 // Content-Length, which a client controls and can simply lie about.
+//
+// Strict because a key the server does not read is a key the author believes
+// does something: a "url" that is silently dropped looks, from the outside,
+// exactly like a "url" that is honoured. The same goes for a second "endpoint"
+// that quietly wins over the first, and for a key that only matches a field
+// because encoding/json folds case.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	if !isJSONContentType(r.Header.Values("Content-Type")) {
+		writeError(w, http.StatusUnsupportedMediaType, "body", "Content-Type must be application/json")
+		return false
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
+	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeError(w, http.StatusBadRequest, "body", "payload exceeds the %d byte limit", MaxBodyBytes)
+			writeError(w, http.StatusRequestEntityTooLarge, "body", "payload exceeds the %d byte limit", MaxBodyBytes)
 			return false
 		}
-		writeError(w, http.StatusBadRequest, "body", "%s", err.Error())
+		writeError(w, http.StatusBadRequest, "body", "the body could not be read")
+		return false
+	}
+
+	if field, msg, ok := checkBody(body, reflect.TypeOf(v)); !ok {
+		writeError(w, http.StatusBadRequest, field, "%s", msg)
+		return false
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		// checkBody has already walked every value against v's shape, so this
+		// is a backstop; its text is Go's and is not shown.
+		writeError(w, http.StatusBadRequest, "body", "the body does not match the expected shape")
 		return false
 	}
 	return true
+}
+
+// isJSONContentType accepts exactly one Content-Type naming application/json,
+// with no parameter but an optional UTF-8 charset: JSON on the wire is UTF-8.
+func isJSONContentType(values []string) bool {
+	if len(values) != 1 {
+		return false
+	}
+	mt, params, err := mime.ParseMediaType(values[0])
+	if err != nil || mt != "application/json" {
+		return false
+	}
+	for k, v := range params {
+		if k != "charset" || !strings.EqualFold(v, "utf-8") {
+			return false
+		}
+	}
+	return true
+}
+
+// checkBody validates body against the shape of t (a pointer to the payload
+// type) and returns the offending field and a message when it does not fit.
+// Messages describe JSON, never Go: a visitor has no use for a struct name.
+func checkBody(body []byte, t reflect.Type) (field, msg string, ok bool) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		var syn *json.SyntaxError
+		switch {
+		case errors.As(err, &syn):
+			return "body", fmt.Sprintf("malformed JSON at byte %d", syn.Offset), false
+		case errors.Is(err, io.EOF):
+			return "body", "body must hold exactly one JSON value", false
+		default: // io.ErrUnexpectedEOF: the body stops inside a value
+			return "body", fmt.Sprintf("malformed JSON at byte %d", len(body)), false
+		}
+	}
+	if len(bytes.TrimLeft(body[dec.InputOffset():], " \t\r\n")) > 0 {
+		return "body", "body must hold exactly one JSON value", false
+	}
+	if raw[0] != '{' {
+		return "body", "body must be a JSON object", false
+	}
+
+	walk := json.NewDecoder(bytes.NewReader(raw))
+	walk.UseNumber()
+	if err := checkValue(walk, t, ""); err != nil {
+		var se *shapeError
+		if errors.As(err, &se) {
+			return fieldName(se.path), se.msg, false
+		}
+		return "body", "malformed JSON", false
+	}
+	return "", "", true
+}
+
+// shapeError is a value that does not fit the payload's shape, at a path in
+// the same notation the validator uses (sequence[2].params.q).
+type shapeError struct{ path, msg string }
+
+func (e *shapeError) Error() string { return e.path + ": " + e.msg }
+
+func fieldName(path string) string {
+	if path == "" {
+		return "body"
+	}
+	return path
+}
+
+func joinKey(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
+}
+
+// checkValue reads one value from dec and checks it against t. A nil t (an
+// `any` field) accepts any value, though duplicate keys are still refused.
+func checkValue(dec *json.Decoder, t reflect.Type, path string) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if tok == nil { // null leaves a field at its zero value
+		return nil
+	}
+	if t != nil && t.Kind() == reflect.Interface {
+		t = nil
+	}
+	if d, isDelim := tok.(json.Delim); isDelim {
+		if d == '{' {
+			return checkObject(dec, t, path)
+		}
+		return checkArray(dec, t, path)
+	}
+	return checkScalar(tok, t, path)
+}
+
+func checkObject(dec *json.Decoder, t reflect.Type, path string) error {
+	var fields map[string]reflect.Type
+	switch {
+	case t == nil:
+	case t.Kind() == reflect.Struct:
+		fields = jsonFields(t)
+	case t.Kind() == reflect.Map:
+	default:
+		return &shapeError{path, fmt.Sprintf("expected %s, got an object", jsonKind(t))}
+	}
+	seen := make(map[string]bool)
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, _ := tok.(string)
+		if seen[key] {
+			return &shapeError{joinKey(path, key), fmt.Sprintf("duplicate key %q", clip(key))}
+		}
+		seen[key] = true
+
+		var elem reflect.Type
+		switch {
+		case t == nil:
+		case fields != nil:
+			ft, known := fields[key]
+			if !known {
+				return &shapeError{path, fmt.Sprintf("unknown field %q", clip(key))}
+			}
+			elem = ft
+		default:
+			elem = t.Elem()
+		}
+		if err := checkValue(dec, elem, joinKey(path, key)); err != nil {
+			return err
+		}
+	}
+	_, err := dec.Token() // '}'
+	return err
+}
+
+func checkArray(dec *json.Decoder, t reflect.Type, path string) error {
+	var elem reflect.Type
+	if t != nil {
+		if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
+			return &shapeError{path, fmt.Sprintf("expected %s, got an array", jsonKind(t))}
+		}
+		elem = t.Elem()
+	}
+	for i := 0; dec.More(); i++ {
+		if err := checkValue(dec, elem, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			return err
+		}
+	}
+	_, err := dec.Token() // ']'
+	return err
+}
+
+func checkScalar(tok json.Token, t reflect.Type, path string) error {
+	mismatch := func(got string) error {
+		return &shapeError{path, fmt.Sprintf("expected %s, got %s", jsonKind(t), got)}
+	}
+	switch v := tok.(type) {
+	case string:
+		if t != nil && t.Kind() != reflect.String {
+			return mismatch("a string")
+		}
+	case bool:
+		if t != nil && t.Kind() != reflect.Bool {
+			return mismatch("a boolean")
+		}
+	case json.Number:
+		return checkNumber(v, t, path, mismatch)
+	}
+	return nil
+}
+
+// checkNumber holds a number to what encoding/json will accept for t, so the
+// decode that follows cannot fail on it.
+func checkNumber(n json.Number, t reflect.Type, path string, mismatch func(string) error) error {
+	outOfRange := &shapeError{path, fmt.Sprintf("the number %s is out of range", clip(n.String()))}
+	kind := reflect.Float64
+	if t != nil {
+		kind = t.Kind()
+	}
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if _, err := strconv.ParseInt(n.String(), 10, t.Bits()); err != nil {
+			if errors.Is(err, strconv.ErrRange) {
+				return outOfRange
+			}
+			return mismatch("the number " + clip(n.String()))
+		}
+	case reflect.Float32, reflect.Float64:
+		bits := 64
+		if t != nil {
+			bits = t.Bits()
+		}
+		if _, err := strconv.ParseFloat(n.String(), bits); err != nil {
+			return outOfRange
+		}
+	default:
+		return mismatch("a number")
+	}
+	return nil
+}
+
+// jsonFields maps each JSON key of a struct to its field type, by the exact
+// tag name only.
+func jsonFields(t reflect.Type) map[string]reflect.Type {
+	out := make(map[string]reflect.Type, t.NumField())
+	for f := range t.Fields() {
+		if !f.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		out[name] = f.Type
+	}
+	return out
+}
+
+// jsonKind names what a Go type accepts, in JSON's vocabulary.
+func jsonKind(t reflect.Type) string {
+	if t == nil {
+		return "a JSON value"
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "a string"
+	case reflect.Bool:
+		return "true or false"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return "a whole number"
+	case reflect.Float32, reflect.Float64:
+		return "a number"
+	case reflect.Struct, reflect.Map:
+		return "an object"
+	case reflect.Slice, reflect.Array:
+		return "an array"
+	default:
+		return "a JSON value"
+	}
+}
+
+// clip bounds a client-supplied fragment echoed in an error message.
+func clip(s string) string {
+	const max = 64
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "..."
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
