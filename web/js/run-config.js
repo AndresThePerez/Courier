@@ -93,7 +93,16 @@ export function createRunConfig({ storage: area, limits, maxSequence }) {
       mode,
       options,
     };
-    const written = storage.write(area, SETUP_KEY, JSON.stringify(value));
+    // A setup that cannot be encoded is a write that cannot happen: the page
+    // keeps the change and says so, the same as for a refused write.
+    let text;
+    try {
+      text = JSON.stringify(value);
+    } catch (error) {
+      console.warn('run setup not persisted', error);
+      return { ok: false };
+    }
+    const written = storage.write(area, SETUP_KEY, text);
     if (!written.ok) console.warn('run setup not persisted', written.error);
     return { ok: written.ok };
   }

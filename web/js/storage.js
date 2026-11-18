@@ -333,6 +333,10 @@ export function createSyncedList({ storage: area, key, field, decode, encode, ge
   // browser accepted the write, deleted when the change lost to a delete made
   // in another tab.
   function commit(op) {
+    // An entry that cannot be encoded can never be written. Queued, it would
+    // make every later write of this list throw, and be retried each time; so
+    // it is refused here, before it joins anything.
+    if (op.type === 'save' && !encodable(op.item)) return { ok: false, deleted: false };
     // Only the latest change per entry matters, and every keystroke is a
     // change: without this a store that stays unwritable would grow the
     // queue, and the cost of every later write, by one entry per keystroke.
@@ -366,6 +370,16 @@ export function createSyncedList({ storage: area, key, field, decode, encode, ge
     const deleted = op.type === 'save' && result.blocked.has(op.item.id);
     publish(result);
     return { ok: written.ok && !deleted, deleted };
+  }
+
+  function encodable(item) {
+    try {
+      encode([item]);
+      return true;
+    } catch (error) {
+      console.warn(`${key} entry not persisted`, error);
+      return false;
+    }
   }
 
   function find(id) {

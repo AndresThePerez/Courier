@@ -334,17 +334,16 @@ function clampOption(key, raw) {
   return clampWithin(Limits, key, raw);
 }
 
-// requestPayload is the sandbox.Request shape POST /api/runs validates. The
-// sequence already holds requests in that shape — curated ones arrive from the
-// server that way, and a workspace request is a fork of one — so this only
-// unaliases the objects the page is still holding.
+// requestPayload is the sandbox.Request shape POST /api/runs validates, and
+// nothing else: a run carries the fields a request has and no others, at
+// every level, whatever object the page is holding.
 function requestPayload(r) {
   return {
     id: r.id,
     name: r.name || '',
     endpoint: r.endpoint,
     params: { ...(r.params || {}) },
-    assertions: (r.assertions || []).map((a) => ({ ...a })),
+    assertions: (r.assertions || []).map(({ type, op, path, value }) => ({ type, op, path, value })),
   };
 }
 
@@ -368,13 +367,21 @@ async function start() {
   // being disabled is the affordance, the server is the authority. A click that
   // slips through between the run ending and the poll noticing gets a 409 and
   // lands in the right state, which is exactly what step 5 asks for.
-  const outcome = await api.startRun({
-    mode: state.mode,
-    sequence: entries.map((e) => requestPayload(e.request)),
-    options: { ...state.options },
-  });
-
-  starting = false;
+  // Whatever building or sending the payload throws, Start must come back:
+  // a button left on "Starting..." can only be cleared by a reload.
+  let outcome;
+  try {
+    outcome = await api.startRun({
+      mode: state.mode,
+      sequence: entries.map((e) => requestPayload(e.request)),
+      options: { ...state.options },
+    });
+  } catch (error) {
+    console.warn('run not sent', error);
+    outcome = { ok: false, kind: 'error', error: 'a queued request could not be sent from this page.' };
+  } finally {
+    starting = false;
+  }
   applyStartOutcome(outcome, state.mode);
   await hooks.refresh();
   render(get());
@@ -548,7 +555,7 @@ function renderSequence(state) {
       text: 'Nothing queued. Add a request with + in the sidebar, or add a whole collection with "Add all to run".',
     })]);
   } else {
-    replace(rows, list.map((entry, i) => sequenceRow(entry, i, list.length)));
+    replace(rows, list.map((entry, i) => shownRow(entry, i, list.length)));
   }
   restoreFocus(focus);
 }
@@ -615,6 +622,29 @@ function sequenceRow(entry, index, total) {
       on: { click: () => removeAt(index) },
     }),
   ]);
+}
+
+// shownRow keeps one queued request the page cannot draw from taking the
+// whole list with it: that row is shown without its details, and can still
+// be removed.
+function shownRow(entry, index, total) {
+  try {
+    return sequenceRow(entry, index, total);
+  } catch (error) {
+    console.warn('queued request not shown', error);
+    return el('div', { class: 'row seq-row is-off' }, [
+      el('span', { class: 'seq-index mono', text: String(index + 1) }),
+      el('span', { class: 'seq-body' }, [el('span', { class: 'seq-name', text: 'This queued request cannot be shown.' })]),
+      el('button', {
+        class: 'btn btn-mini',
+        type: 'button',
+        text: 'x',
+        title: 'Remove from the run',
+        attrs: { 'aria-label': `Remove request ${index + 1} from the run` },
+        on: { click: () => removeAt(index) },
+      }),
+    ]);
+  }
 }
 
 function arrow(glyph, label, key, disabled, onClick) {
@@ -760,5 +790,3 @@ function restoreFocus(key) {
   const node = document.querySelector(`[data-focus-key="${key}"]`);
   if (node && node !== document.activeElement && !node.disabled) node.focus();
 }
-
-
