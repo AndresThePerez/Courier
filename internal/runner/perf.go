@@ -15,6 +15,14 @@ import (
 // torn between reading a counter and reading a sample slice.
 const ProgressInterval = 250 * time.Millisecond
 
+// The dead-target backoff (see nextBackoff). Without it a refused dial costs
+// microseconds, so 50 workers against a dead port made 520,142 failed dials
+// in 5s: the "load test" became a measurement of the kernel's RST path.
+const (
+	BackoffFirst = 10 * time.Millisecond
+	BackoffMax   = 250 * time.Millisecond
+)
+
 // dispatch is one worker's report of one request, on its way to the aggregator.
 type dispatch struct {
 	index int
@@ -92,12 +100,18 @@ func RunPerformance(ctx context.Context, ex *Executor, rr sandbox.RunRequest, em
 			// Worker w starts at its own offset and advances round-robin, so a
 			// two-request sequence still spreads load across both.
 			i := w % len(seq)
+			var wait time.Duration
 			for dispatchCtx.Err() == nil {
+				if wait > 0 && !pause(dispatchCtx, wait, newTimer) {
+					break
+				}
 				rq := seq[i]
 				if tpl[i] {
 					rq = template.Expand(rq)
 				}
-				results <- dispatch{index: i, resp: ex.DoResolved(ctx, eps[i], rq, false)}
+				resp := ex.DoResolved(ctx, eps[i], rq, false)
+				results <- dispatch{index: i, resp: resp}
+				wait = nextBackoff(wait, resp)
 				i = (i + 1) % len(seq)
 			}
 		}(w)
@@ -212,5 +226,45 @@ func aggregate(results <-chan dispatch, out chan<- []report.Tally, entries int, 
 			}
 			emit(Event{Type: EventProgress, Data: p})
 		}
+	}
+}
+
+// nextBackoff is how long a worker waits before its next dispatch, given the
+// wait it last used and the dispatch that just finished.
+//
+// Only a dispatch that failed to connect at all (a connection error with no
+// status) backs off: 10ms, doubling per consecutive refusal, capped at 250ms,
+// which paces a dead target at about four dials per second per worker. Any
+// response, a 503 included, resets it to 0, so a target that answers is never
+// paced. Timeouts do not back off either: a timed-out dispatch already waited
+// ClientTimeout. There is no early abort; the run keeps its full duration.
+func nextBackoff(prev time.Duration, r Response) time.Duration {
+	if r.Err == nil || r.ErrKind != ErrKindConnection || r.Status != 0 {
+		return 0
+	}
+	if prev <= 0 {
+		return BackoffFirst
+	}
+	return min(2*prev, BackoffMax)
+}
+
+// newTimer is the production timer for pause.
+func newTimer(d time.Duration) (<-chan time.Time, func() bool) {
+	t := time.NewTimer(d)
+	return t.C, t.Stop
+}
+
+// pause waits d before a worker's next dispatch, reporting false if the run's
+// dispatch window closed first. It selects on the dispatch context, so the
+// deadline and Cancel end a paced worker at once rather than after its wait.
+// The timer is a parameter so a test can prove that without sleeping.
+func pause(ctx context.Context, d time.Duration, timer func(time.Duration) (<-chan time.Time, func() bool)) bool {
+	fired, stop := timer(d)
+	defer stop()
+	select {
+	case <-fired:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }

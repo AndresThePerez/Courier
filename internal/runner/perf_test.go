@@ -2,10 +2,13 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -318,5 +321,142 @@ func TestPerfRunStartedIsStampedInUTC(t *testing.T) {
 	}
 	if started.StartedAt.Location() != time.UTC {
 		t.Errorf("run_started started_at = %v, want UTC", started.StartedAt)
+	}
+}
+
+// A dead target used to be dialled in a tight loop: 50 workers for 5s made
+// 520,142 failed dials. Paced, it costs a handful per worker per second, and
+// the run still lasts its full duration and completes, so its accounting holds.
+func TestPerfDeadTargetIsPacedNotHammered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := srv.URL
+	srv.Close()
+
+	const secs = 2
+	start := time.Now()
+	res := RunPerformance(context.Background(), NewExecutor(addr), perfRun(oneRequest(), 5, secs), nil)
+	wall := time.Since(start)
+	o := res.Performance.Overall
+
+	if res.Status != report.StatusCompleted {
+		t.Errorf("status = %q, want %q: a dead target is measured for the whole duration", res.Status, report.StatusCompleted)
+	}
+	if o.Requests != o.OK+o.Errors+o.Aborted {
+		t.Errorf("requests %d != ok %d + errors %d + aborted %d", o.Requests, o.OK, o.Errors, o.Aborted)
+	}
+	if o.ErrorKinds[report.KindConnection] != o.Requests || o.Aborted != 0 {
+		t.Errorf("error kinds %v, aborted %d; want every one of %d dispatches a connection error", o.ErrorKinds, o.Aborted, o.Requests)
+	}
+	if o.Requests == 0 || o.Requests > 100 {
+		t.Errorf("requests = %d, want between 1 and 100 for 5 workers over %ds against a refused port", o.Requests, secs)
+	}
+	if wall < secs*time.Second || wall > secs*time.Second+2*time.Second {
+		t.Errorf("wall clock %s, want the full %ds and not much more", wall, secs)
+	}
+	if res.Performance.OverrunMs > 1000 {
+		t.Errorf("overrun = %dms; a paced worker must wake at the deadline, not after its wait", res.Performance.OverrunMs)
+	}
+}
+
+// refuseFirst closes the first n connections it accepts, the way a target
+// that is coming back up refuses dials, and then serves normally.
+type refuseFirst struct {
+	net.Listener
+	mu sync.Mutex
+	n  int
+}
+
+func (l *refuseFirst) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		l.mu.Lock()
+		refuse := l.n > 0
+		if refuse {
+			l.n--
+		}
+		l.mu.Unlock()
+		if !refuse {
+			return c, nil
+		}
+		c.Close()
+	}
+}
+
+// Once the target answers, the next dispatch goes out without waiting: the
+// backoff is for a target that is down, not one that was.
+func TestPerfBackoffResetsWhenTheTargetRecovers(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"total":1}`)
+	}))
+	srv.Listener = &refuseFirst{Listener: srv.Listener, n: 5}
+	srv.Start()
+	defer srv.Close()
+
+	o := RunPerformance(context.Background(), NewExecutor(srv.URL), perfRun(oneRequest(), 1, 2), nil).Performance.Overall
+	if o.ErrorKinds[report.KindConnection] == 0 {
+		t.Fatalf("no connection errors recorded (%v); the target never refused", o.ErrorKinds)
+	}
+	// Paced at the 250ms cap the whole way, one worker manages under ten
+	// dispatches in 2s. A reset backoff runs at the target's own speed.
+	if o.OK < 100 {
+		t.Errorf("ok = %d after the target recovered, want the worker back at full speed (at least 100)", o.OK)
+	}
+}
+
+func TestBackoffSchedule(t *testing.T) {
+	refused := Response{Err: errors.New("dial: connection refused"), ErrKind: ErrKindConnection}
+	var wait time.Duration
+	var got []time.Duration
+	for range 8 {
+		wait = nextBackoff(wait, refused)
+		got = append(got, wait)
+	}
+	ms := time.Millisecond
+	want := []time.Duration{10 * ms, 20 * ms, 40 * ms, 80 * ms, 160 * ms, 250 * ms, 250 * ms, 250 * ms}
+	if !slices.Equal(got, want) {
+		t.Fatalf("backoff after 1..8 refusals = %v, want %v", got, want)
+	}
+
+	for name, r := range map[string]Response{
+		"2xx":                          {Status: 200},
+		"non-2xx":                      {Status: 503},
+		"a response whose body failed": {Status: 200, Err: errors.New("unexpected EOF"), ErrKind: ErrKindConnection},
+		"timeout":                      {Err: errors.New("deadline"), ErrKind: ErrKindTimeout},
+		"aborted by the run":           {Err: errors.New("canceled"), ErrKind: ErrKindAborted},
+	} {
+		if got := nextBackoff(250*time.Millisecond, r); got != 0 {
+			t.Errorf("%s: backoff = %v, want 0", name, got)
+		}
+	}
+}
+
+// The wait honours the deadline and Cancel at once: a worker parked in it must
+// not hold the run open for the rest of its wait.
+func TestBackoffWaitReturnsWhenTheRunStops(t *testing.T) {
+	never := func(time.Duration) (<-chan time.Time, func() bool) { return nil, func() bool { return true } }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan bool, 1)
+	go func() { done <- pause(ctx, time.Hour, never) }()
+	cancel()
+	select {
+	case full := <-done:
+		if full {
+			t.Error("pause reported a full wait after the run stopped")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("pause did not return when its context was cancelled")
+	}
+
+	fired := func(time.Duration) (<-chan time.Time, func() bool) {
+		ch := make(chan time.Time, 1)
+		ch <- time.Time{}
+		return ch, func() bool { return false }
+	}
+	if !pause(context.Background(), time.Hour, fired) {
+		t.Error("pause reported a stop when its timer fired")
 	}
 }
