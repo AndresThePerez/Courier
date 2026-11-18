@@ -81,7 +81,7 @@ function own() {
   if (!draft) return null;
   if (workspace.isWorkspaceId(draft.id)) return draft;
 
-  const forked = deepCopy(workspace.fork(draft));
+  const forked = deepCopy(workspace.fork(draft).request);
   forkNote = `Copied to My Workspace as "${forked.name}" - the built-in request is untouched.`;
   saveNote = '';
   return forked;

@@ -17,6 +17,10 @@ const request = {
 beforeEach(() => {
   resetBrowser();
   resetState();
+  // A page always starts by loading what is stored; the module instance keeps
+  // what it has seen between tests in one process, as a page does between
+  // writes.
+  workspace.init();
 });
 
 test('a saved request survives a reload', () => {
@@ -36,14 +40,14 @@ test('init reads the saved workspace into the state', () => {
 
 test('a value from a newer version loads as an empty workspace', () => {
   localStorage.setItem(KEY, JSON.stringify({ version: 2, counter: 4, requests: [request] }));
-  assert.deepEqual(workspace.load(), { counter: 0, requests: [] });
+  assert.deepEqual(workspace.load(), { requests: [] });
 });
 
 test('a value that is not JSON loads as an empty workspace', () => {
   localStorage.setItem(KEY, 'not json');
-  assert.deepEqual(workspace.load(), { counter: 0, requests: [] });
+  assert.deepEqual(workspace.load(), { requests: [] });
 });
 
 test('nothing stored loads as an empty workspace', () => {
-  assert.deepEqual(workspace.load(), { counter: 0, requests: [] });
+  assert.deepEqual(workspace.load(), { requests: [] });
 });

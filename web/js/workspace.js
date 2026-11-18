@@ -7,96 +7,176 @@
 // reselected, so the curated tree the next visitor sees is pristine. What is
 // deferred is the product chrome around it — folders, renaming in the tree,
 // duplicate detection, per-origin provenance badges, re-forking a fork.
+//
+// Several tabs of the page share one stored value, so the workspace is a
+// factory: each page (or each simulated tab in the tests) is an instance over
+// a storage, a state get/set pair and the window its storage events arrive on.
+// The module-level functions are the page's own instance.
 
-import { get, set, deepCopy } from './store.js';
+import { get as storeGet, set as storeSet, deepCopy } from './store.js';
+import * as storage from './storage.js';
 
 const KEY = 'courier.workspace.v1';
 const VERSION = 1;
-
-// load reads the saved workspace. Anything unparseable, wrong-version, or
-// structurally wrong is discarded and the workspace starts empty: a visitor
-// with a stale value from an older build gets a working page, not a white one.
-export function load() {
-  let saved = null;
-  try {
-    saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-  } catch {
-    saved = null;
-  }
-  if (!saved || saved.version !== VERSION || !Array.isArray(saved.requests)) {
-    return { counter: 0, requests: [] };
-  }
-  const requests = saved.requests.filter((r) => r && typeof r.id === 'string' && typeof r.endpoint === 'string');
-  const counter = Number.isInteger(saved.counter) ? saved.counter : requests.length;
-  return { counter, requests };
-}
-
-let counter = 0;
-
-export function init() {
-  const { counter: c, requests } = load();
-  counter = c;
-  set({ workspace: requests });
-}
-
-function persist(requests) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ version: VERSION, counter, requests }));
-  } catch (err) {
-    // A full or disabled localStorage must not break the page; the workspace
-    // simply stops surviving a reload.
-    console.warn('workspace not persisted', err);
-  }
-}
-
-export function reset() {
-  counter = 0;
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    /* nothing to do */
-  }
-  set({ workspace: [] });
-}
 
 export function isWorkspaceId(id) {
   return typeof id === 'string' && id.startsWith('ws-');
 }
 
-export function find(id) {
-  return get().workspace.find((r) => r.id === id) || null;
+// decode reads a stored value. Anything unparseable, wrong-version, or
+// structurally wrong is discarded and the workspace starts empty: a visitor
+// with a stale value from an older build gets a working page, not a white one.
+function decode(raw) {
+  const saved = storage.parseJSON(raw);
+  if (!saved || saved.version !== VERSION || !Array.isArray(saved.requests)) {
+    return { counter: 0, requests: [] };
+  }
+  const requests = saved.requests.filter((r) => r && typeof r.id === 'string' && typeof r.endpoint === 'string');
+  return { counter: legacyCounter(saved.counter, requests), requests };
 }
 
-function nextId() {
-  counter += 1;
-  return `ws-${counter}`;
+// legacyCounter keeps the counter older builds numbered their ws-N ids from.
+// Ids are random now, but a page loaded before that change may still be open
+// in another tab, and it would hand out ws-N again from a counter that went
+// backwards — reusing the id of a request that still exists.
+function legacyCounter(counter, requests) {
+  let n = Number.isInteger(counter) && counter > 0 ? counter : 0;
+  for (const r of requests) {
+    const m = /^ws-(\d+)$/.exec(r.id);
+    if (m) n = Math.max(n, Number(m[1]));
+  }
+  return n;
 }
 
-// save stores a workspace request, inserting or replacing by id, and returns
-// the stored object.
-export function save(request) {
-  const copy = deepCopy(request);
-  const list = get().workspace.slice();
-  const i = list.findIndex((r) => r.id === copy.id);
-  if (i >= 0) list[i] = copy;
-  else list.push(copy);
-  persist(list);
-  set({ workspace: list });
-  return copy;
+function encode(requests, counter) {
+  const value = { version: VERSION, requests };
+  if (counter > 0) value.counter = counter;
+  return JSON.stringify(value);
 }
 
-// fork deep-copies a curated request into the workspace under a fresh id.
-// This is the write half of fork-on-write; the editor calls it on the first
-// edit of anything that is not already a workspace request.
-export function fork(request) {
-  const copy = deepCopy(request);
-  copy.id = nextId();
-  copy.name = `${request.name || 'Request'} (copy)`;
-  return save(copy);
+// randomId gives two tabs forking at the same moment different ids without
+// any coordination between them. randomUUID needs a secure context, so the
+// fallbacks keep a page served over plain http working.
+function randomId() {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return `ws-${c.randomUUID()}`;
+  if (c && typeof c.getRandomValues === 'function') {
+    const bytes = c.getRandomValues(new Uint8Array(16));
+    return `ws-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+  }
+  return `ws-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 }
 
-export function remove(id) {
-  const list = get().workspace.filter((r) => r.id !== id);
-  persist(list);
-  set({ workspace: list });
+export function createWorkspace({ storage: area, get, set, target = null, key = KEY }) {
+  // known is every id this tab has seen in storage and not deleted itself. A
+  // write that finds one of them gone from storage is editing a request
+  // another tab deleted, and must not bring it back.
+  let known = new Set();
+  let unsubscribe = null;
+
+  function load() {
+    const r = storage.read(area, key);
+    return { requests: r.ok ? decode(r.value).requests : [] };
+  }
+
+  function init() {
+    stop();
+    const { requests } = load();
+    known = new Set(requests.map((r) => r.id));
+    set({ workspace: requests });
+    if (target) unsubscribe = storage.subscribe(target, area, key, onExternal);
+  }
+
+  function stop() {
+    if (unsubscribe) unsubscribe();
+    unsubscribe = null;
+  }
+
+  function onExternal(raw) {
+    const { requests } = decode(raw);
+    for (const r of requests) known.add(r.id);
+    set({ workspace: requests });
+  }
+
+  // apply folds one change into a list.
+  //
+  // Merge rules, because two tabs can change the same stored value:
+  //   - Changes merge by id into the value as stored now; a tab never writes
+  //     its whole loaded list back, so another tab's requests survive.
+  //   - Two tabs editing the same request: the last write wins for that
+  //     request, whole. Requests are small and edited by one person, so a
+  //     field-level merge would buy nothing a visitor could tell apart.
+  //   - Delete against edit of the same request: the delete wins whichever
+  //     came first, so a request deleted in one tab is never resurrected by a
+  //     keystroke in another that had not yet heard about it.
+  function apply(list, op) {
+    const out = list.slice();
+    if (op.type === 'remove') return { list: out.filter((r) => r.id !== op.id), blocked: false };
+    const i = out.findIndex((r) => r.id === op.request.id);
+    if (i >= 0) out[i] = op.request;
+    else if (known.has(op.request.id)) return { list: out, blocked: true };
+    else out.push(op.request);
+    return { list: out, blocked: false };
+  }
+
+  function commit(op) {
+    let result = { list: get().workspace, blocked: false };
+    const written = storage.update(area, key, (raw) => {
+      const saved = decode(raw);
+      result = apply(saved.requests, op);
+      return result.blocked ? undefined : encode(result.list, saved.counter);
+    });
+    if (!written.read.ok) {
+      result = apply(get().workspace, op);
+    } else if (!written.ok) {
+      console.warn('workspace not persisted', written.error);
+    } else if (op.type === 'save' && !result.blocked) {
+      known.add(op.request.id);
+    }
+    set({ workspace: result.list });
+    return { ok: written.ok && !result.blocked, deleted: result.blocked };
+  }
+
+  function find(id) {
+    return get().workspace.find((r) => r.id === id) || null;
+  }
+
+  // save stores a workspace request, inserting or replacing by id.
+  function save(request) {
+    const copy = deepCopy(request);
+    return { ...commit({ type: 'save', request: copy }), request: copy };
+  }
+
+  // fork deep-copies a curated request into the workspace under a fresh id.
+  // This is the write half of fork-on-write; the editor calls it on the first
+  // edit of anything that is not already a workspace request.
+  function fork(request) {
+    const copy = deepCopy(request);
+    copy.id = randomId();
+    copy.name = `${request.name || 'Request'} (copy)`;
+    return save(copy);
+  }
+
+  function remove(id) {
+    const request = find(id);
+    known.delete(id);
+    return { ...commit({ type: 'remove', id }), request };
+  }
+
+  function reset() {
+    known = new Set();
+    storage.remove(area, key);
+    set({ workspace: [] });
+  }
+
+  return { load, init, stop, find, save, fork, remove, reset };
 }
+
+const page = createWorkspace({
+  storage: () => globalThis.localStorage,
+  get: storeGet,
+  set: storeSet,
+  target: globalThis,
+});
+
+export const { load, init, stop, find, save, fork, remove, reset } = page;
