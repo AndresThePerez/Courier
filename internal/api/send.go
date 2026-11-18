@@ -39,6 +39,11 @@ type sendResult struct {
 	Passed        bool             `json:"passed"`
 	Error         string           `json:"error,omitempty"`
 	ErrorKind     string           `json:"error_kind,omitempty"`
+
+	// Truncated names the request strings that were cut to a length cap
+	// before dispatch (params.q, name, id), so the query reported above is
+	// never a silent surprise. Absent when nothing was cut.
+	Truncated []string `json:"truncated,omitempty"`
 }
 
 // handleSend executes a single request.
@@ -99,6 +104,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		Status:    resp.Status,
 		LatencyMs: resp.LatencyMs,
 		SizeBytes: resp.Size,
+		Truncated: sandbox.RequestTruncations(req),
 	}
 	if resp.Err != nil {
 		out.Error, out.ErrorKind = resp.Err.Error(), resp.ErrKind

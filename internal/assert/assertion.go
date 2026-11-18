@@ -3,6 +3,7 @@ package assert
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 )
@@ -109,10 +110,20 @@ func ValidateAssertion(a Assertion) error {
 		return fmt.Errorf("a %s assertion must not carry a path", a.Type)
 	}
 
+	// The numeric bounds refuse values no response can make meaningful: a
+	// status of 200.5 never holds, latency lt -5 always fails, and nothing
+	// has 1.5 elements. An assertion that cannot go either way is decoration.
 	switch a.Type {
 	case TypeStatus, TypeLatency:
-		if _, ok := toFloat(a.Value); !ok {
+		n, ok := toFloat(a.Value)
+		if !ok {
 			return fmt.Errorf("a %s assertion needs a numeric value, got %s", a.Type, kindOf(a.Value))
+		}
+		if a.Type == TypeStatus && !(isWhole(n) && n >= 100 && n <= 599) {
+			return fmt.Errorf("a status assertion needs a whole number from 100 to 599, got %v", n)
+		}
+		if a.Type == TypeLatency && !(n > 0) {
+			return fmt.Errorf("a latency bound must be above 0 ms, got %v", n)
 		}
 	case TypeBodyContains:
 		if _, ok := a.Value.(string); !ok {
@@ -123,8 +134,12 @@ func ValidateAssertion(a Assertion) error {
 		case "exists":
 			// Value is ignored.
 		case "gt", "lt", "count":
-			if _, ok := toFloat(a.Value); !ok {
+			n, ok := toFloat(a.Value)
+			if !ok {
 				return fmt.Errorf("%s needs a numeric value, got %s", a.Op, kindOf(a.Value))
+			}
+			if a.Op == "count" && !(isWhole(n) && n >= 0) {
+				return fmt.Errorf("count needs a whole number of 0 or more, got %v", n)
 			}
 		default: // eq, neq, contains
 			if _, ok := toFloat(a.Value); ok {
@@ -137,6 +152,9 @@ func ValidateAssertion(a Assertion) error {
 	}
 	return nil
 }
+
+// isWhole is false for NaN and the infinities as well as for fractions.
+func isWhole(n float64) bool { return n == math.Trunc(n) && !math.IsInf(n, 0) }
 
 // toFloat accepts both the float64 that encoding/json produces and the plain
 // Go numeric types curated collections are written with.

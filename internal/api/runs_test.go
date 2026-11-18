@@ -1476,3 +1476,36 @@ func TestErrorBodiesStateTheFieldOnce(t *testing.T) {
 		t.Errorf("send error = %+v, want field params stated once", body)
 	}
 }
+
+func TestStartedRunReportsTruncatedFields(t *testing.T) {
+	c := &clock{}
+	s := newServer(t, newTarget(t, 0), c)
+
+	rr := payload(2, 0)
+	rr.Sequence[0].Params = map[string]string{"q": strings.Repeat("a", 5000)}
+	rr.Sequence[1].ID = strings.Repeat("i", sandbox.MaxNameLen+1)
+	rr.Sequence[1].Name = strings.Repeat("n", sandbox.MaxNameLen+1)
+	rec := do(t, s, http.MethodPost, "/api/runs", rr)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		RunID     string   `json:"run_id"`
+		Truncated []string `json:"truncated"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"sequence[0].params.q", "sequence[1].id", "sequence[1].name"}
+	if got.RunID == "" || !slices.Equal(got.Truncated, want) {
+		t.Errorf("202 = %s, want a run_id and truncated %v", rec.Body.String(), want)
+	}
+	waitIdle(t, s)
+	c.advance(time.Hour)
+
+	rec = do(t, s, http.MethodPost, "/api/runs", payload(1, 0))
+	if rec.Code != http.StatusAccepted || strings.Contains(rec.Body.String(), `"truncated"`) {
+		t.Errorf("a clean run = %d %s, want a 202 with no truncated key", rec.Code, rec.Body.String())
+	}
+	waitIdle(t, s)
+}

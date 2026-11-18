@@ -1,9 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -250,5 +252,55 @@ func TestSendTruncatesALargeBody(t *testing.T) {
 	}
 	if got.Assertions == nil {
 		t.Error("assertions must be an empty array, not null; the UI ranges over it")
+	}
+}
+
+// An over-long parameter is cut, not refused, and the response says so: a
+// visitor who pasted 5000 characters must be able to tell that 500 were sent.
+func TestSendReportsTruncatedParameters(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	req := sendable()
+	req.Params = map[string]string{"q": strings.Repeat("a", 5000)}
+
+	rec := do(t, s, http.MethodPost, "/api/send", req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Query     string   `json:"query"`
+		Truncated []string `json:"truncated"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if want := "?q=" + strings.Repeat("a", sandbox.MaxParamValueLen); got.Query != want {
+		t.Errorf("query carries %d characters, want %d", len(got.Query)-3, sandbox.MaxParamValueLen)
+	}
+	if !slices.Equal(got.Truncated, []string{"params.q"}) {
+		t.Errorf("truncated = %v, want [params.q]", got.Truncated)
+	}
+
+	rec = do(t, s, http.MethodPost, "/api/send", sendable())
+	if strings.Contains(rec.Body.String(), `"truncated"`) {
+		t.Errorf("a send with nothing cut carries a truncated key: %s", rec.Body.String())
+	}
+}
+
+func TestSendRefusesAMeaninglessAssertion(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	for _, a := range []assert.Assertion{
+		{Type: assert.TypeLatency, Op: "lt", Value: -5},
+		{Type: assert.TypeStatus, Op: "eq", Value: 200.5},
+		{Type: assert.TypeBodyContains, Op: "contains", Value: strings.Repeat("x", sandbox.MaxParamValueLen+1)},
+	} {
+		req := sendable()
+		req.Assertions = []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: 200}, a}
+		rec := do(t, s, http.MethodPost, "/api/send", req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%+v: status = %d, want 400", a, rec.Code)
+		}
+		if body := decode[errorBody](t, rec); body.Field != "assertions[1]" {
+			t.Errorf("%+v: field = %q, want assertions[1]", a, body.Field)
+		}
 	}
 }

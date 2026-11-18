@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -230,5 +231,81 @@ func TestValidateAcceptsSequenceAtTheCap(t *testing.T) {
 	}
 	if _, err := Validate(perfRun(seq, Options{})); err != nil {
 		t.Errorf("a sequence of exactly %d must be accepted: %v", MaxSequence, err)
+	}
+}
+
+// Assertion strings share the parameter cap but are refused over it, not cut:
+// a truncated expected value is a different assertion from the one written.
+// The cap counts characters, as the parameter cap does.
+func TestAssertionStringsOverTheCapAreRefused(t *testing.T) {
+	at := func(n int, s string) string { return strings.Repeat(s, n) }
+	path := func(n int) string { return "$." + strings.Repeat("a", n-2) }
+
+	over := []assert.Assertion{
+		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen+1, "x")},
+		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen+1, "δ")},
+		{Type: "json", Path: "$.name", Op: "eq", Value: at(MaxParamValueLen+1, "x")},
+		{Type: "json", Path: "$.name", Op: "contains", Value: at(MaxParamValueLen+1, "x")},
+		{Type: "json", Path: path(MaxParamValueLen + 1), Op: "exists"},
+	}
+	for _, a := range over {
+		r := req(nil)
+		r.Assertions = append(r.Assertions, a)
+		_, err := ValidateRequest(r)
+		var ve ValidationError
+		if !errors.As(err, &ve) || ve.Field != "assertions[1]" {
+			t.Errorf("value %d / path %d chars: err = %v, want a rejection at assertions[1]",
+				len([]rune(fmtValue(a.Value))), len(a.Path), err)
+		}
+		_, err = Validate(RunRequest{Mode: ModeFunctional, Sequence: []Request{req(nil), r}})
+		if !errors.As(err, &ve) || ve.Field != "sequence[1].assertions[1]" {
+			t.Errorf("run: err = %v, want a rejection at sequence[1].assertions[1]", err)
+		}
+	}
+
+	atCap := []assert.Assertion{
+		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen, "x")},
+		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen, "δ")}, // 1000 bytes
+		{Type: "json", Path: "$.name", Op: "eq", Value: at(MaxParamValueLen, "x")},
+		{Type: "json", Path: path(MaxParamValueLen), Op: "exists"},
+	}
+	for _, a := range atCap {
+		r := req(nil)
+		r.Assertions = []assert.Assertion{a}
+		if _, err := ValidateRequest(r); err != nil {
+			t.Errorf("an assertion at the cap was refused: %v", err)
+		}
+	}
+}
+
+func fmtValue(v any) string { s, _ := v.(string); return s }
+
+// Over-length strings are still cut, not refused; what changes is that the
+// client is told which ones were cut.
+func TestTruncationsNameWhatWasCut(t *testing.T) {
+	long := func(n int) string { return strings.Repeat("δ", n) }
+
+	if got := RequestTruncations(req(map[string]string{"q": long(MaxParamValueLen)})); got != nil {
+		t.Errorf("nothing over a cap, got %v, want nil", got)
+	}
+
+	r := Request{
+		ID:       long(MaxNameLen + 1),
+		Name:     long(MaxNameLen + 1),
+		Endpoint: "search",
+		Params:   map[string]string{"types": long(MaxParamValueLen + 1), "q": long(MaxParamValueLen + 1), "set": "base1"},
+	}
+	want := []string{"id", "name", "params.q", "params.types"}
+	if got := RequestTruncations(r); !slices.Equal(got, want) {
+		t.Errorf("RequestTruncations = %v, want %v", got, want)
+	}
+
+	rr := RunRequest{Mode: ModeFunctional, Sequence: []Request{req(nil), r}}
+	want = []string{"sequence[1].id", "sequence[1].name", "sequence[1].params.q", "sequence[1].params.types"}
+	if got := Truncations(rr); !slices.Equal(got, want) {
+		t.Errorf("Truncations = %v, want %v", got, want)
+	}
+	if got := Truncations(RunRequest{Mode: ModeFunctional, Sequence: []Request{req(nil)}}); got != nil {
+		t.Errorf("Truncations of a clean run = %v, want nil", got)
 	}
 }

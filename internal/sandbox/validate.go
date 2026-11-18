@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/assert"
 )
@@ -153,13 +154,30 @@ func ValidateRequest(r Request) (Request, error) {
 	if len(r.Assertions) > 0 {
 		out.Assertions = make([]assert.Assertion, len(r.Assertions))
 		for i, a := range r.Assertions {
-			if err := assert.ValidateAssertion(a); err != nil {
+			if err := validateAssertion(a); err != nil {
 				return Request{}, invalid(fmt.Sprintf("assertions[%d]", i), "%s", err.Error())
 			}
 			out.Assertions[i] = a
 		}
 	}
 	return out, nil
+}
+
+// validateAssertion bounds an assertion's strings before checking its meaning.
+//
+// They share the parameter cap but are refused over it rather than cut: a
+// parameter cut short is still a query the target answers, while an expected
+// value cut short is a different assertion from the one the author wrote.
+func validateAssertion(a assert.Assertion) error {
+	if n := utf8.RuneCountInString(a.Path); n > MaxParamValueLen {
+		return fmt.Errorf("the path is %d characters; the cap is %d", n, MaxParamValueLen)
+	}
+	if v, ok := a.Value.(string); ok {
+		if n := utf8.RuneCountInString(v); n > MaxParamValueLen {
+			return fmt.Errorf("the value is %d characters; the cap is %d", n, MaxParamValueLen)
+		}
+	}
+	return assert.ValidateAssertion(a)
 }
 
 // clampOptions folds every knob into the range the engine will honour.
@@ -193,4 +211,36 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
+}
+
+// Truncations names, in the validator's field notation, every string in a run
+// payload that Validate cuts to a length cap, or nil when nothing is cut.
+//
+// Cutting rather than refusing is the caps table's rule for these strings; this
+// is what keeps the cut from being silent.
+func Truncations(rr RunRequest) []string {
+	var out []string
+	for i, r := range rr.Sequence {
+		for _, f := range RequestTruncations(r) {
+			out = append(out, fmt.Sprintf("sequence[%d].%s", i, f))
+		}
+	}
+	return out
+}
+
+// RequestTruncations is Truncations for one request, as /api/send takes it.
+func RequestTruncations(r Request) []string {
+	var out []string
+	if utf8.RuneCountInString(r.ID) > MaxNameLen {
+		out = append(out, "id")
+	}
+	if utf8.RuneCountInString(r.Name) > MaxNameLen {
+		out = append(out, "name")
+	}
+	for _, key := range slices.Sorted(maps.Keys(r.Params)) {
+		if utf8.RuneCountInString(r.Params[key]) > MaxParamValueLen {
+			out = append(out, "params."+key)
+		}
+	}
+	return out
 }
