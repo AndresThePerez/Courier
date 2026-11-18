@@ -90,7 +90,7 @@ const KneePoints = [
 
 // refresh / showTab are wired by main.js, which owns the status poll and the
 // tab routing. Reaching into main.js from here would be an import cycle.
-let hooks = { refresh: async () => {}, showTab: () => {} };
+let hooks = { refresh: async () => {}, showTab: () => {}, watch: () => {} };
 
 // Module-local render memory and notes, the same arrangement render-editor.js
 // uses: none of this is application state, it is what this module has last
@@ -480,28 +480,13 @@ async function cancel() {
   render(get());
 }
 
-// watch is spectator mode's entry point. main.js owns the live transport; what
-// belongs here is the decision — which run this page is watching, and that it
-// is watching rather than driving it.
-//
-// The page attaches to a live run on its own (that is what makes a mid-run
-// reload repaint from the replay log), so by the time Watch is pressed this tab
-// is usually already following the run. Clearing the results in that case would
-// throw away a replay that has already arrived and does not arrive twice; the
-// only thing left to say is that this tab is a spectator.
+// watch is spectator mode's entry point. main.js's live module owns which run
+// this tab follows and what following it does to the view; what belongs here
+// is the button.
 function watch() {
-  const state = get();
-  const s = state.status || {};
-  if (!s.run_id) return;
+  if (!(get().status || {}).run_id) return;
   startNote = '';
-  const following = state.run && state.run.id === s.run_id;
-  set(following ? { spectator: true } : {
-    run: { id: s.run_id, mode: s.mode || '', started_at: s.started_at || '' },
-    spectator: true,
-    results: [],
-    progress: null,
-    report: null,
-  });
+  hooks.watch();
   hooks.showTab('results');
 }
 
@@ -803,9 +788,16 @@ function renderLedger(state) {
   setText(note, `${Math.round(balance)} of ${BudgetBurst} worker-seconds, refilling ${BudgetRefill}/s`);
 }
 
+// LiveElsewhere is the banner of a tab that is showing something else while a
+// run is live: its own view is left alone, so the banner is where it learns
+// of the run and of the way in.
+const LiveElsewhere = 'A run is live - Watch to follow it.';
+
 function bannerFor(state, phase) {
   const s = state.status || {};
   if (phase === 'running') {
+    const following = state.transport !== 'idle' && Boolean(state.run) && state.run.id === s.run_id;
+    if (s.run_id && !following) return LiveElsewhere;
     const what = s.mode ? `A ${s.mode} run` : 'A run';
     const when = s.started_at ? ` Started ${fmtTime(s.started_at)}.` : '';
     return `${what} is in progress. Courier runs one at a time, so a second run can never contaminate the first one's measurements.${when}`;

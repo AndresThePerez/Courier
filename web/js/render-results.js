@@ -107,14 +107,17 @@ function renderSummary(state, rep, run, mode) {
   }
 
   const id = (rep && rep.id) || (run && run.id) || '';
-  const status = rep ? rep.status : 'running';
+  // A run that ended is never shown as running: when its report has not
+  // arrived, or never does, the terminal event's own word stands.
+  const outcome = endOf(state, id);
+  const status = rep ? rep.status : (outcome ? outcome.status : 'running');
   const startedAt = (rep && rep.started_at) || (run && run.started_at) || '';
   const config = (rep && rep.config) || (run && run.config) || {};
 
   const bits = [];
   if (id) bits.push(id);
   if (startedAt) bits.push(fmtTime(startedAt));
-  bits.push(durationText(state, rep));
+  bits.push(durationText(state, rep, outcome));
   bits.push(configText(mode, config));
 
   if (mode === 'functional') {
@@ -131,14 +134,15 @@ function renderSummary(state, rep, run, mode) {
   // A new run id or a new status (started, completed, cancelled, expired) is
   // announced straight away; a run that is merely still running waits out the
   // interval. Nothing here leaves the module, so no store state is involved.
-  const stateChanged = id !== lastSummaryRunId || status !== lastSummaryStatus;
+  const shown = `${status}|${outcome && outcome.report === 'failed' ? 'no report' : ''}`;
+  const stateChanged = id !== lastSummaryRunId || shown !== lastSummaryStatus;
   const now = Date.now();
   const throttled =
     mode === 'performance' && status === 'running' && !stateChanged && now - lastSummaryAt < SummaryThrottleMs;
 
   if (!throttled) {
     lastSummaryRunId = id;
-    lastSummaryStatus = status;
+    lastSummaryStatus = shown;
     lastSummaryAt = now;
     replace(node, [
       el('div', { class: 'results-title' }, [
@@ -147,6 +151,10 @@ function renderSummary(state, rep, run, mode) {
         state.spectator && el('span', { class: 'badge', text: 'spectating' }),
       ]),
       el('div', { class: 'results-meta mono', text: bits.filter(Boolean).join('  ·  ') }),
+      !rep && outcome && outcome.report === 'failed' && el('p', {
+        class: 'note',
+        text: 'The finished report could not be loaded - open it from History.',
+      }),
     ]);
   }
 
@@ -158,8 +166,15 @@ function renderSummary(state, rep, run, mode) {
   }
 }
 
-function durationText(state, rep) {
+// endOf is how the shown run ended, when its terminal event has arrived.
+function endOf(state, id) {
+  const outcome = state.outcome;
+  return outcome && id && outcome.run_id === id ? outcome : null;
+}
+
+function durationText(state, rep, outcome) {
   if (rep) return fmtMs(rep.duration_ms);
+  if (outcome) return outcome.duration_ms === null || outcome.duration_ms === undefined ? '' : fmtMs(outcome.duration_ms);
   if (state.progress) return fmtMs(state.progress.elapsed_ms);
   return 'running';
 }

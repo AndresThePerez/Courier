@@ -258,6 +258,9 @@ export function openLive(runId, handlers) {
       console.warn('unparseable live frame', e.data);
       return;
     }
+    // A frame of another run is not this run's news, whatever it says: its
+    // run_finished in particular must not end this stream.
+    if (!envelope || envelope.run_id !== runId) return;
     if (envelope.type === 'run_started') started = true;
     if (envelope.type === 'request_result') delivered += 1;
     if (envelope.type === 'run_finished') {

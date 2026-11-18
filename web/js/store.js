@@ -36,6 +36,7 @@ const initialState = () => ({
   results: [], // report.RequestResult rows, in arrival order
   progress: null, // the latest performance-mode progress payload
   report: null, // the full report once finished, or when reopened
+  outcome: null, // how the shown run ended, from its terminal event, until (or without) its report
   spectator: false,
   transport: 'idle', // idle | sse | polling
 

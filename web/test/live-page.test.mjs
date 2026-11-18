@@ -386,3 +386,236 @@ test('a history entry that cannot be fetched says so and leaves the view as it w
   assert.match(byId('history-list').textContent, /That run is no longer stored on the server\./);
   assert.equal(get().report.id, id, 'the report already open stays');
 });
+
+// ------------------------------------------------------------------ whose run this tab shows
+
+const BANNER_ID = 'run-status-banner';
+const LIVE_ELSEWHERE = 'A run is live - Watch to follow it.';
+const pill = () => byId('results-summary').querySelector('.pill');
+const badge = () => byId('results-summary').querySelector('.badge');
+const resultRow = (id, index) => ({ index, name: `${id}#${index}`, endpoint: 'search', status: 200, passed: true, assertions: [] });
+
+// runToTheEnd starts a run from this tab and delivers it whole: the tab ends
+// up showing its own finished report.
+async function runToTheEnd(server, status = 'completed') {
+  runner.add(req(1));
+  byId('start-run').click();
+  await flush();
+  const id = server.status.run_id;
+  const stream = streamsFor(id)[0];
+  stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 1 }));
+  stream.emit('request_result', frame('request_result', id, resultRow(id, 0)));
+  server.reports.get(id).functional.results.push(resultRow(id, 0));
+  server.end(status);
+  stream.emit('run_finished', frame('run_finished', id, { status, duration_ms: 1200, verdict: 'PASS' }));
+  await flush();
+  return id;
+}
+
+test('a tab showing its own finished report keeps it when another visitor starts a run, and Watch is the way in', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  const mine = await runToTheEnd(server);
+  const { report, run } = get();
+  assert.equal(report.id, mine);
+  assert.equal(pill().textContent, 'completed');
+
+  const theirs = server.begin('performance');
+  t.mock.timers.tick(3000);
+  await flush();
+  t.mock.timers.tick(3000);
+  await flush();
+
+  assert.equal(get().status.run_id, theirs, 'the tab knows a run is live');
+  assert.equal(get().report, report, 'the report is the same object');
+  assert.equal(get().run, run, 'and so is the run');
+  assert.equal(streamsFor(theirs).length, 0, 'nothing attached by itself');
+  assert.equal(byId(BANNER_ID).hidden, false);
+  assert.equal(byId(BANNER_ID).textContent, LIVE_ELSEWHERE);
+  assert.equal(byId('watch-run').hidden, false);
+
+  byId('watch-run').click();
+  await flush();
+  assert.equal(streamsFor(theirs).length, 1);
+  assert.equal(get().report, null, 'Watch clears the old report');
+  assert.equal(get().run.id, theirs);
+  assert.equal(get().spectator, true);
+  assert.equal(get().activeTab, 'results');
+  assert.notEqual(byId(BANNER_ID).textContent, LIVE_ELSEWHERE, 'this tab is following it now');
+  assert.match(byId(BANNER_ID).textContent, /^A performance run is in progress\./);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('a tab showing a report reopened from history keeps it when another visitor starts a run', async (t) => {
+  const server = makeServer();
+  const old = server.begin();
+  server.end();
+  await bootPage(t, server);
+  byId('history-list').querySelector('button').click();
+  await flush();
+  const { report, run } = get();
+  assert.equal(report.id, old);
+
+  const theirs = server.begin();
+  for (let i = 0; i < 4; i += 1) {
+    t.mock.timers.tick(3000);
+    await flush();
+  }
+  assert.equal(get().report, report);
+  assert.equal(get().run, run);
+  assert.equal(eventSources.opened, 0);
+  assert.equal(byId(BANNER_ID).textContent, LIVE_ELSEWHERE);
+  assert.equal(streamsFor(theirs).length, 0);
+});
+
+test('a tab showing nothing still attaches by itself, and its banner says the run is in progress', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  assert.equal(eventSources.opened, 0);
+
+  const theirs = server.begin();
+  t.mock.timers.tick(3000);
+  await flush();
+  assert.equal(streamsFor(theirs).length, 1);
+  assert.equal(get().run.id, theirs);
+  assert.equal(get().spectator, false);
+  assert.match(byId(BANNER_ID).textContent, /^A functional run is in progress\./);
+  assert.equal(get().activeTab, 'runner');
+});
+
+test('Start from a tab showing an old report replaces it at once and follows the new run', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  const first = await runToTheEnd(server);
+  assert.equal(get().report.id, first);
+
+  byId('start-run').click();
+  await flush();
+  const second = server.status.run_id;
+  assert.notEqual(second, first);
+  assert.equal(get().report, null);
+  assert.equal(get().run.id, second);
+  assert.deepEqual(get().results, []);
+  assert.equal(streamsFor(second).length, 1);
+  assert.equal(get().activeTab, 'results');
+});
+
+test('the spectating badge goes when the watched run ends, when history is opened, and when this tab starts a run', async (t) => {
+  const server = makeServer();
+  const first = server.begin();
+  await bootPage(t, server);
+  byId('watch-run').click();
+  await flush();
+  assert.equal(get().spectator, true);
+  assert.equal(badge().textContent, 'spectating');
+
+  // The watched run ends.
+  server.end();
+  streamsFor(first)[0].emit('run_finished', frame('run_finished', first, { status: 'completed', duration_ms: 1200 }));
+  await flush();
+  assert.equal(get().spectator, false);
+  assert.equal(badge(), null);
+  assert.equal(get().report.id, first);
+
+  // Watching another, then opening history.
+  const second = server.begin();
+  t.mock.timers.tick(3000);
+  await flush();
+  byId('watch-run').click();
+  await flush();
+  assert.equal(get().spectator, true);
+  byId('history-list').querySelector('button').click();
+  await flush();
+  assert.equal(get().report.id, first);
+  assert.equal(get().spectator, false);
+  assert.equal(eventSources.live().length, 0, 'opening history stopped following the live run');
+
+  // Watching again, the run ends, and this tab starts its own.
+  byId('watch-run').click();
+  await flush();
+  assert.equal(get().spectator, true);
+  assert.equal(get().run.id, second);
+  server.end();
+  streamsFor(second).at(-1).emit('run_finished', frame('run_finished', second, { status: 'completed', duration_ms: 1200 }));
+  await flush();
+  runner.add(req(1));
+  byId('start-run').click();
+  await flush();
+  assert.equal(get().run.id, server.status.run_id);
+  assert.equal(get().spectator, false);
+  assert.equal(badge(), null);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('when the finished report cannot be fetched, the summary shows how the run ended, not "running"', async (t) => {
+  for (const status of ['completed', 'cancelled', 'expired']) {
+    resetBrowser();
+    resetState();
+    if (unsubscribe) unsubscribe();
+    const server = makeServer();
+    const id = server.begin();
+    await bootPage(t, server);
+    const stream = streamsFor(id)[0];
+    stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 1 }));
+    stream.emit('request_result', frame('request_result', id, resultRow(id, 0)));
+    assert.equal(pill().textContent, 'running');
+
+    server.down.add(`GET /api/runs/${id}`);
+    server.end(status);
+    stream.emit('run_finished', frame('run_finished', id, { status, duration_ms: 1200, verdict: 'N/A' }));
+    await flush();
+
+    assert.equal(get().report, null, status);
+    assert.equal(pill().textContent, status);
+    assert.doesNotMatch(byId('results-summary').textContent, /running/, status);
+    assert.match(byId('results-summary').textContent, /The finished report could not be loaded - open it from History\./);
+    assert.equal(get().results.length, 1, 'the rows that arrived stay');
+    assert.equal(get().transport, 'idle');
+    assert.equal(get().status.running, false);
+    assert.deepEqual(listenerErrors, []);
+    t.mock.timers.reset();
+  }
+});
+
+test('a row before run_started is kept, a late run_started does not wipe it, and another run\'s frames are ignored', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  const stream = streamsFor(id)[0];
+
+  stream.emit('request_result', frame('request_result', id, resultRow(id, 0)));
+  assert.equal(get().results.length, 1);
+  stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 3 }));
+  assert.equal(get().results.length, 1, 'run_started did not wipe the row');
+  assert.equal(get().run.total, 3);
+
+  stream.emit('run_started', frame('run_started', 'run-other', { mode: 'performance', total: 9 }));
+  stream.emit('request_result', frame('request_result', 'run-other', resultRow('run-other', 1)));
+  stream.emit('progress', frame('progress', 'run-other', { requests: 5 }));
+  assert.equal(get().run.id, id);
+  assert.equal(get().run.mode, 'functional');
+  assert.deepEqual(get().results.map((r) => r.name), [`${id}#0`]);
+  assert.equal(get().progress, null);
+
+  // The other run finishing is not this run finishing.
+  stream.emit('run_finished', frame('run_finished', 'run-other', { status: 'completed' }));
+  await flush();
+  assert.equal(get().transport, 'sse');
+  assert.equal(callsTo(`/api/runs/${id}`).length, 0);
+  assert.equal(pill().textContent, 'running');
+});
+
+test('run_finished from the stream and from the poll together fetch the report once', async (t) => {
+  const server = makeServer();
+  const id = server.begin();
+  await bootPage(t, server);
+  const stream = streamsFor(id)[0];
+  stream.emit('run_started', frame('run_started', id, { mode: 'functional', total: 1 }));
+  server.end();
+  const done = frame('run_finished', id, { status: 'completed', duration_ms: 1200 });
+  stream.emit('run_finished', done);
+  stream.emit('run_finished', done);
+  await flush();
+  assert.equal(callsTo(`/api/runs/${id}`).length, 1);
+  assert.equal(get().report.id, id);
+});

@@ -84,3 +84,16 @@ test('run_finished reaches the handler, closes the stream and goes idle', (t) =>
   assert.equal(eventSources.closed, 1);
   assert.equal(eventSources.live().length, 0);
 });
+
+test('frames of another run are not this run\'s: nothing is handed on, and its run_finished does not end the stream', (t) => {
+  const { events, transports, source } = watch(t);
+  source.emit('run_started', { type: 'run_started', run_id: 'r1', data: {} });
+  source.emit('request_result', { type: 'request_result', run_id: 'r2', data: { index: 0 } });
+  source.emit('progress', { type: 'progress', run_id: 'r2', data: { requests: 1 } });
+  source.emit('run_finished', { type: 'run_finished', run_id: 'r2', data: { status: 'completed' } });
+  source.emit('run_finished', { type: 'run_finished', data: { status: 'completed' } });
+
+  assert.deepEqual(events.map((e) => [e.type, e.run_id]), [['run_started', 'r1']]);
+  assert.deepEqual(transports, ['sse']);
+  assert.equal(source.readyState, EventSource.OPEN);
+});
