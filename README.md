@@ -75,18 +75,24 @@ lower than the floor every package that carries logic actually clears.
 
 CI runs those three commands on every push to every branch and on every pull request,
 alongside a `go mod tidy` cleanliness gate, `gofmt`, `staticcheck`, `govulncheck`, a
-coverage floor, and a separate job that builds the Docker image. The load-budget proof and
+coverage floor, and separate jobs that build the Docker image, run the frontend tests, and
+run the acceptance matrix against a stub target. The load-budget proof and
 the PDF's byte-determinism are tests, so both re-run on every push; the chaos drill that
 SIGKILLs the target mid-run is a recorded exercise rather than a test
 ([what it held to](docs/design.md#what-happens-when-the-target-dies)).
 
 The admission-budget simulator drives the 10% duty-cycle proof; the acceptance matrix is
 build-tagged and needs a running Courier and target, reading `COURIER_URL` (default
-`http://127.0.0.1:8084`) plus `STUB_URL` and `STUB_TARGET_URL` for the stub-target cases:
+`http://127.0.0.1:8084`) plus `STUB_URL` and `STUB_TARGET_URL` for the stub-target cases.
+With `ACCEPTANCE_SELF_CONTAINED=1` it needs nothing running: it builds the server and
+starts its own Couriers against an in-process stub target, which is how CI runs it, with
+the items that verify the real index skipped:
 
 ```bash
 go test ./internal/budget/ -run Sim
 go test -tags acceptance ./internal/acceptance/ -v -timeout 20m
+ACCEPTANCE_SELF_CONTAINED=1 go test -tags acceptance ./internal/acceptance/ -v -timeout 20m \
+  -skip '^(TestCuratedCollectionsRunClean|TestStrictParamIsRejectedNamingTheField)$'
 ```
 
 ## Try it in 60 seconds
