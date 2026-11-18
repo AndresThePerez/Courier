@@ -1006,3 +1006,152 @@ fails `scoped-facets` and that a first page whose 24th card has hp 60 fails `sor
 bound above is the old value minus one (a lower bound) or the corpus size (an upper
 bound), so it holds on any index that has not lost cards, but the exact live values are a
 follow-up once the new index is deployed.
+
+## N37 — A dead target is paced by a backoff, and the run still lasts its full duration
+
+**What the code did:** a performance worker dispatched again the moment its last dispatch
+returned. A refused TCP connection returns in microseconds, so against a dead port the loop
+measured the kernel rather than the target: 50 workers for 5 s made 520,142 failed dials and
+reported 104,008 req/s, and the 2026-08-22 failure drill (`docs/failure-story/`) recorded
+968,696 refused dials in the 10 seconds after the kill.
+
+**What it does now:** after a dispatch that failed to connect at all (error kind
+`connection`, status 0), the worker waits before its next dispatch:
+
+| Consecutive refusals | Wait before the next dispatch |
+|---|---|
+| 1 | 10 ms |
+| 2 | 20 ms |
+| 3 | 40 ms |
+| 4 | 80 ms |
+| 5 | 160 ms |
+| 6 and more | 250 ms (the cap) |
+
+- Any dispatch that got a response, 2xx or not, resets the wait to 0, so a target that
+  answers is never paced and no number measured against a healthy target (the README, the
+  knee) can change.
+- Timeouts do not back off: a timed-out dispatch already waited the 10 s client timeout. A
+  connection error after a status line (a body that broke mid-read) is a response and does
+  not back off either.
+- The wait selects on the run's dispatch context, so the deadline and Cancel end a waiting
+  worker at once; `overrun_ms` keeps its meaning (the in-flight tail past the deadline).
+- **There is no early abort.** A dead-target run keeps its full duration and its `completed`
+  status, and `requests == ok + errors + aborted` holds exactly as before. Every refused dial
+  is still a `connection` error, never `aborted`.
+
+At the cap a dead target sees at most about four dials per second per worker.
+
+**The recorded drill numbers stay as they are.** 974,606 dispatches, 5,910 ok and 968,696
+errors in the README, `docs/design.md` and `docs/failure-story/README.md` are the record of
+a run measured on 2026-08-22, before this backoff; each place now says so. The README's
+"the dead one dispatches far more requests for them" was rephrased: a dead target would
+draw far more dispatches than a live one, and the backoff is what paces them.
+
+**Proof:** `internal/runner/perf_test.go`: `TestBackoffSchedule` (the schedule above, and a
+wait of 0 after a 2xx, a 503, a broken body, a timeout and an abort),
+`TestBackoffWaitReturnsWhenTheRunStops` (an injected timer that never fires; the wait returns
+when the context is cancelled), `TestPerfDeadTargetIsPacedNotHammered` (5 workers for 2 s
+against a closed port: `completed`, the identity holds, every dispatch a `connection` error,
+none aborted, and at most 100 dispatches, where one unpaced run of the same test made
+144,187), and `TestPerfBackoffResetsWhenTheTargetRecovers` (a listener that drops its first
+five connections and then serves: the worker returns to full speed).
+
+## N38 — A stream ends after its run's terminal event; events are numbered; times are UTC
+
+**Amends N22 point 2.** N22 kept the stream open after `run_finished` so that a tab left
+open would not reconnect into a loop. The cost was a subscriber slot per open tab, held
+across runs: 100 idle tabs on a finished run pushed every viewer of the next run onto
+polling (`503 {"poll": true}`).
+
+**Stream lifetime.** After a stream writes its run's `run_finished` it writes
+`retry: 60000`, unsubscribes and returns, so the slot is released at once. The same holds for
+a finished run: the replay (or the `run_finished` rebuilt from the stored report, N22 point
+3) is followed by the `retry:` line and the end of the response; it never parks. If a later
+run resets the broadcaster before a viewer of the earlier one has seen its `run_finished`,
+the viewer gets the rebuilt one instead of waiting on a run that will never publish again.
+The reconnect loop N22 avoided does not come back: the client closes its `EventSource` on
+`run_finished`, and a client that does not is told by `retry:` to wait a minute before it
+reconnects, at which point it is sent `run_finished` again and the stream ends again. No
+server timeout was added: `ReadHeaderTimeout` is still the only one, and the lifetime is the
+handler's.
+
+**Event ids.** Every frame carries `id: <n>`, starting at 1 for each run and rising by one
+per event the broadcaster publishes. A reconnect with `Last-Event-ID: k` replays only events
+with an id above k; the coalesced latest `progress` is included when its own id is above k.
+An unparseable `Last-Event-ID` replays everything. A `run_finished` rebuilt after the
+broadcaster has moved on carries the last id that run's events reached (1 if the broadcaster
+no longer remembers it; it remembers the last 32 runs, more than the history's 20), and a
+viewer whose `Last-Event-ID` is at or past `run_finished` is still sent it. The id is on the
+`id:` line only, not in the JSON envelope.
+
+**Times.** `started_at`, `finished_at` and `cooldown_until` are UTC (ending in `Z`) in every
+payload: reports, history rows, `/api/status`, the 409 cooldown body, `run_started` and
+`run_finished`. A running report has no `finished_at` key (it used to carry
+`0001-01-01T00:00:00Z`), and a rebuilt `run_finished` with no cooldown left has no
+`cooldown_until` key.
+
+**Functional verdict.** `report.FunctionalVerdict` is the PDF's rule, moved so every surface
+reads one implementation: cancelled or expired → `N/A`; any failed request → `FAIL`; at
+least one passed → `PASS`; otherwise `N/A`. The PDF's band labels and bytes are unchanged.
+It appears as `verdict` on functional rows of `GET /api/runs`, as `functional.verdict` on a
+finished report (absent while running), and as `run_finished.data.verdict`.
+
+| Item | Before | After |
+|---|---|---|
+| SSE frame | `event:` + `data:` | `id:` + `event:` + `data:` |
+| Stream after `run_finished` | stays open | `retry: 60000`, then the response ends |
+| `Last-Event-ID` | ignored | replays only later events |
+| Times | server-local offset | UTC, ending in `Z` |
+| `finished_at` while running | `0001-01-01T00:00:00Z` | absent |
+| `run_finished.data.cooldown_until` with no cooldown | `0001-01-01T00:00:00Z` | absent |
+| Functional verdict | none | history `verdict`, `functional.verdict`, `run_finished.data.verdict` |
+
+**Proof:** `internal/api/runs_test.go`: `TestStreamEndsAfterTheLiveRunFinishes`,
+`TestStreamOfAFinishedRunNeverParks`, `TestFinishedStreamsReleaseTheirSlots` (100 streams on
+run A, A ends, the subscriber count reaches 0, run B's stream answers 200 with
+`run_started`), `TestStreamFramesCarryRisingIDsAndResume`,
+`TestSynthesizedTerminalEventCarriesTheRunsLastID`,
+`TestSynthesizedTerminalEventFallsBackToIDOne`, `TestWireTimesAreUTCAndUnsetOnesAbsent`
+(a clock in UTC-5), `TestFunctionalRunsCarryAVerdict`; `internal/sse/broadcaster_test.go`:
+`TestEventsAreNumberedWithinARun`, `TestSubscribeAfterAnIDReplaysOnlyNewerEvents`;
+`internal/report/metrics_test.go`: `TestFunctionalVerdict`; `internal/pdf/report_test.go`:
+`TestFunctionalVerdictLabelsAreUnchanged`.
+
+## N39 — A run keeps a bounded sample of latencies for its percentiles
+
+**What the code did:** every completed response appended a 16-byte sample to the run's
+overall tally and to its entry's tally, without limit. Against a microsecond target, 4.1M
+requests took the process from 15 MB to 290 MB.
+
+**What it does now:** a run's overall tally keeps at most `report.MaxSamples` = 262,144
+latencies, and each entry's tally at most ⌈262,144 ÷ entries⌉: about 8.4 MB per run in all,
+whatever its volume. Below the cap every sample is kept and every number is what it was.
+Past it, the kept samples are a uniform random sample of every latency recorded (reservoir
+sampling, Algorithm R), drawn with a splitmix64 generator held in the tally: deterministic,
+and allocation-free on the per-dispatch path. Every kept sample is a latency a request
+really had, so a published p99 is still one some request experienced.
+
+Only the percentiles (p50, p90, p95, p99) are read from the sample. Requests, ok, errors,
+transport failures, aborted, bytes, status counts, error kinds, the Apdex bands, the
+histogram counts, the SLA ladder, and min, max and average latency are counted as each
+response is added, so they are exact at any volume.
+
+**Disclosure:** `Stats` gains `percentile_samples`, the number of latencies the percentiles
+rest on (additive; it equals the response count below the cap). The rank error of a
+percentile read from k uniform samples is about √(p(1−p)/k): for k = 262,144 that is about
+0.02 percentile points at p99 and 0.1 at p50. Runs against the real target stay far below
+the cap (about 18,000 responses at the measured knee).
+
+**Cost:** `BenchmarkTallyAddResponse` and `BenchmarkAggregatorRecord` stay at 0 allocs/op.
+Measured on one machine at the parent commit and at this change, five runs each: 19–33 ns
+before and 14.6 ns after for the first (the benchmark now runs mostly past the cap, where a
+sample replaces another instead of growing the slice), and 156–171 ns before and 134–144 ns
+after for the second. The figures in `docs/design.md` (31 ns, 115 ns) are an earlier
+measurement on another load and are left as they are.
+
+**Proof:** `internal/report/metrics_test.go`: `TestTallyIsExactPastTheSampleCap` (300,000
+responses; every count, band, bucket, ladder share, min, max and average exact),
+`TestPercentilesPastTheCapStayClose` (latencies 1…1,000,000: p50, p95 and p99 within ±0.5
+percentile points, every kept sample a recorded latency),
+`TestBelowTheCapEverySampleIsKept`; `internal/runner/perf_test.go`:
+`TestAggregatorBoundsTheSamplesARunKeeps`.

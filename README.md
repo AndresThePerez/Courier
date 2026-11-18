@@ -9,7 +9,7 @@
 
 Courier is a Postman-style API test runner and load tester that ships as **one Go binary**: an embedded three-pane UI, curated request collections, a sequential **Functional** runner with declarative assertions, and a worker-pool **Performance** engine with fan-in aggregation. Results stream live over **SSE with reconnect replay and a polling fallback**, aggregate load is priced against a **token-bucket admission budget**, and any report exports as a single-page PDF rendered in pure Go. Stdlib everywhere, one direct dependency (the PDF writer), no frontend build step.
 
-The interesting constraint is that it is *public*. A load tester exposed to the internet is a DDoS cannon with a nice UI unless the design forbids it, so the server never accepts a URL from the client — a run payload is `{endpoint_id, params, assertions}` against a target fixed at startup and a closed server-side endpoint catalog. Sustained load is bounded in worker-seconds by a token-bucket budget whose 10% duty cycle is proven by an in-repo simulator rather than asserted; request volume is bounded only in proportion to target latency, because a dead target and a healthy one are charged the same worker-seconds and the dead one dispatches far more requests for them. Run state is owned by exactly one goroutine (no atomics, no mutexes, no torn snapshots), and Courier publishes its own per-dispatch overhead so you can see it is not part of the measurement.
+The interesting constraint is that it is *public*. A load tester exposed to the internet is a DDoS cannon with a nice UI unless the design forbids it, so the server never accepts a URL from the client — a run payload is `{endpoint_id, params, assertions}` against a target fixed at startup and a closed server-side endpoint catalog. Sustained load is bounded in worker-seconds by a token-bucket budget whose 10% duty cycle is proven by an in-repo simulator rather than asserted; request volume is bounded only in proportion to target latency, because a dead target and a healthy one are charged the same worker-seconds. A refused connection costs microseconds, so a dead target would draw far more dispatches than a live one; a per-worker backoff paces them instead ([docs/deviations.md N37](docs/deviations.md)). Run state is owned by exactly one goroutine (no atomics, no mutexes, no torn snapshots), and Courier publishes its own per-dispatch overhead so you can see it is not part of the measurement.
 
 ![Courier's three-pane UI: collections sidebar, the Find the breaking point panel with the measured knee curve, and the run configuration pane](docs/hero.png)
 
@@ -53,9 +53,9 @@ a promise. The full benchmark table is in [docs/design.md#engine-overhead](docs/
 
 **And when the target died mid-run, the run finished cleanly and the accounting
 held to the dispatch:** 974,606 dispatches as 5,910 ok plus 968,696 errors plus 0
-aborted, every failure attributed to the transport rather than to the target, no
-phantom aborts and no wedged lock. The drill, the stored report and the rendered
-dashboard are in [what happens when the target dies](docs/design.md#what-happens-when-the-target-dies).
+aborted (measured on 2026-08-22, before the dead-target backoff), every failure attributed
+to the transport rather than to the target, no phantom aborts and no wedged lock. The drill,
+the stored report and the rendered dashboard are in [what happens when the target dies](docs/design.md#what-happens-when-the-target-dies).
 
 ## Tests
 

@@ -3,6 +3,14 @@
 The drill and what it produced. The narrative version is in the README and in
 `docs/design.md`.
 
+> **Note, 2026-11-18.** This drill was run on 2026-08-22, before Courier paced dispatches
+> against a refused port. Every number on this page is the record of that run and is left as
+> measured. Since then a worker that fails to connect waits 10 ms before its next dispatch,
+> doubling per consecutive refusal up to 250 ms ([docs/deviations.md N37](../deviations.md)),
+> so the dispatch count after a kill, and the 64,973 req/s below, no longer describe what a
+> dead target looks like. The run still lasts its full duration and completes, and
+> `requests == ok + errors + aborted` holds as it did here.
+
 ## The drill
 
 | | |

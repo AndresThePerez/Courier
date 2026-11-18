@@ -408,7 +408,11 @@ chaos drill: during a 10-worker 15-second run the target process was SIGKILLed a
 holds), every failure attributed as a `connection` error with status `0 (transport
 error)`, Apdex 0.006, verdict FAIL at a 99.39% error rate. No phantom aborts, no wedged
 lock (`/api/status` returned `running:false` immediately after), history intact, and the
-next run — target restored — passed at 100% 2xx without restarting Courier. The saved
+next run — target restored — passed at 100% 2xx without restarting Courier. The drill was
+measured on 2026-08-22, before the dead-target backoff ([deviations.md N37](deviations.md)):
+a worker now waits after each refused connection, so a dead target is dialled a few times a
+second per worker rather than as fast as the kernel refuses, and the counts above are that
+day's record, not what a rerun would show. The accounting identity is unchanged. The saved
 report, the rendered dashboard screenshot, and the drill notes are in
 [docs/failure-story/](failure-story/).
 
