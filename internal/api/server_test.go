@@ -7,11 +7,15 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/collections"
 	"github.com/AndresThePerez/courier/internal/sandbox"
@@ -422,4 +426,420 @@ func TestTheBrowserClientsPayloadsStillDecode(t *testing.T) {
 		t.Fatalf("performance run = %d %s, want 202", rec.Code, rec.Body.String())
 	}
 	waitIdle(t, s)
+}
+
+// countingTarget is a stub target that records every request it receives, so
+// a refused body can be shown to have dispatched nothing.
+type countingTarget struct {
+	URL     string
+	hits    atomic.Int64
+	mu      sync.Mutex
+	queries []url.Values
+}
+
+func newCountingTarget(t *testing.T) *countingTarget {
+	t.Helper()
+	ct := &countingTarget{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ct.hits.Add(1)
+		ct.mu.Lock()
+		ct.queries = append(ct.queries, r.URL.Query())
+		ct.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"ok","total":1,"results":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	ct.URL = srv.URL
+	return ct
+}
+
+// errorLeakWords are fragments of Go's own error text and of server internals
+// that must never reach a visitor in an error body.
+var errorLeakWords = []string{"Go ", "struct", "sandbox.", "RunRequest", "json:", "float64",
+	"interface", "runtime", "goroutine", ".go:", "of type", "127.0.0.1"}
+
+func checkSmallCleanError(t *testing.T, name string, rec *httptest.ResponseRecorder) errorBody {
+	t.Helper()
+	if n := rec.Body.Len(); n > 1024 {
+		t.Errorf("%s: error body is %d bytes; client text must be clipped, not echoed whole", name, n)
+	}
+	for _, w := range errorLeakWords {
+		if strings.Contains(rec.Body.String(), w) {
+			t.Errorf("%s: error body leaks %q: %.300s", name, w, rec.Body.String())
+		}
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("%s: Content-Type = %q, want application/json", name, ct)
+	}
+	var eb errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &eb); err != nil || eb.Error == "" {
+		t.Errorf("%s: body is not the JSON error shape: %.300s", name, rec.Body.String())
+	}
+	return eb
+}
+
+// The shape check runs before encoding/json and must refuse everything the
+// decoder would otherwise fold, merge or drop, at every level of the payload,
+// and must refuse it before anything is sent to the target.
+func TestRefusedBodiesNameTheKeyAndDispatchNothing(t *testing.T) {
+	target := newCountingTarget(t)
+	s := newServer(t, target.URL, nil)
+
+	hugeKey := strings.Repeat("k", 260_000)
+	hugeNumber := "1" + strings.Repeat("0", 10_000)
+	deep := strings.Repeat("[", 100_000) + strings.Repeat("]", 100_000)
+	manyDuplicates := `{"endpoint":"healthz","params":{` +
+		strings.TrimSuffix(strings.Repeat(`"q":"a",`, 30_000), ",") + `}}`
+	var manyKeys strings.Builder
+	manyKeys.WriteString(`{"endpoint":"search","params":{`)
+	for i := 0; manyKeys.Len() < 250_000; i++ {
+		if i > 0 {
+			manyKeys.WriteString(",")
+		}
+		fmt.Fprintf(&manyKeys, `"k%d":""`, i)
+	}
+	manyKeys.WriteString(`}}`)
+
+	cases := []struct {
+		name, body, field, mention string
+		status                     int
+	}{
+		{"long-s folds onto assertions", `{"endpoint":"healthz","aſsertions":[{"type":"status","op":"eq","value":500}]}`, "body", "aſsertions", 400},
+		{"kelvin sign key", `{"endpoint":"healthz","\u212Aey":1}`, "body", "\u212aey", 400},
+		{"upper-case known key", `{"ENDPOINT":"healthz"}`, "body", "ENDPOINT", 400},
+		{"url at the top", `{"endpoint":"healthz","url":"http://192.0.2.1/"}`, "body", "url", 400},
+		{"escaped url key", `{"endpoint":"healthz","url":"http://192.0.2.1/"}`, "body", "url", 400},
+		{"host inside an assertion", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":200,"host":"192.0.2.1"}]}`, "assertions[0]", "host", 400},
+		{"method inside an assertion", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":200,"method":"POST"}]}`, "assertions[0]", "method", 400},
+		{"url as a parameter", `{"endpoint":"search","params":{"q":"x","url":"http://192.0.2.1/"}}`, "params", "url", 400},
+		{"headers as a parameter", `{"endpoint":"search","params":{"headers":"x"}}`, "params", "headers", 400},
+		{"duplicate endpoint, last would win", `{"endpoint":"healthz","endpoint":"search"}`, "endpoint", "endpoint", 400},
+		{"duplicate inside an assertion", `{"endpoint":"healthz","assertions":[{"type":"latency","type":"status","op":"eq","value":200}]}`, "assertions[0].type", "type", 400},
+		{"duplicate parameter", `{"endpoint":"search","params":{"q":"a","q":"b"}}`, "params.q", "q", 400},
+		{"duplicate inside a value object", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":{"a":1,"a":2}}]}`, "assertions[0].value.a", "a", 400},
+		{"number as a parameter", `{"endpoint":"search","params":{"q":1}}`, "params.q", "", 400},
+		{"array as a parameter", `{"endpoint":"search","params":{"q":["a"]}}`, "params.q", "", 400},
+		{"object where an array goes", `{"endpoint":"healthz","assertions":{}}`, "assertions", "", 400},
+		{"string where an object goes", `{"endpoint":"healthz","params":"q=x"}`, "params", "", 400},
+		{"number past float64", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":1e400}]}`, "assertions[0].value", "", 400},
+		{"ten-thousand-digit number", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":` + hugeNumber + `}]}`, "", "", 400},
+		{"260 KB unknown key", `{"endpoint":"healthz","` + hugeKey + `":1}`, "body", "", 400},
+		{"100,000 levels of nesting", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":` + deep + `}]}`, "body", "", 400},
+		{"30,000 duplicate keys", manyDuplicates, "params.q", "", 400},
+		{"tens of thousands of keys", manyKeys.String(), "params", "", 400},
+		{"byte-order mark", "\ufeff" + `{"endpoint":"healthz"}`, "body", "", 400},
+		{"leading plus", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":+200}]}`, "body", "", 400},
+		{"leading zero", `{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":0200}]}`, "body", "", 400},
+		{"top-level null", `null`, "body", "", 400},
+		{"top-level array", `[{"endpoint":"healthz"}]`, "body", "", 400},
+		{"trailing bracket", `{"endpoint":"healthz"}]`, "body", "", 400},
+		{"truncated body", `{"endpoint":"heal`, "body", "", 400},
+		{"empty body", ``, "body", "", 400},
+	}
+	for _, tc := range cases {
+		start := time.Now()
+		rec := postRaw(t, s, "/api/send", strings.NewReader(tc.body), "application/json")
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("%s: took %v", tc.name, d)
+		}
+		if rec.Code != tc.status {
+			t.Errorf("%s: status = %d %.300s, want %d", tc.name, rec.Code, rec.Body.String(), tc.status)
+			continue
+		}
+		eb := checkSmallCleanError(t, tc.name, rec)
+		if tc.field != "" && eb.Field != tc.field {
+			t.Errorf("%s: field = %q, want %q (error %q)", tc.name, eb.Field, tc.field, eb.Error)
+		}
+		if tc.mention != "" && !strings.Contains(eb.Error, tc.mention) {
+			t.Errorf("%s: error %q does not name %q", tc.name, eb.Error, tc.mention)
+		}
+	}
+	if n := target.hits.Load(); n != 0 {
+		t.Fatalf("the target received %d requests from refused bodies, want 0", n)
+	}
+
+	// What the shape check lets through must still be a request the
+	// validator accepts as the author wrote it.
+	accepted := []string{
+		`{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":2e2}]}`,
+		`{"endpoint":"healthz","assertions":[{"type":"status","op":"eq","value":200.0}]}`,
+		`{"id":null,"name":null,"endpoint":"healthz","params":null,"assertions":null}`,
+		`{"endpoint":"healthz","params":{},"assertions":[]}`,
+		`{"endpoint":"healthz","assertions":[{"type":"json","path":"$.results","op":"count","value":-0}]}`,
+		"\r\n\t {\"endpoint\":\"healthz\"} \r\n\t",
+	}
+	for _, body := range accepted {
+		before := target.hits.Load()
+		rec := postRaw(t, s, "/api/send", strings.NewReader(body), "application/json")
+		if rec.Code != http.StatusOK {
+			t.Errorf("%q: status = %d %s, want 200", body, rec.Code, rec.Body.String())
+			continue
+		}
+		if target.hits.Load() != before+1 {
+			t.Errorf("%q: accepted but not dispatched exactly once", body)
+		}
+	}
+}
+
+// Only a POST body is held to the JSON media type; reads and cancels carry no
+// body and must not start answering 415 because of a stray header.
+func TestContentTypeAnswersAreStable(t *testing.T) {
+	target := newCountingTarget(t)
+	s := newServer(t, target.URL, nil)
+	body := `{"endpoint":"healthz"}`
+
+	accepted := []string{
+		"application/json",
+		"Application/JSON",
+		" application/json ",
+		"application/json;charset=UTF-8",
+		`application/json; charset="utf-8"`,
+	}
+	for _, ct := range accepted {
+		if rec := postRaw(t, s, "/api/send", strings.NewReader(body), ct); rec.Code != http.StatusOK {
+			t.Errorf("Content-Type %q: status = %d %s, want 200", ct, rec.Code, rec.Body.String())
+		}
+	}
+	dispatched := target.hits.Load()
+
+	refused := [][]string{
+		nil,
+		{""},
+		{"text/json"},
+		{"text/plain"},
+		{"application/jsonx"},
+		{"application/json+x"},
+		{"application/json; charset=latin1"},
+		{"application/json, text/plain"},
+		{"application/json", "application/json"},
+		{"multipart/form-data; boundary=x"},
+	}
+	for _, cts := range refused {
+		for _, path := range []string{"/api/send", "/api/runs"} {
+			rec := postRaw(t, s, path, strings.NewReader(body), cts...)
+			if rec.Code != http.StatusUnsupportedMediaType {
+				t.Errorf("POST %s with Content-Type %q: status = %d %s, want 415", path, cts, rec.Code, rec.Body.String())
+				continue
+			}
+			eb := checkSmallCleanError(t, fmt.Sprint(cts), rec)
+			if eb.Field != "body" || eb.Error != "Content-Type must be application/json" {
+				t.Errorf("POST %s with Content-Type %q: body = %+v", path, cts, eb)
+			}
+		}
+	}
+	if n := target.hits.Load(); n != dispatched {
+		t.Errorf("refused media types dispatched %d requests", n-dispatched)
+	}
+
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/api/runs", http.StatusOK},
+		{http.MethodGet, "/api/status", http.StatusOK},
+		{http.MethodDelete, "/api/runs/run-none", http.StatusNotFound},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		r.Header.Set("Content-Type", "text/plain")
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, r)
+		if rec.Code != tc.want {
+			t.Errorf("%s %s with Content-Type text/plain = %d, want %d", tc.method, tc.path, rec.Code, tc.want)
+		}
+	}
+}
+
+// A body that hides its length, or lies about it, is still held to the cap.
+func TestOversizeBodiesWithoutAnHonestLengthAre413(t *testing.T) {
+	target := newCountingTarget(t)
+	s := newServer(t, target.URL, nil)
+	srv := httptest.NewServer(s)
+	t.Cleanup(srv.Close)
+
+	over := `{"endpoint":"healthz","name":"` + strings.Repeat("a", MaxBodyBytes) + `"}`
+	// Chunked: the reader hides its length from the client.
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/send", io.MultiReader(strings.NewReader(over)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("chunked post: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("chunked oversize body = %d %.200s, want 413", resp.StatusCode, b)
+	}
+
+	// Content-Length claims a small body; the recorder path reads past it.
+	r := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(over))
+	r.ContentLength = 20
+	r.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, r)
+	if rec.Code != http.StatusRequestEntityTooLarge && rec.Code != http.StatusBadRequest {
+		t.Errorf("lying Content-Length = %d, want 413 or 400", rec.Code)
+	}
+	if n := target.hits.Load(); n != 0 {
+		t.Errorf("oversize bodies dispatched %d requests", n)
+	}
+}
+
+// Every verb on every API path, through a real listener so HEAD is answered
+// the way a client sees it. Allow must name exactly the verbs the route takes,
+// and each verb it names must really be taken.
+func TestEveryVerbOnEveryAPIPathAnswersJSON(t *testing.T) {
+	s := newServer(t, newCountingTarget(t).URL, nil)
+	srv := httptest.NewServer(s)
+	t.Cleanup(srv.Close)
+
+	routes := map[string][]string{
+		"/api/status":                 {"GET", "HEAD"},
+		"/api/collections":            {"GET", "HEAD"},
+		"/api/send":                   {"POST"},
+		"/api/runs":                   {"GET", "HEAD", "POST"},
+		"/api/runs/run-x":             {"DELETE", "GET", "HEAD"},
+		"/api/runs/run-x/stream":      {"GET", "HEAD"},
+		"/api/runs/run-x/report.pdf":  {"GET", "HEAD"},
+		"/api":                        nil,
+		"/api/":                       nil,
+		"/api/nope":                   nil,
+		"/api/status/":                nil,
+		"/api/send/":                  nil,
+		"/api/runs/run-x/stream/more": nil,
+		"/api/runs%2Frun-x":           nil,
+		"/api/%3Cscript%3Ealert(1)%3C%2Fscript%3E": nil,
+		"/api/a%0D%0ASet-Cookie:%20x=1":            nil,
+		"/api/" + strings.Repeat("p", 4096):        nil,
+	}
+	methods := []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "BREW"}
+
+	call := func(method, path string) (*http.Response, string) {
+		t.Helper()
+		req, err := http.NewRequest(method, srv.URL+path, nil)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp, string(b)
+	}
+
+	for path, verbs := range routes {
+		name := path
+		if len(name) > 60 {
+			name = name[:60]
+		}
+		for _, m := range methods {
+			resp, body := call(m, path)
+			if slices.Contains(verbs, m) {
+				if resp.StatusCode == http.StatusMethodNotAllowed {
+					t.Errorf("%s %s = 405, but the route takes %s", m, name, m)
+				}
+				continue
+			}
+			want := http.StatusNotFound
+			if verbs != nil {
+				want = http.StatusMethodNotAllowed
+			}
+			if resp.StatusCode != want {
+				t.Errorf("%s %s = %d %.200s, want %d", m, name, resp.StatusCode, body, want)
+				continue
+			}
+			if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+				t.Errorf("%s %s Content-Type = %q", m, name, ct)
+			}
+			if resp.Header.Get("Content-Security-Policy") != contentSecurityPolicy {
+				t.Errorf("%s %s has no Content-Security-Policy", m, name)
+			}
+			if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+				t.Errorf("%s %s has no X-Content-Type-Options: nosniff", m, name)
+			}
+			if resp.Header.Get("Set-Cookie") != "" {
+				t.Errorf("%s %s: the path injected a header", m, name)
+			}
+			if want == http.StatusMethodNotAllowed {
+				if got := resp.Header.Get("Allow"); got != strings.Join(verbs, ", ") {
+					t.Errorf("%s %s Allow = %q, want %q", m, name, got, strings.Join(verbs, ", "))
+				}
+			}
+			if m == http.MethodHead {
+				if body != "" {
+					t.Errorf("HEAD %s carried a body: %.200s", name, body)
+				}
+				continue
+			}
+			var eb errorBody
+			if err := json.Unmarshal([]byte(body), &eb); err != nil || eb.Error == "" {
+				t.Errorf("%s %s body is not the JSON error shape: %.200s", m, name, body)
+			}
+			if strings.Contains(body, "<script>") || strings.ContainsAny(body, "\r") {
+				t.Errorf("%s %s reflects the path unescaped: %.200s", m, name, body)
+			}
+		}
+	}
+}
+
+// What reaches the target is the cut value, whole characters only, and the
+// response lists the cut; a clean request and a refused run carry no list.
+func TestTruncatedIsWhatTheTargetReceives(t *testing.T) {
+	target := newCountingTarget(t)
+	s := newServer(t, target.URL, nil)
+
+	long := strings.Repeat("é", sandbox.MaxParamValueLen+100)
+	rec := do(t, s, http.MethodPost, "/api/send", map[string]any{
+		"id": strings.Repeat("ü", sandbox.MaxNameLen+1), "name": strings.Repeat("n", sandbox.MaxNameLen),
+		"endpoint": "search", "params": map[string]string{"q": long, "page": "1"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("send = %d %s", rec.Code, rec.Body.String())
+	}
+	got := decode[struct {
+		Truncated []string `json:"truncated"`
+	}](t, rec).Truncated
+	if !slices.Equal(got, []string{"id", "params.q"}) {
+		t.Errorf("truncated = %q, want [id params.q]", got)
+	}
+	target.mu.Lock()
+	sent := target.queries[len(target.queries)-1].Get("q")
+	target.mu.Unlock()
+	if !utf8.ValidString(sent) || sent != strings.Repeat("é", sandbox.MaxParamValueLen) {
+		t.Errorf("the target received q of %d characters (valid UTF-8 %v), want 500 whole characters",
+			utf8.RuneCountInString(sent), utf8.ValidString(sent))
+	}
+
+	clean := do(t, s, http.MethodPost, "/api/send", map[string]any{"endpoint": "search", "params": map[string]string{"q": strings.Repeat("é", sandbox.MaxParamValueLen)}})
+	if clean.Code != http.StatusOK || strings.Contains(clean.Body.String(), `"truncated"`) {
+		t.Errorf("a send at the cap = %d and mentions truncated: %.300s", clean.Code, clean.Body.String())
+	}
+
+	refused := do(t, s, http.MethodPost, "/api/runs", map[string]any{
+		"mode": "sideways", "sequence": []map[string]any{{"endpoint": "search", "params": map[string]string{"q": long}}},
+	})
+	if refused.Code != http.StatusBadRequest || strings.Contains(refused.Body.String(), "truncated") {
+		t.Errorf("a refused run = %d %.300s, want 400 with no truncated", refused.Code, refused.Body.String())
+	}
+
+	run := do(t, s, http.MethodPost, "/api/runs", map[string]any{
+		"mode": "functional", "sequence": []map[string]any{
+			{"endpoint": "healthz"},
+			{"endpoint": "search", "params": map[string]string{"q": long}},
+		},
+	})
+	if run.Code != http.StatusAccepted {
+		t.Fatalf("run = %d %s", run.Code, run.Body.String())
+	}
+	if got := decode[startedBody](t, run).Truncated; !slices.Equal(got, []string{"sequence[1].params.q"}) {
+		t.Errorf("run truncated = %q, want [sequence[1].params.q]", got)
+	}
+	waitIdle(t, s)
+	busyOrCooling := do(t, s, http.MethodPost, "/api/runs", map[string]any{
+		"mode": "functional", "sequence": []map[string]any{{"endpoint": "search", "params": map[string]string{"q": long}}},
+	})
+	if busyOrCooling.Code == http.StatusConflict && strings.Contains(busyOrCooling.Body.String(), "truncated") {
+		t.Errorf("a refused 409 carries truncated: %s", busyOrCooling.Body.String())
+	}
 }

@@ -2,9 +2,11 @@ package sandbox
 
 import (
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/assert"
 )
@@ -307,5 +309,103 @@ func TestTruncationsNameWhatWasCut(t *testing.T) {
 	}
 	if got := Truncations(RunRequest{Mode: ModeFunctional, Sequence: []Request{req(nil)}}); got != nil {
 		t.Errorf("Truncations of a clean run = %v, want nil", got)
+	}
+}
+
+// The assertion bounds at and either side of each edge, with the string caps
+// counted in characters however many bytes or combining marks they take.
+func TestAssertionBoundsAtEveryEdge(t *testing.T) {
+	combining := strings.Repeat("é", 250)    // 500 characters, 750 bytes
+	wide := strings.Repeat("\U0001F525", 500) // 500 characters, 2,000 bytes
+	path := "$." + strings.Repeat("a", 498)
+
+	cases := []struct {
+		name string
+		a    assert.Assertion
+		ok   bool
+	}{
+		{"status 99", assert.Assertion{Type: "status", Op: "eq", Value: float64(99)}, false},
+		{"status 100", assert.Assertion{Type: "status", Op: "eq", Value: float64(100)}, true},
+		{"status 599", assert.Assertion{Type: "status", Op: "neq", Value: float64(599)}, true},
+		{"status 600", assert.Assertion{Type: "status", Op: "eq", Value: float64(600)}, false},
+		{"status 200.0", assert.Assertion{Type: "status", Op: "eq", Value: 200.0}, true},
+		{"status 200.5", assert.Assertion{Type: "status", Op: "eq", Value: 200.5}, false},
+		{"status -200", assert.Assertion{Type: "status", Op: "eq", Value: float64(-200)}, false},
+		{"status as a string", assert.Assertion{Type: "status", Op: "eq", Value: "200"}, false},
+		{"status +Inf", assert.Assertion{Type: "status", Op: "eq", Value: math.Inf(1)}, false},
+		{"status NaN", assert.Assertion{Type: "status", Op: "eq", Value: math.NaN()}, false},
+		{"status int 200", assert.Assertion{Type: "status", Op: "eq", Value: 200}, true},
+		{"latency 0", assert.Assertion{Type: "latency", Op: "lt", Value: float64(0)}, false},
+		{"latency -0", assert.Assertion{Type: "latency", Op: "lt", Value: math.Copysign(0, -1)}, false},
+		{"latency NaN", assert.Assertion{Type: "latency", Op: "lt", Value: math.NaN()}, false},
+		{"latency 0.001", assert.Assertion{Type: "latency", Op: "lt", Value: 0.001}, true},
+		{"latency 1e-320", assert.Assertion{Type: "latency", Op: "lt", Value: 1e-320}, true},
+		{"latency 1e300", assert.Assertion{Type: "latency", Op: "lt", Value: 1e300}, true},
+		{"count -1", assert.Assertion{Type: "json", Path: "$.results", Op: "count", Value: float64(-1)}, false},
+		{"count 0", assert.Assertion{Type: "json", Path: "$.results", Op: "count", Value: float64(0)}, true},
+		{"count 1.5", assert.Assertion{Type: "json", Path: "$.results", Op: "count", Value: 1.5}, false},
+		{"count 1e3", assert.Assertion{Type: "json", Path: "$.results", Op: "count", Value: 1e3}, true},
+		{"count +Inf", assert.Assertion{Type: "json", Path: "$.results", Op: "count", Value: math.Inf(1)}, false},
+		{"combining value at 500", assert.Assertion{Type: "body_contains", Op: "contains", Value: combining}, true},
+		{"combining value at 501", assert.Assertion{Type: "body_contains", Op: "contains", Value: combining + "e"}, false},
+		{"wide value at 500", assert.Assertion{Type: "json", Path: "$.name", Op: "eq", Value: wide}, true},
+		{"wide value at 501", assert.Assertion{Type: "json", Path: "$.name", Op: "contains", Value: wide + "x"}, false},
+		{"path at 500", assert.Assertion{Type: "json", Path: path, Op: "exists"}, true},
+		{"path at 501", assert.Assertion{Type: "json", Path: path + "b", Op: "exists"}, false},
+	}
+	for _, tc := range cases {
+		r := Request{Endpoint: "healthz", Assertions: []assert.Assertion{
+			{Type: "status", Op: "eq", Value: float64(200)}, tc.a,
+		}}
+		_, err := ValidateRequest(r)
+		if tc.ok {
+			if err != nil {
+				t.Errorf("%s: refused: %v", tc.name, err)
+			}
+			continue
+		}
+		var ve ValidationError
+		if !errors.As(err, &ve) {
+			t.Errorf("%s: accepted, want a validation error", tc.name)
+			continue
+		}
+		if ve.Field != "assertions[1]" {
+			t.Errorf("%s: field = %q, want assertions[1]", tc.name, ve.Field)
+		}
+		if len(ve.Message) > 300 {
+			t.Errorf("%s: message is %d bytes; it echoes the value", tc.name, len(ve.Message))
+		}
+	}
+}
+
+// Truncation reports exactly what Validate cuts, with indexes that stay right
+// when earlier requests are clean, and the cut never splits a character.
+func TestTruncationsListExactlyWhatIsCut(t *testing.T) {
+	at := func(s string, n int) string { return strings.Repeat(s, n) }
+	rr := RunRequest{Mode: ModeFunctional, Sequence: []Request{
+		{ID: at("i", MaxNameLen), Name: at("é", MaxNameLen), Endpoint: "search",
+			Params: map[string]string{"q": at("é", MaxParamValueLen)}},
+		{ID: at("ü", MaxNameLen+1), Name: "ok", Endpoint: "search",
+			Params: map[string]string{"q": at("\U0001F525", MaxParamValueLen+1), "page": "1"}},
+		{Name: at("n", MaxNameLen+1), Endpoint: "suggest", Params: map[string]string{"q": "ab"}},
+	}}
+	got := Truncations(rr)
+	want := []string{"sequence[1].id", "sequence[1].params.q", "sequence[2].name"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Truncations = %q, want %q", got, want)
+	}
+	clean, err := Validate(rr)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	q := clean.Sequence[1].Params["q"]
+	if !utf8.ValidString(q) || utf8.RuneCountInString(q) != MaxParamValueLen || q != at("\U0001F525", MaxParamValueLen) {
+		t.Errorf("the cut q is %d characters, valid UTF-8 %v", utf8.RuneCountInString(q), utf8.ValidString(q))
+	}
+	if clean.Sequence[0].Params["q"] != rr.Sequence[0].Params["q"] {
+		t.Error("a q exactly at the cap was changed")
+	}
+	if got := Truncations(RunRequest{Mode: ModeFunctional, Sequence: []Request{rr.Sequence[0]}}); got != nil {
+		t.Errorf("a payload with nothing cut reports %q, want nil", got)
 	}
 }
