@@ -95,10 +95,10 @@ func New(log *slog.Logger) *Broadcaster {
 	}
 }
 
-// Reset clears the replay log for a new run. Subscribers stay attached: a
-// spectator who watched the last run and left the tab open is a viewer of the
-// next one, and dropping them would make every run start with a reconnect
-// storm.
+// Reset clears the replay log for a new run. It detaches nobody: a stream is
+// tied to one run, and its handler ends it after writing that run's terminal
+// event, so a viewer never carries a subscriber slot from one run into the
+// next.
 func (b *Broadcaster) Reset(runID string) {
 	b.mu.Lock()
 	b.replay = nil
@@ -167,6 +167,30 @@ func (b *Broadcaster) Subscribe() (<-chan runner.Event, func(), error) {
 // between the two calls lands in both the snapshot and the channel, and the
 // viewer renders a duplicate result row that no run ever produced.
 func (b *Broadcaster) SubscribeReplay() ([]runner.Event, <-chan runner.Event, func(), error) {
+	sub, err := b.SubscribeRun()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return sub.Replay, sub.Events, sub.Cancel, nil
+}
+
+// Subscription is one attached viewer: the replay snapshot, the run that
+// snapshot describes, and the live channel, all taken in one critical section.
+type Subscription struct {
+	// RunID is the run the replay log described at the moment of attaching. A
+	// stream handler compares it with the run it was asked for: if a later run
+	// has already reset the log, the requested run is over and nothing on this
+	// subscription will ever say so.
+	RunID  string
+	Replay []runner.Event
+	Events <-chan runner.Event
+	// Cancel detaches the viewer. It is safe to call more than once.
+	Cancel func()
+}
+
+// SubscribeRun is SubscribeReplay that also reports which run the replay
+// describes, read under the same lock.
+func (b *Broadcaster) SubscribeRun() (Subscription, error) {
 	b.mu.Lock()
 	if len(b.subs) >= MaxSubscribers {
 		runID := b.runID
@@ -175,7 +199,7 @@ func (b *Broadcaster) SubscribeReplay() ([]runner.Event, <-chan runner.Event, fu
 			"event", EventSubscriberRefused,
 			"run_id", runID,
 			"subscribers", MaxSubscribers)
-		return nil, nil, nil, ErrTooManySubscribers
+		return Subscription{}, ErrTooManySubscribers
 	}
 
 	ch := make(chan runner.Event, SubscriberBuffer)
@@ -209,7 +233,7 @@ func (b *Broadcaster) SubscribeReplay() ([]runner.Event, <-chan runner.Event, fu
 				"subscribers", remaining)
 		})
 	}
-	return history, ch, cancel, nil
+	return Subscription{RunID: runID, Replay: history, Events: ch, Cancel: cancel}, nil
 }
 
 // Subscribers is the live stream count, for /metrics.

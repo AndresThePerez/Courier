@@ -507,10 +507,9 @@ func openStream(t *testing.T, base, id string, stop func(frame) bool) ([]frame, 
 	}()
 	select {
 	case r := <-done:
-		// The reader is done, so the client hangs up. The handler holds the
-		// stream open after run_finished — a browser keeps watching for the
-		// next run rather than reconnecting into one — so nothing else will
-		// release it, and httptest.Server.Close waits on live requests.
+		// The reader is done, so the client hangs up. A stop before
+		// run_finished leaves the handler streaming a live run, and
+		// httptest.Server.Close waits on live requests.
 		resp.Body.Close()
 		cancel()
 		return r.frames, resp
@@ -705,15 +704,19 @@ func TestStreamHeartbeatsThroughAQuietRun(t *testing.T) {
 	}
 }
 
-// Graceful shutdown must not hang on a stream that, by design, never ends.
+// Graceful shutdown must not hang on a stream whose run is still going.
 func TestCloseReleasesLiveStreams(t *testing.T) {
 	s := newServer(t, newTarget(t, 0), nil)
 	srv := httptest.NewServer(s)
 	defer srv.Close()
 
-	id := startRun(t, s, payload(1, 0))
-	waitIdle(t, s)
-	openStream(t, srv.URL, id, func(f frame) bool { return f.name == runner.EventRunFinished })
+	id := startRun(t, s, payload(4, 1000))
+	resp, err := http.Get(srv.URL + "/api/runs/" + id + "/stream")
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer resp.Body.Close()
+	waitFor(t, "the stream to attach", func() bool { return s.bus.Subscribers() == 1 })
 
 	done := make(chan error, 1)
 	go func() {
@@ -729,4 +732,196 @@ func TestCloseReleasesLiveStreams(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("Close blocked on a live SSE handler")
 	}
+}
+
+// ---- stream lifetime ----------------------------------------------------
+
+// streamTail opens a run's stream with the given headers and reads it line by
+// line until run_finished. It then gives the server until a generous deadline
+// to end the body, and returns every line read after run_finished's blank line
+// along with whether EOF arrived in time.
+func streamTail(t *testing.T, base, id string, header http.Header) (before []string, after []string, eof bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/runs/"+id+"/stream", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	for k, v := range header {
+		req.Header[k] = v
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream = %d, want 200", resp.StatusCode)
+	}
+
+	lines := make(chan string, 1024)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+
+	finished := false
+	for !finished {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatalf("stream ended before run_finished: %q", before)
+			}
+			before = append(before, l)
+			finished = l == "event: "+runner.EventRunFinished
+		case <-ctx.Done():
+			t.Fatalf("no run_finished within the test deadline: %q", before)
+		}
+	}
+	// The rest of run_finished's own frame: its data line and the blank line.
+	for len(before) == 0 || before[len(before)-1] != "" {
+		l, ok := <-lines
+		if !ok {
+			return before, nil, true
+		}
+		before = append(before, l)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				return before, after, true
+			}
+			after = append(after, l)
+		case <-deadline:
+			return before, after, false
+		}
+	}
+}
+
+// checkTail holds a stream to its ending: one retry: line long enough to
+// throttle a client that reconnects anyway, then EOF and nothing else.
+func checkTail(t *testing.T, after []string, eof bool) {
+	t.Helper()
+	if !eof {
+		t.Fatalf("the stream was still open 5s after run_finished; it read %q", after)
+	}
+	var fields []string
+	for _, l := range after {
+		if l != "" {
+			fields = append(fields, l)
+		}
+	}
+	if len(fields) != 1 || !strings.HasPrefix(fields[0], "retry: ") {
+		t.Fatalf("after run_finished the stream sent %q, want exactly one retry: line", after)
+	}
+	ms, err := strconv.Atoi(strings.TrimPrefix(fields[0], "retry: "))
+	if err != nil || ms < 60000 {
+		t.Errorf("retry = %q, want at least 60000 ms", fields[0])
+	}
+}
+
+func TestStreamEndsAfterTheLiveRunFinishes(t *testing.T) {
+	s := newServer(t, newTarget(t, 0), nil)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	id := startRun(t, s, payload(3, 200))
+	_, after, eof := streamTail(t, srv.URL, id, nil)
+	checkTail(t, after, eof)
+	waitFor(t, "the stream's subscriber slot to be released", func() bool { return s.bus.Subscribers() == 0 })
+}
+
+// A finished run's stream sends what it has and ends, both while the
+// broadcaster still holds the run's events and after it has moved on.
+func TestStreamOfAFinishedRunNeverParks(t *testing.T) {
+	c := &clock{}
+	s := newServer(t, newTarget(t, 0), c)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	first := startRun(t, s, payload(1, 0))
+	waitIdle(t, s)
+	before, after, eof := streamTail(t, srv.URL, first, nil)
+	if before[0] == "event: "+runner.EventRunFinished || !strings.Contains(strings.Join(before, "\n"), runner.EventRunStarted) {
+		t.Errorf("a just-finished run's stream should replay from run_started: %q", before)
+	}
+	checkTail(t, after, eof)
+
+	c.advance(10 * time.Second)
+	startRun(t, s, payload(1, 0))
+	waitIdle(t, s)
+	_, after, eof = streamTail(t, srv.URL, first, nil)
+	checkTail(t, after, eof)
+	waitFor(t, "every subscriber slot to be released", func() bool { return s.bus.Subscribers() == 0 })
+}
+
+// Streams left open on one run must not hold the subscriber cap against the
+// next: a full house of finished viewers would otherwise push every new
+// visitor onto polling.
+func TestFinishedStreamsReleaseTheirSlots(t *testing.T) {
+	c := &clock{}
+	s := newServer(t, newTarget(t, 0), c)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	a := startRun(t, s, payload(8, 1000))
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	var readers sync.WaitGroup
+	for i := range sse.MaxSubscribers {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/runs/"+a+"/stream", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("stream %d: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("stream %d = %d, want 200", i, resp.StatusCode)
+		}
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			defer resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+		}()
+	}
+	if !s.mgr.Status().Running {
+		t.Fatal("run A ended before the streams were open; the test proves nothing")
+	}
+	if n := s.bus.Subscribers(); n != sse.MaxSubscribers {
+		t.Fatalf("subscribers = %d, want the cap (%d)", n, sse.MaxSubscribers)
+	}
+
+	if rec := do(t, s, http.MethodDelete, "/api/runs/"+a, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("cancel A = %d", rec.Code)
+	}
+	waitIdle(t, s)
+
+	released := time.Now().Add(5 * time.Second)
+	for s.bus.Subscribers() != 0 && time.Now().Before(released) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := s.bus.Subscribers(); n != 0 {
+		t.Fatalf("subscribers = %d five seconds after run A finished, want 0", n)
+	}
+
+	c.advance(10 * time.Minute)
+	b := startRun(t, s, payload(2, 200))
+	frames, resp := openStream(t, srv.URL, b, func(f frame) bool { return true })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream of run B = %d, want 200", resp.StatusCode)
+	}
+	if len(frames) == 0 || frames[0].name != runner.EventRunStarted {
+		t.Errorf("run B's first frame = %+v, want run_started", frames)
+	}
+	cancel()
+	readers.Wait()
+	waitIdle(t, s)
 }

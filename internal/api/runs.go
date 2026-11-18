@@ -25,6 +25,12 @@ import (
 // events for far longer than 5s and must not be mistaken for a dead stream.
 const Heartbeat = 2 * time.Second
 
+// ReconnectDelay is the retry: a stream sends after its run's terminal event,
+// just before it ends. The client closes its EventSource on run_finished; a
+// client that does not would otherwise reconnect every few seconds, each time
+// to be told the same thing, so the server asks it to wait a minute first.
+const ReconnectDelay = 60 * time.Second
+
 // conflictBody is the 409 for POST /api/runs. Exactly one of RunID and
 // CooldownUntil is set and the UI branches on which: a live run offers
 // spectator mode, a cooldown offers a countdown. Keeping them in one shape with
@@ -181,6 +187,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 // gzip (buffering silently kills streaming, including through the Cloudflare
 // tunnel), a flush after every event, and a heartbeat so an idle stream is
 // never mistaken for a dead one.
+//
+// A stream lives exactly as long as its run. After the run's run_finished it
+// sends a retry: line and returns, which releases the subscriber slot: a tab
+// left open on a finished run must not hold one of the capped slots against
+// the viewers of the next run. No server timeout does this job, because a
+// write timeout would also cut every live stream.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rep, ok := s.mgr.Report(id)
@@ -196,11 +208,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if rep.Status != report.StatusRunning && s.bus.RunID() != id {
 		s.streamHeaders(w)
 		rc := http.NewResponseController(w)
-		_ = writeEvent(w, rc, s.terminalEvent(rep))
+		if writeEvent(w, rc, s.terminalEvent(rep)) == nil {
+			endStream(w, rc)
+		}
 		return
 	}
 
-	history, events, unsubscribe, err := s.bus.SubscribeReplay()
+	sub, err := s.bus.SubscribeRun()
 	if err != nil {
 		// The one deliberate ceiling on this fan-out. {"poll": true} is an
 		// immediate fallback trigger, not something the client should retry.
@@ -210,7 +224,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	defer unsubscribe()
+	defer sub.Cancel()
 
 	s.streamHeaders(w)
 	rc := http.NewResponseController(w)
@@ -219,13 +233,24 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A later run reset the log between the check above and the subscribe:
+	// this run is over, and nothing on the subscription will say so.
+	if sub.RunID != id {
+		s.finishStream(w, rc, id)
+		return
+	}
+
 	// Replay first: a spectator arriving mid-run, or a reconnecting viewer,
 	// gets complete state before the first live event.
-	for _, e := range history {
+	for _, e := range sub.Replay {
 		if !belongsTo(e, id) {
 			continue
 		}
 		if err := writeEvent(w, rc, e); err != nil {
+			return
+		}
+		if e.Type == runner.EventRunFinished {
+			endStream(w, rc)
 			return
 		}
 	}
@@ -234,16 +259,23 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer ping.Stop()
 	for {
 		select {
-		case e, open := <-events:
+		case e, open := <-sub.Events:
 			if !open {
 				// Dropped for falling behind. EventSource reconnects on its own
 				// and the replay log restores what was missed.
 				return
 			}
 			if !belongsTo(e, id) {
-				continue
+				// A later run has started, so this one is over; its own
+				// run_finished went to a subscriber that was dropped.
+				s.finishStream(w, rc, id)
+				return
 			}
 			if err := writeEvent(w, rc, e); err != nil {
+				return
+			}
+			if e.Type == runner.EventRunFinished {
+				endStream(w, rc)
 				return
 			}
 
@@ -265,6 +297,28 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// finishStream ends a stream whose run's own run_finished it can no longer
+// deliver, with the terminal event rebuilt from the stored report.
+func (s *Server) finishStream(w http.ResponseWriter, rc *http.ResponseController, id string) {
+	rep, ok := s.mgr.Report(id)
+	if !ok {
+		return
+	}
+	if writeEvent(w, rc, s.terminalEvent(rep)) == nil {
+		endStream(w, rc)
+	}
+}
+
+// endStream is the last thing a stream sends. EventSource reconnects whenever
+// a response ends, so the retry: line is what spaces out a client that does
+// not close on run_finished.
+func endStream(w http.ResponseWriter, rc *http.ResponseController) {
+	if _, err := fmt.Fprintf(w, "retry: %d\n\n", ReconnectDelay.Milliseconds()); err != nil {
+		return
+	}
+	_ = rc.Flush()
 }
 
 func (s *Server) streamHeaders(w http.ResponseWriter) {
