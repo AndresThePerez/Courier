@@ -20,6 +20,7 @@ const KEY = 'courier.workspace.v1';
 const VERSION = 1;
 
 export const DELETED_ELSEWHERE = 'This request was deleted in another tab.';
+export const WRITE_REFUSED = 'Could not save - this browser refused the write (storage full or disabled). The change stays on this page until you reload.';
 
 export function isWorkspaceId(id) {
   return typeof id === 'string' && id.startsWith('ws-');
@@ -74,6 +75,12 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
   // write that finds one of them gone from storage is editing a request
   // another tab deleted, and must not bring it back.
   let known = new Set();
+  // stored is the list as this tab last read or wrote it. pending is this
+  // tab's changes the browser refused to store, oldest first: they stay on the
+  // page and ride along with the next write the browser accepts, so storage
+  // that frees up (or a storage event from another tab) loses none of them.
+  let stored = [];
+  let pending = [];
   let unsubscribe = null;
 
   function load() {
@@ -85,6 +92,8 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     stop();
     const { requests } = load();
     known = new Set(requests.map((r) => r.id));
+    stored = requests;
+    pending = [];
     set({ workspace: requests });
     if (target) unsubscribe = storage.subscribe(target, area, key, onExternal);
   }
@@ -97,8 +106,8 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
   function onExternal(raw) {
     const { requests } = decode(raw);
     for (const r of requests) known.add(r.id);
-    set({ workspace: requests });
-    closeIfDeletedElsewhere();
+    stored = requests;
+    publish(applyAll(stored, pending));
   }
 
   // closeIfDeletedElsewhere closes the open request once another tab has
@@ -138,23 +147,52 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     return { list: out, blocked: false };
   }
 
-  function commit(op) {
-    let result = { list: get().workspace, blocked: false };
-    const written = storage.update(area, key, (raw) => {
-      const saved = decode(raw);
-      result = apply(saved.requests, op);
-      return result.blocked ? undefined : encode(result.list, saved.counter);
-    });
-    if (!written.read.ok) {
-      result = apply(get().workspace, op);
-    } else if (!written.ok) {
-      console.warn('workspace not persisted', written.error);
-    } else if (op.type === 'save' && !result.blocked) {
-      known.add(op.request.id);
+  function applyAll(list, ops) {
+    let out = list;
+    const blocked = new Set();
+    let changed = false;
+    for (const op of ops) {
+      const r = apply(out, op);
+      out = r.list;
+      if (r.blocked) blocked.add(op.request.id);
+      else changed = true;
     }
+    return { list: out, blocked, changed };
+  }
+
+  // publish shows the merged list and forgets changes that lost to a delete.
+  function publish(result) {
+    pending = pending.filter((op) => op.type !== 'save' || !result.blocked.has(op.request.id));
     set({ workspace: result.list });
     closeIfDeletedElsewhere();
-    return { ok: written.ok && !result.blocked, deleted: result.blocked };
+  }
+
+  // commit stores one change and returns { ok, deleted }: ok only when the
+  // browser accepted the write, deleted when the change lost to a delete made
+  // in another tab.
+  function commit(op) {
+    pending.push(op);
+    let result = null;
+    const written = storage.update(area, key, (raw) => {
+      const saved = decode(raw);
+      result = applyAll(saved.requests, pending);
+      return result.changed ? encode(result.list, saved.counter) : undefined;
+    });
+    if (!written.read.ok) {
+      // A store that cannot be read cannot be merged into, so nothing was
+      // written; the page carries on from what this tab last saw.
+      result = applyAll(stored, pending);
+    } else if (!written.ok) {
+      stored = decode(written.read.value).requests;
+      console.warn('workspace not persisted', written.error);
+    } else {
+      stored = result.list;
+      for (const p of pending) if (p.type === 'save' && !result.blocked.has(p.request.id)) known.add(p.request.id);
+      pending = [];
+    }
+    const deleted = op.type === 'save' && result.blocked.has(op.request.id);
+    publish(result);
+    return { ok: written.ok && !deleted, deleted };
   }
 
   function find(id) {
@@ -188,6 +226,8 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
 
   function reset() {
     known = new Set();
+    stored = [];
+    pending = [];
     storage.remove(area, key);
     closeIfOpen();
     set({ workspace: [] });

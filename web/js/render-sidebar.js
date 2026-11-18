@@ -79,7 +79,7 @@ function showResetConfirm() {
 // asking first: an inline undo costs a visitor nothing when they meant it, and
 // window.confirm would block the page (see showResetConfirm).
 function deleteRequest(id) {
-  const { request } = workspace.remove(id);
+  const { request, ok } = workspace.remove(id);
   const note = byId('workspace-note');
   if (!request) {
     note.hidden = true;
@@ -94,10 +94,15 @@ function deleteRequest(id) {
       on: {
         click: () => {
           note.hidden = true;
-          workspace.save(request);
+          const restored = workspace.save(request);
+          if (!restored.ok && !restored.deleted) {
+            replace(note, [el('span', { text: workspace.WRITE_REFUSED })]);
+            note.hidden = false;
+          }
         },
       },
     }),
+    ok ? null : el('span', { text: ` ${workspace.WRITE_REFUSED}` }),
   ]);
   note.hidden = false;
 }

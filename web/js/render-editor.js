@@ -96,17 +96,23 @@ function edit(mutate) {
   const draft = own();
   if (!draft) return;
   mutate(draft);
+  const saved = workspace.save(draft);
   // A request another tab deleted has just been closed; publishing the draft
   // again would reopen it.
-  if (workspace.save(draft).deleted) return;
+  if (saved.deleted) return;
+  if (!saved.ok) saveNote = workspace.WRITE_REFUSED;
+  else if (saveNote === workspace.WRITE_REFUSED) saveNote = '';
   set({ draft, selectedId: draft.id });
 }
 
 function saveDraft() {
   const draft = own();
   if (!draft) return;
-  if (workspace.save(draft).deleted) return;
-  saveNote = `Saved "${draft.name || draft.id}" to My Workspace.`;
+  const saved = workspace.save(draft);
+  if (saved.deleted) return;
+  // Only a write the browser accepted may claim the request is saved: a full
+  // or disabled localStorage throws, and the visitor would lose it on reload.
+  saveNote = saved.ok ? `Saved "${draft.name || draft.id}" to My Workspace.` : workspace.WRITE_REFUSED;
   set({ draft, selectedId: draft.id });
 }
 
