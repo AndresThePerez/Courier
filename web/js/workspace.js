@@ -75,6 +75,11 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
   // write that finds one of them gone from storage is editing a request
   // another tab deleted, and must not bring it back.
   let known = new Set();
+  // deletedHere is every id this tab deleted and has not stored again. A value
+  // that may be stale (a storage event read while the browser refuses reads)
+  // can still list one; taking it from there would show the request again and
+  // turn this tab's own Undo into "deleted in another tab".
+  let deletedHere = new Set();
   // stored is the list as this tab last read or wrote it. pending is this
   // tab's changes the browser refused to store, oldest first: they stay on the
   // page and ride along with the next write the browser accepts, so storage
@@ -92,6 +97,7 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     stop();
     const { requests } = load();
     known = new Set(requests.map((r) => r.id));
+    deletedHere = new Set();
     stored = requests;
     pending = [];
     set({ workspace: requests });
@@ -103,8 +109,10 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     unsubscribe = null;
   }
 
-  function onExternal(raw) {
-    const { requests } = decode(raw);
+  function onExternal(raw, { current }) {
+    let { requests } = decode(raw);
+    if (current) for (const r of requests) deletedHere.delete(r.id);
+    else requests = requests.filter((r) => !deletedHere.has(r.id));
     for (const r of requests) known.add(r.id);
     stored = requests;
     publish(applyAll(stored, pending));
@@ -194,7 +202,11 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
       console.warn('workspace not persisted', written.error);
     } else {
       stored = result.list;
-      for (const p of pending) if (p.type === 'save' && !result.blocked.has(p.request.id)) known.add(p.request.id);
+      for (const p of pending) {
+        if (p.type !== 'save' || result.blocked.has(p.request.id)) continue;
+        known.add(p.request.id);
+        deletedHere.delete(p.request.id);
+      }
       pending = [];
     }
     const deleted = op.type === 'save' && result.blocked.has(op.request.id);
@@ -240,20 +252,36 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
   function remove(id) {
     const request = find(id);
     known.delete(id);
+    deletedHere.add(id);
     closeIfOpen(id);
     return { ...commit({ type: 'remove', id }), request };
   }
 
+  // reset clears the stored workspace and returns { ok }. A refused removal
+  // leaves everything as it was: clearing only this page would show an empty
+  // list that the next accepted write quietly merges the stored requests back
+  // into.
   function reset() {
+    const removed = storage.remove(area, key);
+    if (!removed.ok) {
+      console.warn('workspace not reset', removed.error);
+      return { ok: false };
+    }
     known = new Set();
+    deletedHere = new Set();
     stored = [];
     pending = [];
-    storage.remove(area, key);
     closeIfOpen();
     set({ workspace: [] });
+    return { ok: true };
   }
 
-  return { load, init, stop, find, save, fork, remove, reset };
+  // queued is how many changes are waiting for the browser to accept a write.
+  function queued() {
+    return pending.length;
+  }
+
+  return { load, init, stop, find, save, fork, remove, reset, queued };
 }
 
 const page = createWorkspace({

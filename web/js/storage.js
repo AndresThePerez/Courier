@@ -56,8 +56,9 @@ export function parseJSON(raw) {
 // update is the only safe way for two tabs to share a key: it re-reads the
 // value as it is now and writes fn(current) in the same synchronous turn, so a
 // tab never writes back a copy it loaded minutes ago over another tab's
-// changes. (localStorage has no compare-and-set; within one task nothing else
-// on this page can interleave, which is as strong as the platform allows.)
+// changes. localStorage has no compare-and-set; nothing else on this page can
+// run between the read and the write, which is as strong as synchronous
+// storage allows.
 //
 // When the read is refused nothing is written: merging into a value we could
 // not see would overwrite whatever another tab stored. fn returning undefined
@@ -72,10 +73,16 @@ export function update(storage, key, fn) {
   return { ok: written.ok, read: current, value: next, error: written.error };
 }
 
-// subscribe calls fn(newValue) whenever another tab changes key. A browser
-// fires `storage` only in the other tabs, never in the one that wrote. A
-// clear() elsewhere arrives with key null and counts as the key removed;
+// subscribe calls fn(value, { current }) whenever another tab changes key. A
+// browser fires `storage` only in the other tabs, never in the one that wrote.
+// A clear() elsewhere arrives with key null and counts as the key removed;
 // events for another storage area (sessionStorage) are ignored.
+//
+// The event is queued after the shared value has changed, and this page may
+// have written in between, so its newValue can be older than what is stored.
+// The value handed on is therefore the key as stored now; newValue stands in
+// only when the browser refuses the read, and then current is false so the
+// caller knows the value may be stale.
 export function subscribe(target, storage, key, fn) {
   const onStorage = (event) => {
     if (event.key !== key && event.key !== null) return;
@@ -88,7 +95,9 @@ export function subscribe(target, storage, key, fn) {
       }
       if (event.storageArea !== area) return;
     }
-    fn(event.key === null ? null : event.newValue ?? null);
+    const now = read(storage, key);
+    if (now.ok) fn(now.value, { current: true });
+    else fn(event.key === null ? null : event.newValue ?? null, { current: false });
   };
   target.addEventListener('storage', onStorage);
   return () => target.removeEventListener('storage', onStorage);

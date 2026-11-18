@@ -59,9 +59,15 @@ function showResetConfirm() {
         text: 'Reset workspace',
         on: {
           click: () => {
-            workspace.reset();
+            const { ok } = workspace.reset();
             box.hidden = true;
-            byId('workspace-note').hidden = true;
+            const note = byId('workspace-note');
+            if (ok) {
+              note.hidden = true;
+              return;
+            }
+            replace(note, [el('span', { text: workspace.WRITE_REFUSED })]);
+            note.hidden = false;
           },
         },
       }),
@@ -93,12 +99,18 @@ function deleteRequest(id) {
       text: 'Undo',
       on: {
         click: () => {
-          note.hidden = true;
+          // An undo that did not land must say so: hiding the note would
+          // leave the visitor believing the request is back.
           const restored = workspace.save(request);
-          if (!restored.ok && !restored.deleted) {
-            replace(note, [el('span', { text: workspace.WRITE_REFUSED })]);
-            note.hidden = false;
+          if (restored.ok) {
+            note.hidden = true;
+            return;
           }
+          const why = restored.deleted
+            ? `Could not restore "${request.name || request.id}".`
+            : workspace.WRITE_REFUSED;
+          replace(note, [el('span', { text: why })]);
+          note.hidden = false;
         },
       },
     }),
