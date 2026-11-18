@@ -68,7 +68,7 @@ var requiredIDs = []string{
 var requiredScripts = []string{
 	"js/main.js", "js/store.js", "js/api.js", "js/dom.js",
 	"js/workspace.js", "js/storage.js", "js/render-sidebar.js", "js/render-editor.js",
-	"js/render-runner.js", "js/render-results.js", "js/json-view.js",
+	"js/render-runner.js", "js/run-config.js", "js/render-results.js", "js/json-view.js",
 }
 
 // requiredAssets is every non-script file the markup references by URL. Same

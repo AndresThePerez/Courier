@@ -1,5 +1,5 @@
-// main.js — bootstrap. Loads the catalog, restores the workspace, wires the
-// tabs, and starts the one status poll the whole page shares.
+// main.js — bootstrap. Loads the catalog, restores the workspace and the run
+// setup, wires the tabs, and starts the one status poll the whole page shares.
 
 import { get, set, subscribe } from './store.js';
 import { byId } from './dom.js';
@@ -253,6 +253,7 @@ function render(state) {
 
 async function boot() {
   workspace.init();
+  runner.restore();
 
   editor.init();
   runner.init({

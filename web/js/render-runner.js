@@ -14,6 +14,7 @@
 import { get, set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as api from './api.js';
+import { createRunConfig, clampOption as clampWithin, SETUP_REFUSED } from './run-config.js';
 
 // MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
 // enforces them either way; matching them here means a visitor meets a cap as a
@@ -27,6 +28,15 @@ const Limits = {
   concurrency: { lo: 1, hi: 50, fallback: 10 },
   duration_secs: { lo: 1, hi: 30, fallback: 10 },
 };
+
+// createRunSetup is the run setup's storage under this runner's caps. The
+// page keeps one over localStorage; tests build fresh ones over the same
+// storage to stand for a reload.
+export function createRunSetup(area) {
+  return createRunConfig({ storage: area, limits: Limits, maxSequence: MaxSequence });
+}
+
+const setup = createRunSetup(() => globalThis.localStorage);
 
 const optionOf = {
   'delay-ms': 'delay_ms',
@@ -72,6 +82,7 @@ let hooks = { refresh: async () => {}, showTab: () => {} };
 let counter = 0;
 let lastSignature = null;
 let sequenceNote = '';
+let setupNote = '';
 let startNote = '';
 let starting = false;
 let cancelling = false;
@@ -104,6 +115,21 @@ export function init(h) {
   byId('watch-run').addEventListener('click', watch);
 }
 
+// ---------------------------------------------------------------- the setup
+
+// restore puts back the run setup this browser kept, at page load only.
+export function restore() {
+  set(setup.load());
+}
+
+// setSetup is every change to the sequence, the mode or the options: it
+// stores the setup whole, then shows it. A refused write keeps the change on
+// this page and says so beside the sequence until a write is accepted.
+function setSetup(patch) {
+  setupNote = setup.save({ ...get(), ...patch }).ok ? '' : SETUP_REFUSED;
+  set(patch);
+}
+
 // ---------------------------------------------------------------- the sequence
 
 // entryFor snapshots a request into the sequence. The deep copy is the point:
@@ -124,7 +150,7 @@ export function add(request) {
     return;
   }
   sequenceNote = '';
-  set({ sequence: [...list, entryFor(request)] });
+  setSetup({ sequence: [...list, entryFor(request)] });
 }
 
 // addAll is the "Add all to run" hook. A collection that does not fit is added
@@ -146,7 +172,7 @@ export function addAll(collection) {
   sequenceNote = taken.length < requests.length
     ? `Added ${taken.length} of ${requests.length} - ${MaxSequence} requests is the cap.`
     : '';
-  set({ sequence: [...list, ...taken.map((r) => entryFor(r))] });
+  setSetup({ sequence: [...list, ...taken.map((r) => entryFor(r))] });
 }
 
 // move is the whole reordering story: drag-and-drop is deliberately absent, and
@@ -158,20 +184,20 @@ function move(index, delta) {
   const to = index + delta;
   if (to < 0 || to >= list.length) return;
   [list[index], list[to]] = [list[to], list[index]];
-  set({ sequence: list });
+  setSetup({ sequence: list });
 }
 
 function removeAt(index) {
   sequenceNote = '';
-  set({ sequence: get().sequence.filter((_, i) => i !== index) });
+  setSetup({ sequence: get().sequence.filter((_, i) => i !== index) });
 }
 
 function setEnabled(key, on) {
-  set({ sequence: get().sequence.map((e) => (e.key === key ? { ...e, enabled: on } : e)) });
+  setSetup({ sequence: get().sequence.map((e) => (e.key === key ? { ...e, enabled: on } : e)) });
 }
 
 function setAllEnabled(on) {
-  set({ sequence: get().sequence.map((e) => (e.enabled === on ? e : { ...e, enabled: on })) });
+  setSetup({ sequence: get().sequence.map((e) => (e.enabled === on ? e : { ...e, enabled: on })) });
 }
 
 // ---------------------------------------------------------------- knee demo
@@ -195,7 +221,7 @@ function preloadKnee(workers) {
   startNote = '';
   kneeNote = `Loaded ${requests.length} search requests at ${workers} worker${workers === 1 ? '' : 's'}`
     + ` for ${KneeDuration}s. Press Start run to take your own reading.`;
-  set({
+  setSetup({
     sequence: requests.map((r) => entryFor(r)),
     mode: 'performance',
     options: { ...get().options, concurrency: workers, duration_secs: KneeDuration },
@@ -257,18 +283,15 @@ function renderKnee(state) {
 function setMode(mode) {
   if (get().mode === mode) return;
   startNote = '';
-  set({ mode });
+  setSetup({ mode });
 }
 
 function setOption(key, value) {
-  set({ options: { ...get().options, [key]: value } });
+  setSetup({ options: { ...get().options, [key]: value } });
 }
 
 function clampOption(key, raw) {
-  const { lo, hi, fallback } = Limits[key];
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < lo) return fallback;
-  return n > hi ? hi : n;
+  return clampWithin(Limits, key, raw);
 }
 
 // requestPayload is the sandbox.Request shape POST /api/runs validates. The
@@ -462,8 +485,9 @@ function renderSequence(state) {
   setText(byId('sequence-count'), `${list.length} of ${MaxSequence} - ${on} selected`);
 
   const note = byId('sequence-note');
-  note.hidden = !sequenceNote;
-  setText(note, sequenceNote);
+  const noteText = [sequenceNote, setupNote].filter(Boolean).join(' ');
+  note.hidden = !noteText;
+  setText(note, noteText);
 
   byId('select-all').disabled = list.length === 0;
   byId('deselect-all').disabled = list.length === 0;
@@ -695,3 +719,4 @@ function restoreFocus(key) {
   const node = document.querySelector(`[data-focus-key="${key}"]`);
   if (node && node !== document.activeElement && !node.disabled) node.focus();
 }
+
