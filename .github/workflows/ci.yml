@@ -114,3 +114,26 @@ jobs:
       # against the fake browser in web/test/shim.mjs.
       - name: Test
         run: node --test "web/test/*.test.mjs"
+
+  acceptance:
+    name: acceptance matrix (stub target)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The matrix builds the server, starts two Couriers on free loopback
+      # ports and points them at an in-process stub target. Skipped, because
+      # they judge the real index rather than Courier:
+      #   TestCuratedCollectionsRunClean: every curated fixture is measured against the live index.
+      #   TestStrictParamIsRejectedNamingTheField: the 400 naming page_size is PokéSearch's own validation.
+      - name: Acceptance matrix
+        run: >-
+          ACCEPTANCE_SELF_CONTAINED=1 go test -tags acceptance ./internal/acceptance/ -v -timeout 20m
+          -skip '^(TestCuratedCollectionsRunClean|TestStrictParamIsRejectedNamingTheField)$'
