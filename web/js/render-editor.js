@@ -96,14 +96,16 @@ function edit(mutate) {
   const draft = own();
   if (!draft) return;
   mutate(draft);
-  workspace.save(draft);
+  // A request another tab deleted has just been closed; publishing the draft
+  // again would reopen it.
+  if (workspace.save(draft).deleted) return;
   set({ draft, selectedId: draft.id });
 }
 
 function saveDraft() {
   const draft = own();
   if (!draft) return;
-  workspace.save(draft);
+  if (workspace.save(draft).deleted) return;
   saveNote = `Saved "${draft.name || draft.id}" to My Workspace.`;
   set({ draft, selectedId: draft.id });
 }
@@ -241,6 +243,10 @@ function payloadOf(draft) {
 
 export function render(state) {
   const draft = state.draft;
+  const notice = byId('editor-notice');
+  const noticeText = draft ? '' : state.editorNotice || '';
+  notice.hidden = !noticeText;
+  if (notice.textContent !== noticeText) notice.textContent = noticeText;
   byId('editor-empty').hidden = Boolean(draft);
   byId('editor-form').hidden = !draft;
   if (!draft) {

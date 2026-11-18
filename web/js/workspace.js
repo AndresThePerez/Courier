@@ -19,6 +19,8 @@ import * as storage from './storage.js';
 const KEY = 'courier.workspace.v1';
 const VERSION = 1;
 
+export const DELETED_ELSEWHERE = 'This request was deleted in another tab.';
+
 export function isWorkspaceId(id) {
   return typeof id === 'string' && id.startsWith('ws-');
 }
@@ -96,6 +98,23 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     const { requests } = decode(raw);
     for (const r of requests) known.add(r.id);
     set({ workspace: requests });
+    closeIfDeletedElsewhere();
+  }
+
+  // closeIfDeletedElsewhere closes the open request once another tab has
+  // deleted it. Left open, the editor would write it straight back on the
+  // next keystroke, or keep showing a request the sidebar no longer lists.
+  function closeIfDeletedElsewhere() {
+    const { draft, workspace } = get();
+    if (!draft || !known.has(draft.id) || workspace.some((r) => r.id === draft.id)) return;
+    set({ draft: null, selectedId: null, editorNotice: DELETED_ELSEWHERE });
+  }
+
+  function closeIfOpen(id) {
+    const { draft } = get();
+    if (draft && (id === undefined ? isWorkspaceId(draft.id) : draft.id === id)) {
+      set({ draft: null, selectedId: null });
+    }
   }
 
   // apply folds one change into a list.
@@ -134,6 +153,7 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
       known.add(op.request.id);
     }
     set({ workspace: result.list });
+    closeIfDeletedElsewhere();
     return { ok: written.ok && !result.blocked, deleted: result.blocked };
   }
 
@@ -157,15 +177,19 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
     return save(copy);
   }
 
+  // remove deletes a request and closes it if it is open, returning what was
+  // deleted so the caller can offer it back.
   function remove(id) {
     const request = find(id);
     known.delete(id);
+    closeIfOpen(id);
     return { ...commit({ type: 'remove', id }), request };
   }
 
   function reset() {
     known = new Set();
     storage.remove(area, key);
+    closeIfOpen();
     set({ workspace: [] });
   }
 

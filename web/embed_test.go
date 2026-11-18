@@ -23,11 +23,11 @@ var requiredIDs = []string{
 	"panel-runner", "panel-editor", "panel-results",
 
 	// sidebar
-	"collections-tree", "workspace-tree", "reset-workspace", "reset-confirm",
+	"collections-tree", "workspace-tree", "reset-workspace", "reset-confirm", "workspace-note",
 	"history-list", "target-note", "target-note-name",
 
 	// request editor
-	"editor-empty", "editor-form", "editor-name", "editor-origin", "editor-note",
+	"editor-notice", "editor-empty", "editor-form", "editor-name", "editor-origin", "editor-note",
 	"endpoint-select", "param-rows", "add-param", "param-note",
 	"assertion-rows", "add-assertion", "assertion-note",
 	"send-request", "save-request", "send-status", "send-response",

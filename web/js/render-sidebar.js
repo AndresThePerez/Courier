@@ -1,6 +1,6 @@
 // render-sidebar.js — curated collections, the visitor workspace, and history.
 
-import { get, set, deepCopy } from './store.js';
+import { set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as workspace from './workspace.js';
 
@@ -61,8 +61,7 @@ function showResetConfirm() {
           click: () => {
             workspace.reset();
             box.hidden = true;
-            const state = get();
-            if (state.draft && workspace.isWorkspaceId(state.draft.id)) set({ draft: null, selectedId: null });
+            byId('workspace-note').hidden = true;
           },
         },
       }),
@@ -74,6 +73,33 @@ function showResetConfirm() {
       }),
     ]),
   ]);
+}
+
+// deleteRequest deletes at once and offers the request back, rather than
+// asking first: an inline undo costs a visitor nothing when they meant it, and
+// window.confirm would block the page (see showResetConfirm).
+function deleteRequest(id) {
+  const { request } = workspace.remove(id);
+  const note = byId('workspace-note');
+  if (!request) {
+    note.hidden = true;
+    return;
+  }
+  replace(note, [
+    el('span', { text: `Deleted "${request.name || request.id}". ` }),
+    el('button', {
+      class: 'link-btn',
+      type: 'button',
+      text: 'Undo',
+      on: {
+        click: () => {
+          note.hidden = true;
+          workspace.save(request);
+        },
+      },
+    }),
+  ]);
+  note.hidden = false;
 }
 
 function requestRow(request, selectedId) {
@@ -177,7 +203,7 @@ export function render(state) {
         type: 'button',
         text: 'x',
         title: 'Delete this saved request',
-        on: { click: () => workspace.remove(r.id) },
+        on: { click: () => deleteRequest(r.id) },
       }));
       return row;
     }));
@@ -202,5 +228,5 @@ export function render(state) {
 // selectRequest is the sidebar's half of selection: the editor owns the draft,
 // but the tree owns which id is highlighted.
 export function selectRequest(request) {
-  set({ selectedId: request.id, draft: deepCopy(request) });
+  set({ selectedId: request.id, draft: deepCopy(request), editorNotice: '' });
 }
