@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,11 +27,15 @@ import (
 type clock struct {
 	mu     sync.Mutex
 	offset time.Duration
+	zone   *time.Location // nil reads in the process's zone
 }
 
 func (c *clock) now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.zone != nil {
+		return time.Now().Add(c.offset).In(c.zone)
+	}
 	return time.Now().Add(c.offset)
 }
 
@@ -1057,5 +1062,85 @@ func TestSynthesizedTerminalEventFallsBackToIDOne(t *testing.T) {
 	e := s.terminalEvent(&report.Report{ID: "run-forgotten", Status: report.StatusCompleted})
 	if e.ID != 1 {
 		t.Errorf("terminal id = %d, want 1 when no id was recorded", e.ID)
+	}
+}
+
+// ---- times --------------------------------------------------------------
+
+var wireTime = regexp.MustCompile(`"(started_at|finished_at|cooldown_until)":"([^"]*)"`)
+
+// checkWireTimes holds one payload to the time contract: every time is UTC,
+// and none is the zero value.
+func checkWireTimes(t *testing.T, where string, body []byte) int {
+	t.Helper()
+	if strings.Contains(string(body), "0001-01-01") {
+		t.Errorf("%s carries a zero time: %s", where, body)
+	}
+	found := wireTime.FindAllStringSubmatch(string(body), -1)
+	for _, m := range found {
+		if !strings.HasSuffix(m[2], "Z") {
+			t.Errorf("%s: %s = %q, want UTC (ending in Z)", where, m[1], m[2])
+		}
+	}
+	return len(found)
+}
+
+func TestWireTimesAreUTCAndUnsetOnesAbsent(t *testing.T) {
+	c := &clock{zone: time.FixedZone("UTC-5", -5*60*60)}
+	s := newServer(t, newTarget(t, 0), c)
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+
+	id := startRun(t, s, payload(3, 300))
+
+	live := do(t, s, http.MethodGet, "/api/runs/"+id, nil)
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(live.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["finished_at"]; ok {
+		t.Errorf("a running report carries finished_at: %s", raw["finished_at"])
+	}
+	if checkWireTimes(t, "running report", live.Body.Bytes()) != 1 {
+		t.Errorf("running report times: %s", live.Body.Bytes())
+	}
+	if checkWireTimes(t, "running status", do(t, s, http.MethodGet, "/api/status", nil).Body.Bytes()) != 1 {
+		t.Error("a live status should carry started_at")
+	}
+
+	resp, err := http.Get(srv.URL + "/api/runs/" + id + "/stream")
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	stream, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if checkWireTimes(t, "stream", stream) != 2 {
+		t.Errorf("stream should carry run_started.started_at and run_finished.cooldown_until: %s", stream)
+	}
+	waitIdle(t, s)
+
+	if checkWireTimes(t, "finished report", do(t, s, http.MethodGet, "/api/runs/"+id, nil).Body.Bytes()) != 2 {
+		t.Error("a finished report should carry started_at and finished_at")
+	}
+	if checkWireTimes(t, "history", do(t, s, http.MethodGet, "/api/runs", nil).Body.Bytes()) != 1 {
+		t.Error("history should carry started_at")
+	}
+	if checkWireTimes(t, "cooling status", do(t, s, http.MethodGet, "/api/status", nil).Body.Bytes()) != 1 {
+		t.Error("a cooling status should carry cooldown_until")
+	}
+	conflict := do(t, s, http.MethodPost, "/api/runs", payload(1, 0))
+	if conflict.Code != http.StatusConflict || checkWireTimes(t, "cooldown conflict", conflict.Body.Bytes()) != 1 {
+		t.Errorf("cooldown conflict = %d %s", conflict.Code, conflict.Body.Bytes())
+	}
+
+	// Past the cooldown, a rebuilt terminal event has no cooldown to report.
+	c.advance(time.Hour)
+	rep, _ := s.mgr.Report(id)
+	terminal, err := json.Marshal(s.terminalEvent(rep))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkWireTimes(t, "terminal event", terminal) != 0 {
+		t.Errorf("a terminal event with no cooldown carries a time: %s", terminal)
 	}
 }

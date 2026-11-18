@@ -43,7 +43,7 @@ func runFunctional(ctx context.Context, ex *Executor, rr sandbox.RunRequest, emi
 	emit(Event{Type: EventRunStarted, Data: RunStarted{
 		Mode:      sandbox.ModeFunctional,
 		Total:     len(seq),
-		StartedAt: time.Now(),
+		StartedAt: time.Now().UTC(),
 		Config:    configOf(rr.Options),
 		Entries:   Entries(ex, seq),
 	}})

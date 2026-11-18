@@ -361,3 +361,20 @@ func TestPreviewNCapsAtN(t *testing.T) {
 		t.Errorf("PreviewN under cap = len %d trunc %v, want 100 false", len(s), trunc)
 	}
 }
+
+func TestFunctionalRunStartedIsStampedInUTC(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	rec := &recorder{}
+	RunFunctional(context.Background(), NewExecutor(srv.URL), sandbox.RunRequest{
+		Mode:     sandbox.ModeFunctional,
+		Sequence: []sandbox.Request{{ID: "1", Name: "a", Endpoint: "search"}},
+	}, rec.emit)
+	e, ok := rec.first(EventRunStarted)
+	if !ok {
+		t.Fatal("no run_started")
+	}
+	if at := e.Data.(RunStarted).StartedAt; at.Location() != time.UTC {
+		t.Errorf("run_started started_at = %v, want UTC", at)
+	}
+}

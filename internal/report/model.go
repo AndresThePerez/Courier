@@ -36,12 +36,15 @@ const (
 
 // Report is one run, start to finish. It is what the API serves, what history
 // stores, and what the PDF renders.
+//
+// Times are UTC. FinishedAt is absent until the run finishes: a zero time on
+// the wire reads as a real date in the year 1, not as "not yet".
 type Report struct {
 	ID          string       `json:"id"`
 	Mode        string       `json:"mode"`
 	Status      string       `json:"status"` // running | completed | cancelled | expired
 	StartedAt   time.Time    `json:"started_at"`
-	FinishedAt  time.Time    `json:"finished_at,omitempty"`
+	FinishedAt  time.Time    `json:"finished_at,omitzero"`
 	DurationMs  int64        `json:"duration_ms"`
 	Target      string       `json:"target"`
 	Config      Config       `json:"config"`

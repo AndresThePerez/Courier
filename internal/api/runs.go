@@ -91,7 +91,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		// same instant instead of each inferring one.
 		var ce *runner.CooldownError
 		errors.As(err, &ce)
-		until := ce.Until
+		until := ce.Until.UTC()
 		writeJSON(w, http.StatusConflict, conflictBody{
 			Error:         runner.ErrCoolingDown.Error(),
 			CooldownUntil: &until,

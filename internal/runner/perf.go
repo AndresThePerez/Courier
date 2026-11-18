@@ -54,7 +54,7 @@ func RunPerformance(ctx context.Context, ex *Executor, rr sandbox.RunRequest, em
 	emit(Event{Type: EventRunStarted, Data: RunStarted{
 		Mode:      sandbox.ModePerformance,
 		Total:     len(seq),
-		StartedAt: start,
+		StartedAt: start.UTC(),
 		Config:    configOf(rr.Options),
 		Entries:   Entries(ex, seq),
 	}})

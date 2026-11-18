@@ -298,3 +298,25 @@ func TestPerfSpreadsAcrossAShortSequence(t *testing.T) {
 		}
 	}
 }
+
+func TestPerfRunStartedIsStampedInUTC(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	var mu sync.Mutex
+	var started *RunStarted
+	RunPerformance(context.Background(), NewExecutor(srv.URL), perfRun(oneRequest(), 1, 1), func(e Event) {
+		if d, ok := e.Data.(RunStarted); ok {
+			mu.Lock()
+			started = &d
+			mu.Unlock()
+		}
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if started == nil {
+		t.Fatal("no run_started")
+	}
+	if started.StartedAt.Location() != time.UTC {
+		t.Errorf("run_started started_at = %v, want UTC", started.StartedAt)
+	}
+}

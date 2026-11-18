@@ -63,11 +63,14 @@ type Progress struct {
 // RunFinished is the run_finished payload. The manager emits it after the
 // report is stamped, stored, and charged to the budget, so a client that reacts
 // to it by fetching the report never races finalization.
+//
+// CooldownUntil is UTC, and absent when there is no cooldown to count down
+// (a terminal event rebuilt after the cooldown has passed).
 type RunFinished struct {
 	Status        string    `json:"status"`
 	DurationMs    int64     `json:"duration_ms"`
 	Verdict       string    `json:"verdict,omitempty"`
-	CooldownUntil time.Time `json:"cooldown_until"`
+	CooldownUntil time.Time `json:"cooldown_until,omitzero"`
 }
 
 // Result is what a mode returns: its payload plus the status the run finalized

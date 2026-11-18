@@ -52,7 +52,7 @@ type Publisher interface {
 	Replay() []Event
 }
 
-// Status is the lifecycle as /api/status reports it.
+// Status is the lifecycle as /api/status reports it. Its times are UTC.
 //
 // CooldownUntil is present whenever it is in the future, so the UI counts down
 // a value the server gave it rather than one it inferred. It must be re-read
@@ -87,12 +87,16 @@ type Manager struct {
 	now    func() time.Time
 	run    runFunc
 
-	mu      sync.Mutex
-	st      Status
-	live    *report.Report // the in-progress report, updated from the event stream
-	abort   context.CancelCauseFunc
-	byID    map[string]*report.Report
-	history []*report.Report // newest first
+	mu   sync.Mutex
+	st   Status
+	live *report.Report // the in-progress report, updated from the event stream
+	// liveStart is the live run's start as the clock read it. The report holds
+	// the same instant in UTC, and converting a time drops its monotonic
+	// reading, so the elapsed time is measured from this one.
+	liveStart time.Time
+	abort     context.CancelCauseFunc
+	byID      map[string]*report.Report
+	history   []*report.Report // newest first
 
 	wg sync.WaitGroup
 }
@@ -179,11 +183,12 @@ func (m *Manager) Start(ctx context.Context, rr sandbox.RunRequest) (string, err
 
 	id := newRunID(m.now())
 	start := m.now()
+	startUTC := start.UTC()
 	rep := &report.Report{
 		ID:        id,
 		Mode:      clean.Mode,
 		Status:    report.StatusRunning,
-		StartedAt: start,
+		StartedAt: startUTC,
 		Target:    m.target,
 		Config:    configOf(clean.Options),
 		Entries:   Entries(m.ex, clean.Sequence),
@@ -198,8 +203,9 @@ func (m *Manager) Start(ctx context.Context, rr sandbox.RunRequest) (string, err
 	runCtx, abort := context.WithCancelCause(ctx)
 	m.abort = abort
 	m.live = rep
+	m.liveStart = start
 	m.byID[id] = rep
-	m.st = Status{Running: true, RunID: id, Mode: clean.Mode, StartedAt: &start}
+	m.st = Status{Running: true, RunID: id, Mode: clean.Mode, StartedAt: &startUTC}
 	m.wg.Add(1)
 	m.mu.Unlock()
 
@@ -268,9 +274,9 @@ func (m *Manager) finish(id string, res Result) {
 	m.mu.Lock()
 	rep := m.byID[id]
 	end := m.now()
-	elapsed := end.Sub(rep.StartedAt)
+	elapsed := end.Sub(m.liveStart)
 
-	rep.FinishedAt = end
+	rep.FinishedAt = end.UTC()
 	rep.DurationMs = elapsed.Milliseconds()
 	rep.Status = res.Status
 	if res.Functional != nil {
@@ -324,7 +330,7 @@ func (m *Manager) finish(id string, res Result) {
 		Status:        rep.Status,
 		DurationMs:    rep.DurationMs,
 		Verdict:       verdict,
-		CooldownUntil: charge.CooldownUntil,
+		CooldownUntil: charge.CooldownUntil.UTC(),
 	}})
 }
 
@@ -356,6 +362,7 @@ func (m *Manager) Status() Status {
 	st := m.st
 	st.BudgetBalance = m.bucket.Balance()
 	if until := m.bucket.CooldownUntil(); until.After(m.now()) {
+		until = until.UTC()
 		st.CooldownUntil = &until
 	}
 	return st

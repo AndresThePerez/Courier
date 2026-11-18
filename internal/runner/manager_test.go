@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -488,5 +489,73 @@ func TestRunIDShape(t *testing.T) {
 	a, b := newRunID(now), newRunID(now)
 	if a == b {
 		t.Error("two run ids in the same second must still differ")
+	}
+}
+
+// Every time the manager hands out is in UTC, whatever zone its clock reads
+// in, so the wire never carries a server-local offset.
+func TestTimesLeaveTheManagerInUTC(t *testing.T) {
+	srv := okServer(t)
+	m, c, pub := newTestManager(t, srv.URL)
+	zone := time.FixedZone("UTC-5", -5*60*60)
+	c.mu.Lock()
+	c.t = c.t.In(zone)
+	c.mu.Unlock()
+
+	id, err := m.Start(context.Background(), longPerfRun())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	st := m.Status()
+	if st.StartedAt == nil || st.StartedAt.Location() != time.UTC {
+		t.Errorf("status started_at = %v, want UTC", st.StartedAt)
+	}
+	live, _ := m.Report(id)
+	if live.StartedAt.Location() != time.UTC {
+		t.Errorf("live report started_at = %v, want UTC", live.StartedAt)
+	}
+	c.Advance(1500 * time.Millisecond)
+	_ = m.Cancel(id)
+	m.Wait()
+
+	rep, _ := m.Report(id)
+	if rep.StartedAt.Location() != time.UTC || rep.FinishedAt.Location() != time.UTC {
+		t.Errorf("finished report times = %v / %v, want UTC", rep.StartedAt, rep.FinishedAt)
+	}
+	if rep.DurationMs != 1500 {
+		t.Errorf("duration = %dms, want 1500 from the injected clock", rep.DurationMs)
+	}
+	if st := m.Status(); st.CooldownUntil == nil || st.CooldownUntil.Location() != time.UTC {
+		t.Errorf("status cooldown_until = %v, want UTC", st.CooldownUntil)
+	}
+	for _, e := range pub.Replay() {
+		switch d := e.Data.(type) {
+		case RunStarted:
+			if d.StartedAt.Location() != time.UTC {
+				t.Errorf("run_started started_at = %v, want UTC", d.StartedAt)
+			}
+		case RunFinished:
+			if d.CooldownUntil.Location() != time.UTC {
+				t.Errorf("run_finished cooldown_until = %v, want UTC", d.CooldownUntil)
+			}
+		}
+	}
+}
+
+// An unset time is absent on the wire, never the year 1.
+func TestUnsetTimesAreOmitted(t *testing.T) {
+	running, err := json.Marshal(report.Report{ID: "run-x", Status: report.StatusRunning, StartedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(running), "finished_at") {
+		t.Errorf("a running report carries finished_at: %s", running)
+	}
+	finished, err := json.Marshal(Event{Type: EventRunFinished, Data: RunFinished{Status: report.StatusCompleted}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(finished), "cooldown_until") || strings.Contains(string(finished), "0001-01-01") {
+		t.Errorf("run_finished with no cooldown carries one: %s", finished)
 	}
 }
