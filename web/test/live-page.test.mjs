@@ -813,3 +813,89 @@ test('a history answer written before a run ended does not hide that run', async
   assert.deepEqual(get().history.map((h) => h.id), [id]);
   assert.equal(callsTo('/api/runs').length, 3, 'boot, the slow one, and the read that replaced it');
 });
+
+// ------------------------------------------------------------------ a Send answered late
+
+const openRows = () => [...byId('collections-tree').querySelectorAll('button')].filter((b) => b.classList.contains('req-open'));
+const sent = (body) => ({ status: 200, body: { status: 200, passed: true, latency_ms: 12, size_bytes: 2, body, assertions: [] } });
+
+test('a Send answer that arrives after another request was selected is dropped', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  openRows()[0].click();
+  const answerA = server.later('POST /api/send');
+  byId('send-request').click();
+  await flush();
+  assert.equal(get().send.pending, true);
+
+  openRows()[1].click();
+  assert.equal(get().selectedId, 'r2');
+  assert.equal(get().send, null);
+
+  answerA(sent('{"from":"A"}'));
+  await flush();
+  assert.equal(get().send, null, 'the answer for A did not land under B');
+  assert.equal(byId('send-status').textContent, '');
+  assert.equal(byId('send-response').textContent, '');
+  assert.equal(byId('send-request').disabled, false);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('with two Sends out, each answer lands only under its own request', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  openRows()[0].click();
+  const answerA = server.later('POST /api/send');
+  byId('send-request').click();
+  await flush();
+  openRows()[1].click();
+  const answerB = server.later('POST /api/send');
+  byId('send-request').click();
+  await flush();
+  assert.equal(callsTo('/api/send', 'POST').length, 2);
+
+  answerA(sent('{"from":"A"}'));
+  await flush();
+  assert.deepEqual(get().send, { pending: true }, 'B is still waiting for its own answer');
+  assert.equal(byId('send-request').disabled, true);
+
+  answerB(sent('{"from":"B"}'));
+  await flush();
+  assert.equal(get().send.result.body, '{"from":"B"}');
+  assert.equal(byId('send-request').disabled, false);
+});
+
+test('a request selected by any other route than the sidebar still does not get the old answer, and Send is not left waiting', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  openRows()[0].click();
+  const answerA = server.later('POST /api/send');
+  byId('send-request').click();
+  await flush();
+
+  // Selected without the editor being told.
+  sidebar.selectRequest(req(2));
+  answerA(sent('{"from":"A"}'));
+  await flush();
+  assert.equal(get().send, null);
+  assert.equal(byId('send-request').disabled, false);
+  assert.equal(byId('send-status').textContent, '');
+});
+
+test('editing a built-in request while its Send is out copies it, and the answer still lands on the copy', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  openRows()[0].click();
+  const answerA = server.later('POST /api/send');
+  byId('send-request').click();
+  await flush();
+
+  byId('editor-name').value = 'Renamed';
+  byId('editor-name').dispatchEvent(new Event('input', { bubbles: true }));
+  assert.match(get().selectedId, /^ws-/, 'the edit forked it into the workspace');
+
+  answerA(sent('{"from":"A"}'));
+  await flush();
+  assert.equal(get().send.result.body, '{"from":"A"}');
+  assert.match(byId('send-status').textContent, /^200 - /);
+});

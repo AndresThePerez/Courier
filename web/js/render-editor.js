@@ -43,6 +43,11 @@ let paramNote = '';
 let forkNote = '';
 let saveNote = '';
 
+// outbound is the Send that is out: which request it was made for, and the
+// pending marker it put in state. An answer is shown only under the request
+// it was asked for, so it is checked against this when it lands.
+let outbound = null; // { id, marker }
+
 export function init() {
   byId('editor-name').addEventListener('input', (e) => {
     const name = e.target.value;
@@ -63,6 +68,7 @@ export function onSelect() {
   paramNote = '';
   forkNote = '';
   saveNote = '';
+  outbound = null;
   set({ send: null });
 }
 
@@ -84,6 +90,9 @@ function own() {
   const forked = deepCopy(workspace.fork(draft).request);
   forkNote = `Copied to My Workspace as "${forked.name}" - the built-in request is untouched.`;
   saveNote = '';
+  // The copy is the same request under a new id: a Send that is out for it
+  // still belongs to what the visitor is looking at.
+  if (outbound && outbound.id === draft.id) outbound.id = forked.id;
   return forked;
 }
 
@@ -221,7 +230,10 @@ async function sendDraft() {
   const state = get();
   if (!state.draft || (state.send && state.send.pending)) return;
 
-  set({ send: { pending: true } });
+  const marker = { pending: true };
+  const mine = { id: state.draft.id, marker };
+  outbound = mine;
+  set({ send: marker });
   // Whatever building or sending the request throws, Send must come back: a
   // button left on "Sending..." can only be cleared by a reload.
   let outcome;
@@ -231,6 +243,17 @@ async function sendDraft() {
     console.warn('request not sent', error);
     outcome = { ok: false, kind: 'error', error: 'this request could not be sent from this page.' };
   }
+
+  // The visitor opened another request while this one was out. Its answer
+  // belongs to nothing on screen and is dropped; if the pending marker is
+  // still what state holds, nothing else will ever clear it.
+  const open = get().draft;
+  if (outbound !== mine || !open || open.id !== mine.id) {
+    if (outbound === mine) outbound = null;
+    if (get().send === marker) set({ send: null });
+    return;
+  }
+  outbound = null;
   if (outcome.ok) set({ send: { pending: false, result: outcome.result } });
   else set({ send: { pending: false, kind: outcome.kind, error: outcome.error, field: outcome.field || '' } });
 }
