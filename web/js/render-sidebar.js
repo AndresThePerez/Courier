@@ -260,22 +260,9 @@ function savedNode(collection, counts, endpoints) {
   return node;
 }
 
-// The saved collections are rebuilt only when what they show changes: the
-// list itself, which of their requests are queued, or the catalog their
-// method badges are read from. The status poll
-// notifies every few seconds, and a long list rebuilt on each one would cost
-// the page for nothing. Which ones are open is read back from the tree, as for
-// the curated collections.
-let lastSaved = null;
-let lastSavedMarks = null;
-let lastSavedEndpoints = null;
-
+// Which saved collections are open is read back from the tree, as for the
+// curated collections.
 function renderSaved(list, counts, endpoints) {
-  const marks = [...counts].map(([id, n]) => `${id}\u0000${n}`).sort().join('\u0001');
-  if (list === lastSaved && marks === lastSavedMarks && endpoints === lastSavedEndpoints) return;
-  lastSaved = list;
-  lastSavedMarks = marks;
-  lastSavedEndpoints = endpoints;
   const tree = byId('saved-collections');
   const open = new Set();
   for (const node of tree.querySelectorAll('details[data-id]')) {
@@ -329,10 +316,67 @@ function catalogPlaceholder(state) {
   return [el('div', { class: 'tree-empty' }, [el('span', { text: state.notice }), ' ', retry])];
 }
 
+// ---------------------------------------------------------------- what each part shows
+//
+// Every notify reaches this render, the status poll's included (every 3s while
+// idle, four times a second during a performance run), and a rebuilt part is
+// new nodes: a control focused in it loses focus, and a click that lands
+// mid-rebuild is lost. So each part is rebuilt only when its key moves, and the
+// key holds every input that part paints:
+//
+//   curated tree       collections; the selected id, when it is one of their
+//                      requests; the in-run counts of their requests; the
+//                      endpoint methods; and, while there are no collections,
+//                      the catalog notice and whether a load is out
+//   My Workspace       workspace; the selected id, when it is one of them;
+//                      their in-run counts; the endpoint methods
+//   saved collections  savedCollections; the in-run counts of their requests;
+//                      the endpoint methods
+//   history            history; historyNote
+//   target line        target, compared as the text it paints
+//
+// Lists are keyed by their content, not their identity. The history arrives
+// as a new but equal array on every refresh (a start, a cancel, a run ending),
+// and an identity key would rebuild it each time; content also catches a list
+// changed in place. The status poll replaces state.status alone, which no part
+// reads. The part's own node is in the key as well, so a node that was swapped
+// out is drawn again. Click handlers hold the objects they were drawn from,
+// which is why whole requests are keyed rather than only the fields painted.
+
+const drawn = new Map(); // part id -> { node, key } as last drawn
+
+let unencodable = 0;
+
+function keyOf(inputs) {
+  try {
+    return JSON.stringify(inputs);
+  } catch {
+    // An input JSON cannot encode (a BigInt) is told apart from every other
+    // render, so its part is always drawn from what it now holds.
+    unencodable += 1;
+    return `#${unencodable}`;
+  }
+}
+
+// draw rebuilds a part when its key moved and records the key only once the
+// part was built, so a build that threw is tried again on the next render.
+function draw(id, inputs, build) {
+  const node = byId(id);
+  const key = keyOf(inputs);
+  const last = drawn.get(id);
+  if (last && last.node === node && last.key === key) return;
+  build(node);
+  drawn.set(id, { node, key });
+}
+
+const requestIds = (requests) => (Array.isArray(requests) ? requests.map((r) => r && r.id) : []);
+const marksOf = (counts, ids) => [...new Set(ids)].filter((id) => counts.has(id)).map((id) => [id, counts.get(id)]);
+const selectedOf = (selectedId, ids) => (ids.includes(selectedId) ? selectedId : null);
+const methodsOf = (endpoints) => (Array.isArray(endpoints) ? endpoints.map((e) => (e ? [e.id, e.method] : null)) : []);
+
 // ---------------------------------------------------------------- focus
 //
-// Every render rebuilds the trees, a status poll's every 3 seconds included,
-// and a rebuilt control is a new node: whatever had focus in the old tree is
+// A part that is rebuilt is new nodes: whatever had focus in the old one is
 // gone, and focus drops to the page. Each control a visitor presses here
 // carries a data-focus-key, and the render puts focus back on the control
 // with the same key. Keys are compared as strings rather than through a
@@ -363,12 +407,9 @@ function restoreFocus(key) {
   if (node) node.focus();
 }
 
-export function render(state) {
-  const focus = focusedKey();
-  const counts = queuedCounts(state.sequence);
-  const tree = byId('collections-tree');
-  // Remember which collections the visitor had expanded, so a notify from an
-  // unrelated part of the app does not collapse the tree under their cursor.
+function renderCollections(tree, state, counts) {
+  // Remember which collections the visitor had expanded, so a rebuild for
+  // another reason does not collapse the tree under their cursor.
   const previouslyOpen = openCollections;
   const detailNodes = tree.querySelectorAll('details[data-id]');
   openCollections = new Set();
@@ -387,31 +428,31 @@ export function render(state) {
     return node;
   }));
   if (state.collections.length === 0) replace(tree, catalogPlaceholder(state));
+}
 
-  const ws = byId('workspace-tree');
+function renderWorkspace(ws, state, counts) {
   if (state.workspace.length === 0) {
     replace(ws, [el('div', {
       class: 'tree-empty',
       text: 'Empty. Editing a built-in request copies it here.',
     })]);
-  } else {
-    replace(ws, state.workspace.map((r) => {
-      const row = requestRow(r, state.selectedId, 'workspace', counts, state.endpoints);
-      row.appendChild(el('button', {
-        class: 'btn btn-mini',
-        type: 'button',
-        text: 'x',
-        title: 'Delete this saved request',
-        attrs: { 'aria-label': `Delete saved request "${r.name || r.id}"`, 'data-focus-key': `delete:${r.id}` },
-        on: { click: () => deleteRequest(r.id) },
-      }));
-      return row;
-    }));
+    return;
   }
+  replace(ws, state.workspace.map((r) => {
+    const row = requestRow(r, state.selectedId, 'workspace', counts, state.endpoints);
+    row.appendChild(el('button', {
+      class: 'btn btn-mini',
+      type: 'button',
+      text: 'x',
+      title: 'Delete this saved request',
+      attrs: { 'aria-label': `Delete saved request "${r.name || r.id}"`, 'data-focus-key': `delete:${r.id}` },
+      on: { click: () => deleteRequest(r.id) },
+    }));
+    return row;
+  }));
+}
 
-  renderSaved(state.savedCollections, counts, state.endpoints);
-
-  const hist = byId('history-list');
+function renderHistory(hist, state) {
   // The five most recent runs, list and click-to-reopen only.
   const recent = state.history.slice(0, 5);
   const rows = recent.length === 0
@@ -420,6 +461,40 @@ export function render(state) {
   // An entry that could not be opened says so here, beside the list it was
   // clicked in; nothing else on the page would explain the click.
   replace(hist, [state.historyNote ? el('div', { class: 'note', text: state.historyNote }) : null, ...rows]);
+}
+
+export function render(state) {
+  const focus = focusedKey();
+  const counts = queuedCounts(state.sequence);
+  const methods = methodsOf(state.endpoints);
+
+  const curatedIds = state.collections.flatMap((c) => requestIds(c && c.requests));
+  const empty = state.collections.length === 0;
+  draw('collections-tree', [
+    state.collections,
+    selectedOf(state.selectedId, curatedIds),
+    marksOf(counts, curatedIds),
+    methods,
+    empty ? state.notice : null,
+    empty ? Boolean(state.catalogLoading) : null,
+  ], (tree) => renderCollections(tree, state, counts));
+
+  const workspaceIds = requestIds(state.workspace);
+  draw('workspace-tree', [
+    state.workspace,
+    selectedOf(state.selectedId, workspaceIds),
+    marksOf(counts, workspaceIds),
+    methods,
+  ], (ws) => renderWorkspace(ws, state, counts));
+
+  const savedIds = state.savedCollections.flatMap((c) => requestIds(c && c.requests));
+  draw('saved-collections', [
+    state.savedCollections,
+    marksOf(counts, savedIds),
+    methods,
+  ], () => renderSaved(state.savedCollections, counts, state.endpoints));
+
+  draw('history-list', [state.history, state.historyNote], (hist) => renderHistory(hist, state));
 
   const name = byId('target-note-name');
   if (state.target && name.textContent !== state.target) name.textContent = state.target;
