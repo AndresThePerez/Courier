@@ -47,7 +47,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 // the place is given back as the read ends, before the body waits for room.
 func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
-		refuseContentType(w)
+		refuseContentType(w, r)
 		return false
 	}
 	rc := http.NewResponseController(w)
@@ -117,7 +117,14 @@ func answerBusy(w http.ResponseWriter) {
 	writeError(w, http.StatusServiceUnavailable, "", bodyGateBusy)
 }
 
-func refuseContentType(w http.ResponseWriter) {
+// refuseContentType is the 415, given before the body is read. A declared
+// body is then never read, so the connection is closed after the answer
+// rather than drained for the next request; boundDeclaredBodies keeps that
+// drain within the body read deadline.
+func refuseContentType(w http.ResponseWriter, r *http.Request) {
+	if r.Body != http.NoBody {
+		w.Header().Set("Connection", "close")
+	}
 	writeError(w, http.StatusUnsupportedMediaType, "body", "Content-Type must be application/json")
 }
 
@@ -136,7 +143,7 @@ func answerReadError(w http.ResponseWriter, err error) {
 // the cap, and otherwise returns the body whole.
 func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
-		refuseContentType(w)
+		refuseContentType(w, r)
 		return nil, false
 	}
 

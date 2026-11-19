@@ -67,8 +67,9 @@ func main() {
 		// The only server-wide timeout an SSE server may set: a write or idle
 		// timeout would cut live streams at the deadline, which is the one
 		// thing this design cannot tolerate. Slow-header attacks are bounded
-		// here; a body that is slow to arrive is bounded per request by
-		// api.BodyReadDeadline, which covers the read of the body alone.
+		// here; a declared body that is slow to arrive, whether the handler
+		// reads it or answers without it, is bounded per request by
+		// api.BodyReadDeadline, which covers the body alone.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

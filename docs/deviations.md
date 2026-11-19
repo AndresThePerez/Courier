@@ -1704,8 +1704,17 @@ second.
   deadline per request, set on the connection with `http.NewResponseController` when the
   read of a body begins and cleared when it ends. The rule against a server-wide write or
   idle timeout still stands: either would cut a live stream, or a Send waiting up to 10s on
-  a slow target, at the deadline. This one covers the read of the body alone and never
-  reaches the handler's own work, a stream, or the next request on the connection.
+  a slow target, at the deadline. This one covers the body alone and never reaches the
+  handler's own work, a stream, or the next request on the connection.
+- A request that declares a body on any route gets the same deadline from the moment it
+  arrives, whether or not its handler reads the body. A handler that answers without
+  reading it (the `415`, a `404` or `405` under `/api`, the mux's `405` for a verb a page
+  path does not take, any route that reads no body) leaves net/http to drain the declared
+  body before the answer goes out; a client that declared a body and sent none used to hold
+  that answer, and its connection, for as long as it liked. Now the drain ends at the
+  deadline, the answer goes out, and the connection is closed. A request that declares no
+  body, a stream's included, is untouched. A `415` for a request that declares a body now
+  carries `Connection: close`; its status, body and other headers are unchanged.
 - What the bounds add up to: a body read to the cap holds about 380 KB while it is read,
   so the reads hold at most about 128 × 380 KB, 49 MB; N43's line holds at most 4 MiB and
   its checks allocate at most 96 MiB. That is about 150 MB, within the Go memory limit of
@@ -1744,6 +1753,9 @@ deadline answers), `TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadli
 `TestAPanicWhileReadingGivesBackItsPlace`, `TestABodyWaitingInTheGatesLineHoldsNoPlace`,
 `TestEveryWayABodyReadEndsGivesBackItsPlace` (2,400 reads ending every way, never more than
 128 places, none left), `TestThePlacesAndTheGateHoldTogetherUnderAMixedFlood`;
+`internal/api/unread_body_test.go`: `TestAnAnswerThatReadsNoBodyIsNotHeldByOneThatNeverArrives`
+(every route that answers without reading, with a `Content-Length` and chunked),
+`TestA415WithItsWholeBodyIsAnsweredAsBefore`;
 `internal/api/body_reads_docs_test.go`: `TestTheBodyReadBoundsMatchTheDocuments`;
 `internal/api/compose_limits_test.go`: `TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit`.
 The existing tests of the gate and of bursts of 200 and 1,000 small posts pass unchanged,
