@@ -30,6 +30,128 @@ export function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// ---------------------------------------------------------- answer shapes
+//
+// An answer is read item by item before any of it is trusted. The render
+// modules read these fields straight off the state, so one entry of the wrong
+// shape would throw inside a render and take the rest of the page with it.
+// Such an answer was not written by Courier, and is unusable as a whole: the
+// reader treats it as the failed read a body that is not JSON is, rather than
+// showing the part that looked right. Go writes an empty list as null, and a
+// field tagged omitempty is absent, so both are allowed where the server can
+// send them.
+
+const isText = (v) => typeof v === 'string';
+const isNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+const absentOr = (check) => (v) => v === undefined || check(v);
+const listOf = (check) => (v) => Array.isArray(v) && v.every(check);
+const nullableListOf = (check) => (v) => v === undefined || v === null || listOf(check)(v);
+
+// RunStatuses are the states a report can be in; EndedStatuses the ones a
+// finished report can be in (internal/report).
+export const RunStatuses = ['running', 'completed', 'cancelled', 'expired'];
+export const EndedStatuses = ['completed', 'cancelled', 'expired'];
+
+export function isStatus(s) {
+  return isRecord(s)
+    && typeof s.running === 'boolean'
+    && absentOr(isText)(s.run_id)
+    && absentOr(isText)(s.mode)
+    && absentOr(isText)(s.started_at)
+    && absentOr(isText)(s.cooldown_until)
+    && absentOr(isNumber)(s.budget_balance);
+}
+
+function isHistoryEntry(e) {
+  return isRecord(e)
+    && isText(e.id) && e.id !== ''
+    && isText(e.mode)
+    && isText(e.status)
+    && isText(e.started_at)
+    && isNumber(e.duration_ms)
+    && isText(e.summary)
+    && absentOr(isText)(e.verdict);
+}
+
+export function isHistory(body) {
+  return isRecord(body) && listOf(isHistoryEntry)(body.runs);
+}
+
+function isCatalogRequest(r) {
+  return isRecord(r)
+    && isText(r.id)
+    && isText(r.endpoint)
+    && absentOr(isText)(r.name)
+    && (r.params === undefined || r.params === null || isRecord(r.params))
+    && nullableListOf(isRecord)(r.assertions);
+}
+
+function isCollection(c) {
+  return isRecord(c)
+    && isText(c.id)
+    && isText(c.name)
+    && absentOr(isText)(c.description)
+    && listOf(isCatalogRequest)(c.requests);
+}
+
+// An endpoint's method is not checked here: the badge reads only a method
+// it recognises and shows any other value as unknown (methodBadge).
+function isEndpoint(e) {
+  return isRecord(e)
+    && isText(e.id)
+    && absentOr(isText)(e.label)
+    && absentOr(isText)(e.path)
+    && nullableListOf(isText)(e.params);
+}
+
+export function isCatalog(body) {
+  return isRecord(body)
+    && listOf(isCollection)(body.collections)
+    && nullableListOf(isEndpoint)(body.endpoints)
+    && absentOr(isText)(body.target);
+}
+
+// isRow is one functional result: a request_result's data, or one row of a
+// report's functional.results.
+export function isRow(r) {
+  return isRecord(r)
+    && absentOr(Number.isInteger)(r.index)
+    && absentOr(isText)(r.name)
+    && absentOr(isText)(r.endpoint)
+    && absentOr(isText)(r.query)
+    && absentOr(isNumber)(r.status)
+    && absentOr((v) => typeof v === 'boolean')(r.passed)
+    && absentOr((v) => typeof v === 'boolean')(r.skipped)
+    && nullableListOf(isRecord)(r.assertions);
+}
+
+const isNullableRecord = (v) => v === undefined || v === null || isRecord(v);
+
+// isReport is a run's report, finished or not, as GET /api/runs/{id} serves
+// it.
+export function isReport(rep) {
+  return isRecord(rep)
+    && isText(rep.id) && rep.id !== ''
+    && RunStatuses.includes(rep.status)
+    && absentOr(isText)(rep.mode)
+    && absentOr(isText)(rep.started_at)
+    && absentOr(isNumber)(rep.duration_ms)
+    && isNullableRecord(rep.config)
+    && nullableListOf(isRecord)(rep.entries)
+    && isNullableRecord(rep.functional)
+    && (!rep.functional || (nullableListOf(isRow)(rep.functional.results) && absentOr(isText)(rep.functional.verdict)))
+    && isNullableRecord(rep.performance);
+}
+
+// isSendResult is Send's 200. A result always carries the target's status,
+// 0 when it did not answer.
+function isSendResult(r) {
+  return isRecord(r)
+    && isNumber(r.status)
+    && absentOr((v) => typeof v === 'boolean')(r.passed)
+    && nullableListOf(isRecord)(r.assertions);
+}
+
 // How long a request may take before the page stops waiting for it. A read,
 // or a cancel, is answered from memory and is slow only when something is
 // wrong. Send and Start can sit behind the server's own 10s timeout towards
@@ -152,8 +274,7 @@ export async function send(request) {
   }, WriteTimeoutMs);
   if (!res) return unreachable();
   const body = res.body || {};
-  // A result always carries the target's status, 0 when it did not answer.
-  if (res.ok) return isRecord(res.body) && typeof body.status === 'number' ? { ok: true, result: body } : unreachable();
+  if (res.ok) return isSendResult(res.body) ? { ok: true, result: body } : unreachable();
   if (res.status === 429) return { ok: false, kind: 'busy', error: body.error || 'another send is in flight' };
   if (res.status === 400) return { ok: false, kind: 'invalid', error: body.error || 'invalid request', field: body.field || '' };
   return { ok: false, kind: 'error', error: said(res) };
@@ -307,6 +428,12 @@ export function openLive(runId, handlers) {
     // A frame of another run is not this run's news, whatever it says: its
     // run_finished in particular must not end this stream.
     if (!envelope || envelope.run_id !== runId) return;
+    // A row of the wrong shape is a frame like the unparseable one above:
+    // dropped, and the finished report brings the run's real rows.
+    if (envelope.type === 'request_result' && !isRow(envelope.data)) {
+      console.warn('live frame is not a result row', runId);
+      return;
+    }
     if (envelope.type === 'run_started') started = true;
     if (envelope.type === 'request_result') delivered.add(rowKey(envelope.data, delivered.size));
     if (envelope.type === 'run_finished') {
@@ -358,7 +485,12 @@ export function openLive(runId, handlers) {
   function absorb(rep) {
     // Only this run's report says anything about this run: another run's
     // status: completed must not end it.
-    if (!isRecord(rep) || rep.id !== runId) return;
+    // A report of the wrong shape is a poll that failed: the next tick reads
+    // it again.
+    if (!isReport(rep) || rep.id !== runId) {
+      console.warn('polled answer is not this run\'s report', runId);
+      return;
+    }
     if (!started) {
       started = true;
       emit({

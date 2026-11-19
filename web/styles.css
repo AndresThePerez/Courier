@@ -143,8 +143,8 @@ html, body {
 /* The answer to + and "Add all". Empty, it takes no room; it is never hidden,
    because a live region taken out of the page is not announced when it
    comes back. */
-.add-note { margin: 0 0 0.6rem; color: var(--text); overflow-wrap: anywhere; }
-.add-note:empty { margin: 0; }
+.note.add-note { margin: 0 0 0.6rem; color: var(--text); overflow-wrap: anywhere; }
+.note.add-note:empty { margin: 0; }
 
 /* ---------- buttons ---------- */
 

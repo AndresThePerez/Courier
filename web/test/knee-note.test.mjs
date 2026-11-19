@@ -85,6 +85,15 @@ test('a preset replaces the add note, which no longer describes the queue', () =
   assert.equal(byId('add-note').textContent, '');
 });
 
+test('a preset replaces the add note even when it queues as many requests as the note counted', () => {
+  queue(4);
+  runner.add(req(9));
+  assert.equal(byId('add-note').textContent, 'Added "Request 9" to the run - 5 queued.');
+  knee(25).click();
+  assert.equal(get().sequence.length, 5, 'the preset queued the same number');
+  assert.equal(byId('add-note').textContent, '');
+});
+
 test('after a failed catalog load the note says so, points at Retry, and nothing is replaced', () => {
   set({ collections: [], notice: 'Could not load collections from the server.' });
   queue(3);
@@ -116,7 +125,7 @@ test('a preset writes the run setup once, keeps focus on its button through late
     button.focus();
     button.click();
     for (let i = 0; i < 3; i += 1) set({ status: { running: false, budget_balance: 1500 - i } });
-    assert.equal(document.activeElement, button);
+    assert.ok(document.activeElement === button);
   } finally {
     delete localStorage.setItem;
   }

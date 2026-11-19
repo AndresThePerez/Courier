@@ -115,16 +115,16 @@ function deleteWithUndo(remove, restore, backTo) {
           note.hidden = true;
           return;
         }
-          const why = restored.deleted
-            ? `Could not restore "${label}".`
-            : workspace.WRITE_REFUSED;
-          replace(note, [el('span', { text: why })]);
-          note.hidden = false;
-          // The Undo pressed went with the sentence it was in; the sentence
-          // that replaced it is where focus goes.
-          note.setAttribute('tabindex', '-1');
-          note.focus();
-        },
+        const why = restored.deleted
+          ? `Could not restore "${label}".`
+          : workspace.WRITE_REFUSED;
+        replace(note, [el('span', { text: why })]);
+        note.hidden = false;
+        // The Undo pressed went with the sentence it was in; the sentence
+        // that replaced it is where focus goes.
+        note.setAttribute('tabindex', '-1');
+        note.focus();
+      },
     },
   });
   replace(note, [
@@ -295,6 +295,7 @@ function historyRow(entry) {
       class: 'req-open',
       type: 'button',
       title: `${entry.id} - ${entry.summary}`,
+      attrs: { 'data-focus-key': `history:${entry.id}` },
       on: { click: () => hooks.openRun(entry.id) },
     }, [
       el('span', { class: 'method', text: entry.mode === 'performance' ? 'PERF' : 'FUNC' }),

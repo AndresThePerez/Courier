@@ -936,13 +936,17 @@ function bannerFor(state, phase) {
 // Rebuilding the list throws away whatever the visitor had focused, which for
 // the reorder arrows means every second press lands on nothing. Entry keys are
 // stable across a move, so focus follows the row rather than the position.
+// Only the list's own keys are read: focus elsewhere on the page is not this
+// render's to move, and a key is compared as a string, never put into a
+// selector, because a key can carry an id holding any character.
 function focusKey() {
   const node = document.activeElement;
-  return node && node.dataset ? node.dataset.focusKey || null : null;
+  if (!node || !node.dataset || !node.dataset.focusKey) return null;
+  return byId('sequence-list').contains(node) ? node.dataset.focusKey : null;
 }
 
 function restoreFocus(key) {
   if (!key) return;
-  const node = document.querySelector(`[data-focus-key="${key}"]`);
+  const node = [...byId('sequence-list').querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === key);
   if (node && node !== document.activeElement && !node.disabled) node.focus();
 }

@@ -40,6 +40,8 @@
 // page: main.js boots on import, and nothing that decides what a visitor is
 // shown should be reachable only through a boot.
 
+import { isStatus, isHistory, isCatalog, isReport, EndedStatuses } from './api.js';
+
 // StatusPollMs is stated once, here, so N idle tabs share one cadence instead
 // of each inventing their own. 3s is the documented figure; a competing 5s
 // figure was not adopted, because the documented one is authoritative (see docs/deviations.md N26).
@@ -530,15 +532,16 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     else if (effect.type === 'probe' && conn && conn.runId === effect.runId && conn.stop.probe) conn.stop.probe();
   }
 
-  // Each reader takes only the shape it reads. Anything else is a read that
-  // failed: what the page held stays, and the next read tries again.
+  // Each reader takes only the shape it reads, down to every item in it
+  // (api.js). Anything else is a read that failed: what the page held stays,
+  // and the next read tries again.
   const status = oneAtATime(api.getStatus, (res) => {
-    if (res.ok && typeof res.body.running === 'boolean') set({ status: res.body });
+    if (res.ok && isStatus(res.body)) set({ status: res.body });
     else console.warn('status poll failed', res.ok ? 'not a status' : res.error);
   });
 
   const history = oneAtATime(api.getHistory, (res) => {
-    if (res.ok && Array.isArray(res.body.runs)) set({ history: res.body.runs });
+    if (res.ok && isHistory(res.body)) set({ history: res.body.runs });
     else console.warn('history fetch failed', res.ok ? 'not a list of runs' : res.error);
   });
 
@@ -566,7 +569,7 @@ export function createLive({ api, get, set, showTab = () => {} }) {
   async function readCatalog() {
     set({ catalogLoading: true });
     const res = await api.getCollections();
-    if (!res.ok || !Array.isArray(res.body.collections)) {
+    if (!res.ok || !isCatalog(res.body)) {
       console.warn('could not load /api/collections', res.ok ? 'not a catalog' : res.error);
       set({ catalogLoading: false, notice: 'Could not load collections from the server.' });
       return;
@@ -606,9 +609,10 @@ export function createLive({ api, get, set, showTab = () => {} }) {
 
     const [res] = await Promise.all([api.getRun(runId), refresh()]);
     // The run said it ended, so an answer that is not its finished report (a
-    // report still running, another run's, or no report at all) will not
-    // become one, and the run is shown as ended without it.
-    if (res.ok && reportOf(res.body, runId) && res.body.status !== 'running') {
+    // report still running or in no ended state at all, another run's, one of
+    // the wrong shape, or no report) will not become one, and the run is shown
+    // as ended without it: the status its terminal event gave stands.
+    if (res.ok && reportOf(res.body, runId) && isReport(res.body) && EndedStatuses.includes(res.body.status)) {
       dispatch({ type: 'report', run_id: runId, report: res.body });
     } else {
       console.warn('could not fetch the finished report', res.error);
@@ -628,7 +632,7 @@ export function createLive({ api, get, set, showTab = () => {} }) {
 
   async function fetchStored(id) {
     const got = await api.getRun(id);
-    if (got.ok && reportOf(got.body, id)) {
+    if (got.ok && reportOf(got.body, id) && isReport(got.body)) {
       dispatch({ type: 'opened', run_id: id, report: got.body });
       return;
     }

@@ -1010,7 +1010,7 @@ test('progress ticks still do not redraw the summary of a running performance ru
   stream.emit('progress', progress(300));
 
   assert.equal(metaText(), first, 'the summary, a live region, was not rewritten by the ticks');
-  assert.equal(byId('results-summary').querySelector('.results-meta'), node, 'nor replaced');
+  assert.ok(byId('results-summary').querySelector('.results-meta') === node, 'nor replaced');
   assert.match(byId('perf-counters').textContent, /^300 requests/, 'the live counters did follow');
   assert.equal(get().progress.requests, 300);
 });

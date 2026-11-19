@@ -25,17 +25,17 @@ test('every id in index.html is reachable through getElementById', () => {
   assert.equal(document.getElementById('editor-name').localName, 'input');
   assert.equal(document.getElementById('editor-name').getAttribute('maxlength'), '120');
   assert.equal(document.getElementById('sequence-note').hidden, true);
-  assert.equal(document.getElementById('nope'), null);
+  assert.ok(document.getElementById('nope') === null);
 });
 
 test('createElement nodes are found by id only once they are in the document', () => {
   const div = document.createElement('div');
   div.id = 'late';
-  assert.equal(document.getElementById('late'), null);
+  assert.ok(document.getElementById('late') === null);
   document.getElementById('app').appendChild(div);
-  assert.equal(document.getElementById('late'), div);
+  assert.ok(document.getElementById('late') === div);
   div.remove();
-  assert.equal(document.getElementById('late'), null);
+  assert.ok(document.getElementById('late') === null);
 });
 
 test('querySelector handles tags, attributes, compounds, classes and combinators', () => {
@@ -128,14 +128,14 @@ test('input value, caret and select value behave like a browser', () => {
 });
 
 test('focus moves document.activeElement, and leaving the document drops it', () => {
-  assert.equal(document.activeElement, document.body);
+  assert.ok(document.activeElement === document.body);
   const seen = [];
   const btn = document.getElementById('start-run');
   btn.addEventListener('focus', () => seen.push('focus'));
   btn.addEventListener('blur', () => seen.push('blur'));
 
   btn.focus();
-  assert.equal(document.activeElement, btn);
+  assert.ok(document.activeElement === btn);
   document.getElementById('panel-main').focus();
   assert.equal(document.activeElement.id, 'panel-main', 'tabindex makes an element focusable');
   assert.deepEqual(seen, ['focus', 'blur']);
@@ -151,9 +151,9 @@ test('focus moves document.activeElement, and leaving the document drops it', ()
   const row = document.createElement('button');
   list.appendChild(row);
   row.focus();
-  assert.equal(document.activeElement, row);
+  assert.ok(document.activeElement === row);
   list.removeChild(row);
-  assert.equal(document.activeElement, document.body);
+  assert.ok(document.activeElement === document.body);
 });
 
 test('click and keydown bubble, and preventDefault is observable', () => {

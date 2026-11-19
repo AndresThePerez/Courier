@@ -83,24 +83,24 @@ test('querySelectorAll and children are DOM collections, not arrays', () => {
 test('a page element removed from the document is no longer found by id', () => {
   const note = document.getElementById('sequence-note');
   note.remove();
-  assert.equal(document.getElementById('sequence-note'), null);
+  assert.ok(document.getElementById('sequence-note') === null);
   assert.equal(note.isConnected, false);
 });
 
 test('focus on a removed or disabled control leaves activeElement where it was', () => {
   const name = document.getElementById('editor-name');
   name.focus();
-  assert.equal(document.activeElement, name);
+  assert.ok(document.activeElement === name);
 
   const loose = document.createElement('input');
   loose.focus();
-  assert.equal(document.activeElement, name, 'a detached input cannot take focus');
+  assert.ok(document.activeElement === name, 'a detached input cannot take focus');
 
   const button = document.createElement('button');
   button.disabled = true;
   name.parentNode.appendChild(button);
   button.focus();
-  assert.equal(document.activeElement, name, 'a disabled button cannot take focus');
+  assert.ok(document.activeElement === name, 'a disabled button cannot take focus');
 });
 
 test('replacing the focused node with an equivalent one drops focus to body', () => {
@@ -109,8 +109,8 @@ test('replacing the focused node with an equivalent one drops focus to body', ()
   const twin = document.createElement('input');
   twin.id = 'editor-name';
   name.parentNode.replaceChild(twin, name);
-  assert.equal(document.activeElement, document.body, 'focus does not follow an id onto a new node');
-  assert.notEqual(document.activeElement, twin);
+  assert.ok(document.activeElement === document.body, 'focus does not follow an id onto a new node');
+  assert.ok(document.activeElement !== twin);
 });
 
 test('a cancelled checkbox click stays unchecked and fires neither input nor change', () => {

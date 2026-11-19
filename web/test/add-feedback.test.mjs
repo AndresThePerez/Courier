@@ -236,7 +236,7 @@ test('the live region is not rewritten by a status poll or an unrelated render, 
   server.status = { running: false, budget_balance: 1400 };
   await poll(t);
   set({ selectedId: 'r2' });
-  assert.equal(byId('add-note').firstChild, text, 'the same text node: nothing is announced again');
+  assert.ok(byId('add-note').firstChild === text, 'the same text node: nothing is announced again');
 
   // Unchecking or moving a row keeps the count true, and the note.
   byId('sequence-list').querySelector('input[type="checkbox"]').click();
@@ -258,9 +258,9 @@ test('focus stays on the + that was pressed, through the re-render and the next 
   button.focus();
   button.click();
   assert.equal(get().sequence.length, 1);
-  assert.notEqual(document.activeElement, document.body);
+  assert.ok(document.activeElement !== document.body);
   assert.equal(focusKey(), 'add:search-basics:r2');
-  assert.notEqual(document.activeElement, button, 'the tree was rebuilt, and focus followed the key');
+  assert.ok(document.activeElement !== button, 'the tree was rebuilt, and focus followed the key');
 
   server.status = { running: false, budget_balance: 1200 };
   await poll(t);
@@ -270,6 +270,25 @@ test('focus stays on the + that was pressed, through the re-render and the next 
   document.activeElement.click();
   assert.equal(get().sequence.length, 2);
   assert.equal(focusKey(), 'add:search-basics:r2');
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('once the visitor moves from a pressed + to a run setting, no later render takes focus back to the sidebar', async (t) => {
+  const server = makeServer();
+  await bootPage(t, server);
+  openAll();
+  plus('search-basics', 'r2').focus();
+  plus('search-basics', 'r2').click();
+  assert.equal(focusKey(), 'add:search-basics:r2');
+  const field = byId('delay-ms');
+  field.focus();
+  for (let i = 0; i < 3; i += 1) {
+    server.status = { running: false, budget_balance: 1200 - i };
+    await poll(t);
+    set({ historyNote: '' });
+  }
+  runner.add(req(3));
+  assert.ok(document.activeElement === field, 'focus stays where the visitor put it');
   assert.deepEqual(listenerErrors, []);
 });
 
@@ -326,7 +345,7 @@ test('focus stays on the catalog\'s Retry while it loads, and moves into the col
   keyed('catalog-retry').click();
   await flush();
   assert.match(curated().textContent, /Search basics/);
-  assert.notEqual(document.activeElement, document.body, 'focus did not drop to the page');
+  assert.ok(document.activeElement !== document.body, 'focus did not drop to the page');
   assert.ok(curated().contains(document.activeElement), 'it is on the first collection');
   assert.deepEqual(listenerErrors, []);
 });
@@ -342,7 +361,7 @@ test('deleting a saved request puts focus on Undo, and Undo puts it back on the 
   const undo = document.activeElement;
   assert.equal(undo.textContent, 'Undo');
   await poll(t);
-  assert.equal(document.activeElement, undo, 'the poll does not take it');
+  assert.ok(document.activeElement === undo, 'the poll does not take it');
   undo.click();
   assert.ok(workspace.find('ws-1'));
   assert.equal(focusKey(), 'open:workspace:ws-1');
@@ -447,7 +466,7 @@ test('a status poll rebuilds no saved collection and writes no run setup', async
     delete localStorage.setItem;
   }
   assert.deepEqual(writes, []);
-  assert.equal(byId('saved-collections').querySelector('details'), node);
+  assert.ok(byId('saved-collections').querySelector('details') === node);
 });
 
 test('the add note is a polite region the page carries', () => {
@@ -455,4 +474,10 @@ test('the add note is a polite region the page carries', () => {
   assert.match(html, /id="add-note"[^>]*role="status"/);
   const embed = readFileSync(new URL('../embed_test.go', import.meta.url), 'utf8');
   assert.match(embed, /"add-note"/);
+});
+
+test('the add note is drawn in the body text colour, which a later .note rule of equal weight would otherwise take back', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.note\.add-note\s*\{[^}]*color:\s*var\(--text\)/);
+  assert.doesNotMatch(css, /(^|\n)\.add-note\s*\{[^}]*color:/, 'a lone .add-note colour loses to .note further down');
 });

@@ -21,7 +21,7 @@ test('resetState puts the state back to how the page starts', () => {
   assert.equal(store.get().mode, 'functional');
   assert.deepEqual(store.get().options, { stop_on_failure: false, delay_ms: 0, concurrency: 10, duration_secs: 10 });
   assert.equal(store.get().transport, 'idle');
-  assert.equal(store.get(), state, 'the state object keeps its identity, so held references stay live');
+  assert.ok(store.get() === state, 'the state object keeps its identity, so held references stay live');
 });
 
 test('resetState hands out fresh nested defaults, not the ones a test mutated', () => {
