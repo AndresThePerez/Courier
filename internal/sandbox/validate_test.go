@@ -236,19 +236,19 @@ func TestValidateAcceptsSequenceAtTheCap(t *testing.T) {
 	}
 }
 
-// Assertion strings share the parameter cap but are refused over it, not cut:
-// a truncated expected value is a different assertion from the one written.
-// The cap counts characters, as the parameter cap does.
+// Assertion strings are refused over their cap, not cut: a truncated expected
+// value is a different assertion from the one written. The cap counts
+// characters, as the parameter cap does.
 func TestAssertionStringsOverTheCapAreRefused(t *testing.T) {
 	at := func(n int, s string) string { return strings.Repeat(s, n) }
 	path := func(n int) string { return "$." + strings.Repeat("a", n-2) }
 
 	over := []assert.Assertion{
-		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen+1, "x")},
-		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen+1, "δ")},
-		{Type: "json", Path: "$.name", Op: "eq", Value: at(MaxParamValueLen+1, "x")},
-		{Type: "json", Path: "$.name", Op: "contains", Value: at(MaxParamValueLen+1, "x")},
-		{Type: "json", Path: path(MaxParamValueLen + 1), Op: "exists"},
+		{Type: "body_contains", Op: "contains", Value: at(MaxAssertionTextLen+1, "x")},
+		{Type: "body_contains", Op: "contains", Value: at(MaxAssertionTextLen+1, "δ")},
+		{Type: "json", Path: "$.name", Op: "eq", Value: at(MaxAssertionTextLen+1, "x")},
+		{Type: "json", Path: "$.name", Op: "contains", Value: at(MaxAssertionTextLen+1, "x")},
+		{Type: "json", Path: path(MaxAssertionTextLen + 1), Op: "exists"},
 	}
 	for _, a := range over {
 		r := req(nil)
@@ -266,10 +266,10 @@ func TestAssertionStringsOverTheCapAreRefused(t *testing.T) {
 	}
 
 	atCap := []assert.Assertion{
-		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen, "x")},
-		{Type: "body_contains", Op: "contains", Value: at(MaxParamValueLen, "δ")}, // 1000 bytes
-		{Type: "json", Path: "$.name", Op: "eq", Value: at(MaxParamValueLen, "x")},
-		{Type: "json", Path: path(MaxParamValueLen), Op: "exists"},
+		{Type: "body_contains", Op: "contains", Value: at(MaxAssertionTextLen, "x")},
+		{Type: "body_contains", Op: "contains", Value: at(MaxAssertionTextLen, "δ")}, // 1000 bytes
+		{Type: "json", Path: "$.name", Op: "eq", Value: at(MaxAssertionTextLen, "x")},
+		{Type: "json", Path: path(MaxAssertionTextLen), Op: "exists"},
 	}
 	for _, a := range atCap {
 		r := req(nil)

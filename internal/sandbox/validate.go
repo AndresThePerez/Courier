@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/assert"
@@ -24,13 +26,24 @@ const (
 // budget.MinCooldown. The SLO constants belong to internal/report.
 // Each cap lives where its behaviour lives; this is not a grab-bag.
 const (
-	MaxSequence      = 50
-	MaxAssertions    = 20
-	MaxParamValueLen = 500 // characters, not bytes
-	MaxNameLen       = 120 // characters, not bytes
-	MaxConcurrency   = 50
-	MaxDurationSecs  = 30
-	MaxDelayMs       = 1000
+	MaxSequence   = 50
+	MaxAssertions = 20
+
+	// A parameter value is cut, never refused, to the target's own limits on
+	// a search text: it refuses a q over 256 characters or 32 terms with a
+	// 400, so a longer value sent whole would come back as that refusal.
+	// CutParamValue states the rule exactly.
+	MaxParamValueLen = 256 // characters, not bytes
+	MaxParamWords    = 32  // white-space-separated words
+
+	// MaxAssertionTextLen bounds an assertion's JSON path and string value,
+	// which are refused over it rather than cut (validateAssertion).
+	MaxAssertionTextLen = 500 // characters, not bytes
+
+	MaxNameLen      = 120 // characters, not bytes
+	MaxConcurrency  = 50
+	MaxDurationSecs = 30
+	MaxDelayMs      = 1000
 
 	DefaultConcurrency  = 10
 	DefaultDurationSecs = 10
@@ -144,7 +157,7 @@ func ValidateRequest(r Request) (Request, error) {
 			if !ep.Allows(key) {
 				return Request{}, invalid("params", "unknown parameter %q for endpoint %q", assert.Clip(key), ep.ID)
 			}
-			out.Params[key] = truncate(r.Params[key], MaxParamValueLen)
+			out.Params[key] = CutParamValue(r.Params[key])
 		}
 	}
 
@@ -165,16 +178,18 @@ func ValidateRequest(r Request) (Request, error) {
 
 // validateAssertion bounds an assertion's strings before checking its meaning.
 //
-// They share the parameter cap but are refused over it rather than cut: a
-// parameter cut short is still a query the target answers, while an expected
-// value cut short is a different assertion from the one the author wrote.
+// They are refused over their cap rather than cut: a parameter cut short is
+// still a query the target answers, while an expected value cut short is a
+// different assertion from the one the author wrote. Their cap is not the
+// parameter's: the target's limit on a search text says nothing about what a
+// response may be checked for.
 func validateAssertion(a assert.Assertion) error {
-	if n := utf8.RuneCountInString(a.Path); n > MaxParamValueLen {
-		return fmt.Errorf("the path is %d characters; the cap is %d", n, MaxParamValueLen)
+	if n := utf8.RuneCountInString(a.Path); n > MaxAssertionTextLen {
+		return fmt.Errorf("the path is %d characters; the cap is %d", n, MaxAssertionTextLen)
 	}
 	if v, ok := a.Value.(string); ok {
-		if n := utf8.RuneCountInString(v); n > MaxParamValueLen {
-			return fmt.Errorf("the value is %d characters; the cap is %d", n, MaxParamValueLen)
+		if n := utf8.RuneCountInString(v); n > MaxAssertionTextLen {
+			return fmt.Errorf("the value is %d characters; the cap is %d", n, MaxAssertionTextLen)
 		}
 	}
 	return assert.ValidateAssertion(a)
@@ -238,9 +253,44 @@ func RequestTruncations(r Request) []string {
 		out = append(out, "name")
 	}
 	for _, key := range slices.Sorted(maps.Keys(r.Params)) {
-		if utf8.RuneCountInString(r.Params[key]) > MaxParamValueLen {
+		if CutParamValue(r.Params[key]) != r.Params[key] {
 			out = append(out, "params."+key)
 		}
 	}
 	return out
+}
+
+// CutParamValue is the value a parameter is sent with: its first
+// MaxParamWords words, then its first MaxParamValueLen characters.
+//
+// The rule, exactly. A character is a rune, as in every cap here. A word is a
+// maximal run of characters that are not Unicode white space (unicode.IsSpace:
+// the space, tab, newline, carriage return, the non-breaking and ideographic
+// spaces and the other Zs spaces among them; a zero-width space is not one).
+// The word cut comes first: a value with more than MaxParamWords words ends
+// at the end of its last word kept, so the white space after that word goes
+// with the words cut, while white space before and between the words kept
+// stays as written. A value within the word limit keeps all its white space,
+// at either end too. The character cut then keeps the first MaxParamValueLen
+// characters, which may end inside a word or in white space. So the result is
+// a prefix of the value, within both limits, never ends inside a character,
+// and is the value itself exactly when the value is within both limits; a
+// value of only white space has no words and is cut by characters alone.
+func CutParamValue(s string) string {
+	words, inWord := 0, false
+	for i, r := range s {
+		if unicode.IsSpace(r) {
+			inWord = false
+			continue
+		}
+		if !inWord {
+			if words == MaxParamWords {
+				s = strings.TrimRightFunc(s[:i], unicode.IsSpace)
+				break
+			}
+			words++
+			inWord = true
+		}
+	}
+	return truncate(s, MaxParamValueLen)
 }

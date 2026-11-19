@@ -1403,3 +1403,68 @@ on), `TestARefusedAssertionValueCostsAboutItsSize`,
 `TestTheShapeCheckBuildsEachTypesFieldMapOnce`, `TestFieldMapsAreSharedSafelyOnFirstUse`;
 `internal/api/bench_test.go`: `BenchmarkCheckBodyManyObjects`. The existing tests of
 parallel starts and sends pass unchanged.
+
+## N44 — A parameter value is cut to 256 characters and 32 words
+
+**What the server did:** every parameter value was cut to 500 characters and sent. The
+target is about to refuse a search text (`q`) over 256 characters or 32 terms with a `400`,
+so a value between those limits and 500 characters would have come back as the target's
+refusal rather than as an answer.
+
+**What it does now:** every parameter value, on every endpoint, is cut to its first 32 words and then to its first 256 characters (`MaxParamWords`, `MaxParamValueLen` and
+`CutParamValue` in `internal/sandbox/validate.go`). It is still cut, never refused, and the
+cut is reported exactly as before: `"truncated":["params.q"]` on Send's `200` and
+`"truncated":["sequence[1].params.q"]` on the run's `202`. The rule, exactly:
+
+- A character is a rune, as in every other cap. A word is a maximal run of characters that
+  are not Unicode white space (Go's `unicode.IsSpace`: the space, tab, newline, carriage
+  return, the non-breaking space, the ideographic space and the other `Zs` spaces; a
+  zero-width space is not white space and joins the words either side of it).
+- The word cut comes first. A value with more than 32 words ends at the end of its 32nd
+  word: the white space after that word goes with the words cut, and the white space before
+  and between the words kept stays as written. A value with 32 words or fewer keeps all its
+  white space, at either end too.
+- The character cut comes second and keeps the first 256 characters, which may end inside
+  a word or in white space. A value of only white space has no words and is cut by
+  characters alone.
+- So what is sent is a prefix of the value, within both limits, never ends inside a
+  character, and is the value itself exactly when the value was within both limits, which
+  is when `truncated` leaves it out. The order matters in one case: 33 words of seven
+  letters put the 256th character on the space after the 32nd word, and that space is not
+  sent.
+
+How the target counts "terms" is not stated in anything this repository can read. Courier
+counts white-space-separated words as above and characters as runes, so whoever checks the
+target's rule can compare the two.
+
+**What does not move:** an assertion's JSON path and string value keep their own cap of
+500 characters (`MaxAssertionTextLen`, which they used to share with parameter values) and
+are still refused over it; between 257 and 500 characters they are accepted whole. The
+name and id cap stays at 120 characters. Every curated request, and so every knee preset,
+goes out unchanged.
+
+**Template variables.** `{{randomWord}}` and `{{randomPokemon}}` are expanded after
+validation, and the limits are not checked again on the way out. Every pool entry is
+shorter than its token and holds no white space, so an expansion never adds a character or
+a word: a value within both limits stays within them, whatever is drawn.
+
+**Amends N40**, which says the page cuts a stored parameter value to 500 characters "as
+the server itself cuts them": the server now cuts to 256 characters and 32 words. The
+editor's parameter input now takes at most 256 characters (its `maxlength`, which the limit
+test holds to `MaxParamValueLen`); the page's cut of a stored value is unchanged.
+
+**Proof:** `internal/sandbox/param_cut_test.go`: `TestAParameterValueIsCutTo256Characters`
+(255, 256, 257 characters, two- and four-byte characters at the boundary),
+`TestAParameterValueIsCutTo32Words` (31, 32, 33 words, white space kept and dropped),
+`TestEveryUnicodeWhiteSpaceSeparatesWords` (tab, newline, non-breaking, ideographic and em
+spaces; a zero-width space joins), `TestBothLimitsAtOnce` (either limit first, both, and the
+order), `TestWhiteSpaceAtTheEdgesAndAValueOfOnlyWhiteSpace`,
+`TestTheCutNeverExceedsEitherLimit` (3,000 seeded values), `TestARunReportsWordCutsAtTheirRequest`,
+`TestAssertionTextBetweenTheParameterLimitAndItsOwnIsAccepted`,
+`TestTheParameterLimitsAreTheTargetsSearchLimits`, `TestTheParameterLimitsMatchTheDocuments`;
+`internal/api/param_cut_test.go`: `TestSendCutsAParameterToItsFirst32Words`,
+`TestARunCutsAParameterToItsFirst32Words` (what the target receives, and `truncated`);
+`internal/collections/param_cut_test.go`: `TestTheParameterLimitsCutNothingCurated`;
+`internal/template/template_test.go`: `TestPoolsAreUsable`,
+`TestAnExpandedValueAtTheLimitsStaysWithinThem`; `web/limits_test.go`:
+`TestFrontendLimitsMatchTheServer`.

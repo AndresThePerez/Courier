@@ -188,7 +188,7 @@ Server-enforced regardless of client input; structural violations are **rejected
 | Max requests per sequence | 50 (rejected) |
 | Max assertions per request | 20 (rejected) |
 | Functional `delay_ms` | ≤ 1000 (clamped) |
-| Param value length | ≤ 500 chars (truncated, not rejected) |
+| Param value length | ≤ 256 chars and the first 32 words (truncated, not rejected) |
 | Assertion string value / JSON path | ≤ 500 chars (rejected); a value is a number, string, boolean or null, never an object or array (rejected) |
 | Param/request name length | ≤ 120 chars (truncated) |
 | API request payload | ≤ 256 KiB (rejected) |

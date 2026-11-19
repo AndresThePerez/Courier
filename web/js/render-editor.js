@@ -530,7 +530,7 @@ function paramRow(key, value, index, allowed, used) {
       type: 'text',
       attrs: {
         value: textOf(value),
-        maxlength: 500,
+        maxlength: 256,
         autocomplete: 'off',
         spellcheck: 'false',
         placeholder: 'value',

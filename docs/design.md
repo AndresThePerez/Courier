@@ -362,6 +362,15 @@ not silent: a report's `config` is the knobs as actually honoured, so the respon
 says what was clamped rather than echoing what was asked for. Both halves are
 [`internal/sandbox/validate.go`](../internal/sandbox/validate.go).
 
+A parameter value sits between the two, and is cut rather than refused: a value is sent
+as its first 32 words and then its first 256 characters, because the target itself
+refuses a search text over 256 characters or 32 terms with a `400`, and a value sent
+whole past that would come back as the target's refusal rather than as an answer. A
+shorter query is still one the target answers, and the `truncated` list on Send's `200`
+and the run's `202` names every value cut, so the cut is never silent. An assertion's
+path and value keep their own 500-character cap and are still refused over it, since an
+expected value cut short is a different assertion.
+
 A body is checked and decoded before the one-run lock and the one-send limit, so those
 cannot bound what decoding costs, and a body at the size cap can allocate many times its
 size. The check is therefore bounded by the bytes of the bodies in it rather than by how

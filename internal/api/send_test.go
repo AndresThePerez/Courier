@@ -302,7 +302,7 @@ func TestSendRefusesAMeaninglessAssertion(t *testing.T) {
 	for _, a := range []assert.Assertion{
 		{Type: assert.TypeLatency, Op: "lt", Value: -5},
 		{Type: assert.TypeStatus, Op: "eq", Value: 200.5},
-		{Type: assert.TypeBodyContains, Op: "contains", Value: strings.Repeat("x", sandbox.MaxParamValueLen+1)},
+		{Type: assert.TypeBodyContains, Op: "contains", Value: strings.Repeat("x", sandbox.MaxAssertionTextLen+1)},
 	} {
 		req := sendable()
 		req.Assertions = []assert.Assertion{{Type: assert.TypeStatus, Op: "eq", Value: 200}, a}
