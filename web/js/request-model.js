@@ -343,21 +343,30 @@ function cutField(rest) {
   return clipped(rest);
 }
 
+// MaxCutFields is how many fields the cut sentence lists before it counts
+// the rest, so a run with many cuts still reads as one short status line.
+const MaxCutFields = 5;
+
 // cutText is the one sentence the server's `truncated` list reads as, or ''
 // for none. requestLabel(index) names the request a run's field belongs to
 // ("Request 2"), from the index the server gives in its own payload; Send's
 // fields belong to the one request sent and are named without it. Only a
-// list of text is read.
+// list of text is read. Each field is said once, and past MaxCutFields the
+// rest are counted ("and 3 more").
 export function cutText(list, requestLabel = null) {
   if (!Array.isArray(list)) return '';
-  const said = [];
+  const said = new Set();
   for (const field of list) {
     if (typeof field !== 'string' || field === '') continue;
     const m = requestLabel ? /^sequence\[(\d+)\]\.(.+)$/s.exec(field) : null;
     const who = m ? requestLabel(Number(m[1])) : '';
-    said.push(m && who ? `${who}, ${cutField(m[2])}` : cutField(field));
+    said.add(m && who ? `${who}, ${cutField(m[2])}` : cutField(field));
   }
-  return said.length > 0 ? `Cut to fit: ${said.join('; ')}.` : '';
+  if (said.size === 0) return '';
+  const all = [...said];
+  const listed = all.slice(0, MaxCutFields);
+  if (all.length > MaxCutFields) listed.push(`and ${all.length - MaxCutFields} more`);
+  return `Cut to fit: ${listed.join('; ')}.`;
 }
 
 // unknownTypeNote is the note beside an assertion whose type the page does

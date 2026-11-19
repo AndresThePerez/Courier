@@ -113,9 +113,8 @@ test('a hostile truncated list is read as text only: duplicates, object keys, ma
   ]);
   const text = said('start-cut');
   assert.ok(text.startsWith(`Cut to fit: Request 1, parameter __proto__ (${Param}); Request 1, __proto__; Request 1, parameter constructor (${Param}); `), text.slice(0, 200));
-  assert.ok(text.includes('sequence[99999999999999999999].params.q; sequence[-1].params.q; Request 1, parameter <b>x</b>'), 'an index past the run or a malformed one was relabelled');
-  assert.equal(text.split(`Request 1, parameter q (${Param})`).length - 1, 2, 'the duplicates are not each said');
-  for (let i = 0; i < 50; i += 1) assert.ok(text.includes(`parameter p${i} (`), `entry ${i} is missing`);
+  assert.ok(text.endsWith(`Request 1, parameter q (${Param}); sequence[99999999999999999999].params.q; and 52 more.`), 'an index past the run was relabelled, or the rest is not counted');
+  assert.equal(text.split(`Request 1, parameter q (${Param})`).length - 1, 1, 'the duplicate is said twice');
   assert.equal(byId('start-cut').querySelectorAll('*').length, 0, 'server text became elements');
   assert.equal(Object.prototype.q, undefined);
   assert.equal({}.constructor, Object, 'the prototype was touched');
