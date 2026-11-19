@@ -11,32 +11,7 @@ import * as sidebar from './render-sidebar.js';
 import * as editor from './render-editor.js';
 import * as runner from './render-runner.js';
 import * as results from './render-results.js';
-
-const TABS = ['runner', 'editor', 'results'];
-
-function currentTab() {
-  const hash = (location.hash || '').replace('#', '');
-  return TABS.includes(hash) ? hash : 'runner';
-}
-
-function renderTabs(state) {
-  for (const name of TABS) {
-    const active = state.activeTab === name;
-    const tab = byId(`tab-${name}`);
-    tab.classList.toggle('is-active', active);
-    // aria-selected is the accessible half of is-active. Both are set in one
-    // place so they cannot drift: a tab that looks selected and reports
-    // otherwise is worse than no role at all.
-    tab.setAttribute('aria-selected', active ? 'true' : 'false');
-    byId(`panel-${name}`).classList.toggle('is-active', active);
-  }
-}
-
-export function showTab(name) {
-  if (!TABS.includes(name)) return;
-  if (location.hash !== `#${name}`) location.hash = `#${name}`;
-  else set({ activeTab: name });
-}
+import * as tabs from './tabs.js';
 
 function renderTopbar(state) {
   const node = byId('run-state');
@@ -51,10 +26,11 @@ function renderTopbar(state) {
 
 // page owns the live transport, the status poll and every other request the
 // page makes on its own (live.js).
+const { showTab } = tabs;
 const page = createLive({ api, get, set, showTab });
 
 function render(state) {
-  renderAll([renderTabs, renderTopbar, sidebar.render, editor.render, runner.render, results.render], state);
+  renderAll([tabs.renderTabs, renderTopbar, sidebar.render, editor.render, runner.render, results.render], state);
   page.scheduleSync();
 }
 
@@ -83,13 +59,10 @@ async function boot() {
     ...page.hooks.sidebar,
   });
 
-  for (const name of TABS) {
-    byId(`tab-${name}`).addEventListener('click', () => showTab(name));
-  }
-  window.addEventListener('hashchange', () => set({ activeTab: currentTab() }));
+  tabs.init();
 
   subscribe(render);
-  set({ activeTab: currentTab() });
+  set({ activeTab: tabs.initialTab() });
 
   await page.boot();
 }
