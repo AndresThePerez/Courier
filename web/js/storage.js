@@ -33,7 +33,7 @@ export function write(storage, key, value) {
   }
 }
 
-export function remove(storage, key) {
+function remove(storage, key) {
   try {
     resolve(storage).removeItem(key);
     return { ok: true };
@@ -132,13 +132,18 @@ const assertionOps = {
   body_contains: ['contains'],
 };
 
-// What a restored request is cut to, and what it is not. A name is cut to 120
-// characters, and a parameter value by cutParamValue, exactly as the server
-// cuts them, so the cut changes nothing a run would have sent; a request
-// keeps its first 20 assertions, the editor's cap. An assertion's path and
-// value are never cut: the editor accepts them at any length, and a shortened
-// one would check something the visitor did not write, so an over-long one
-// goes out whole and is refused by field. Ids and parameter names are the
+// What a restored request is cut to, and what it is not. A parameter value is
+// cut by cutParamValue, exactly as the server cuts it, so that cut changes
+// nothing a run would have sent. A name is cut to 120 UTF-16 units, the unit
+// the editor's name box counts in, which is never more than the server's 120
+// characters: a name the page made is never cut, and one of characters
+// outside the BMP is cut shorter than the server would cut it (to 60 of
+// them), never longer, and a pair across the 120th unit loses its second
+// half. A request keeps its first 20 assertions, the editor's cap. An
+// assertion's path and value are never cut: the editor accepts them at any
+// length, and a shortened one would check something the visitor did not
+// write, so an over-long one goes out whole and is refused by field. Ids and
+// parameter names are the
 // page's or the catalog's and are short; one past these bounds was not made
 // by the page.
 const MaxStoredAssertions = 20;

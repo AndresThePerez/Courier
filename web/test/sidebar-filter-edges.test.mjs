@@ -35,15 +35,24 @@ test('a curated collection that cannot be drawn is drawn once its next input is 
   sidebar.init({});
   unsubscribe = subscribe((state) => sidebar.render(state));
   set({ endpoints, collections: [{ id: 'c1', name: 'Broken', description: '', requests: 5 }], workspace: [], history: [], historyLoaded: true });
-  assert.ok(errors.length > 0, 'the broken part did not throw; the case proves nothing');
-  const thrown = errors.length;
+  assert.deepEqual(errors.map((args) => String(args[0])), ['sidebar part collections-tree could not be drawn'], 'the broken part did not throw once; the case proves nothing');
 
-  // A render that changes nothing it reads does not throw again and again
-  // into the console, and does not paint the broken input.
-  set({ status: { running: false } });
+  // A part that threw is tried again on the next render, so each render while
+  // its input is still broken logs once more, for that part alone; the other
+  // parts are drawn, and nothing of the broken input is painted.
+  set({ status: { running: false }, workspace: [req('ws-1', 'Still mine')] });
+  assert.deepEqual(errors.map((args) => String(args[0])), [
+    'sidebar part collections-tree could not be drawn',
+    'sidebar part collections-tree could not be drawn',
+  ], 'one more error, from the broken part only');
+  assert.deepEqual([...byId('workspace-tree').querySelectorAll('.req-open')].map((b) => b.title), ['Still mine'], 'the other parts are drawn');
+  assert.doesNotMatch(byId('collections-tree').textContent, /Broken/, 'the broken input is painted');
+
+  // Once its input is whole the part is drawn, and logs no more.
   set({ collections: [{ id: 'c1', name: 'Mended', description: '', requests: [req('c1-a', 'Mended request')] }] });
   assert.match(byId('collections-tree').textContent, /Mended/, 'the repaired collection is painted');
-  assert.ok(errors.length >= thrown);
+  set({ status: { running: true } });
+  assert.equal(errors.length, 2, 'the mended part logged again');
   assert.deepEqual(listenerErrors, []);
 });
 

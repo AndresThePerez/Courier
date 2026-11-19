@@ -84,6 +84,21 @@ const shapes = {
   'a very long name': { id: 'ws-long', name: 'L'.repeat(200000), endpoint: 'search', params: { q: 'x' } },
 };
 
+// The shapes whose assertions the page itself cannot send, with what the
+// editor says when Send is pressed: the page refuses them before anything
+// goes out, and will not queue them for a run. Every other shape is sent once
+// and started once, and what goes out is checked.
+const refusedByPage = {
+  'assertions an object': 'Refused - Assertions: the assertions are not a list',
+  'assertions a string': 'Refused - Assertions: the assertions are not a list',
+  'assertion null': 'Refused - Assertion 1: this assertion cannot be read',
+  'assertion a list': 'Refused - Assertion 1: this assertion cannot be read',
+  'assertion op an object': 'Refused - Assertion 1: operator "[object Object]" is not valid for a status assertion',
+  'assertion path an object': 'Refused - Assertion 1: JSON path is required',
+  'assertion value an object': 'Refused - Assertion 1: eq needs a number or a string value',
+  'assertion type prototype': 'Refused - Assertion 1: unknown assertion type "prototype"',
+};
+
 // onWire holds what was sent to the request fields, at both levels.
 function onWire(body) {
   for (const k of Object.keys(body)) assert.ok(Request.includes(k), `request field ${k}`);
@@ -112,17 +127,35 @@ for (const [label, shape] of Object.entries(shapes)) {
       assert.equal(get().draft.id, shape.id, 'it opens');
       assert.equal(byId('editor-form').hidden, false, 'the editor draws');
 
+      const refused = refusedByPage[label];
       fetchStub.respond('/api/send', { status: 400, body: { error: 'no', field: 'endpoint' } }, { method: 'POST' });
       byId('send-request').click();
       await flush();
-      for (const call of sends()) onWire(call.json());
+      if (refused) {
+        assert.equal(sends().length, 0, 'the page sent what it cannot send');
+        assert.equal(byId('send-status').textContent, refused);
+      } else {
+        assert.equal(sends().length, 1, 'Send sent nothing');
+        onWire(sends()[0].json());
+        assert.equal(sends()[0].json().id, shape.id);
+      }
 
       runner.add(workspace.find(shape.id));
       fetchStub.respond('/api/runs', { status: 400, body: { error: 'no', field: 'sequence[0].endpoint' } }, { method: 'POST' });
       byId('start-run').click();
       await flush();
-      for (const call of starts()) for (const r of call.json().sequence) onWire(r);
-      if (get().sequence.length > 0) assert.equal(byId('start-run').disabled, false, 'Start comes back');
+      if (refused) {
+        assert.equal(get().sequence.length, 0, 'the page queued what it cannot send');
+        assert.equal(starts().length, 0, 'the page started a run of nothing');
+        assert.match(byId('sequence-note').textContent, /has an invalid assertion - fix it in the editor before queuing it\./);
+      } else {
+        assert.equal(starts().length, 1, 'Start sent nothing');
+        const sequence = starts()[0].json().sequence;
+        assert.equal(sequence.length, 1);
+        onWire(sequence[0]);
+        assert.equal(sequence[0].id, shape.id);
+        assert.equal(byId('start-run').disabled, false, 'Start comes back');
+      }
     }
 
     assert.equal(prototypeKeys(), cleanPrototype, 'Object.prototype gained nothing');

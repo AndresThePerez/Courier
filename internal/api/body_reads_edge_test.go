@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -345,4 +347,71 @@ func TestNoGoroutineOutlivesAnyWayABodyReadEnds(t *testing.T) {
 	waitFor(t, "every goroutine reading a body or serving a gone client to end", func() bool {
 		return goroutinesIn(marks...) <= before
 	})
+}
+
+// The place counter taken and given back from many goroutines at once, far
+// more than it has places: no more than MaxBodyReads are ever held, the count
+// never goes below zero, and it is back at zero once every holder has given
+// its place back.
+func TestThePlaceCounterHoldsItsBoundUnderContention(t *testing.T) {
+	p := &readPlaces{max: MaxBodyReads}
+	var holders, most, granted, refused atomic.Int64
+	var negative atomic.Bool
+	stop := make(chan struct{})
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		for {
+			if p.held.Load() < 0 {
+				negative.Store(true)
+			}
+			select {
+			case <-stop:
+				return
+			default:
+				runtime.Gosched()
+			}
+		}
+	}()
+
+	const workers, rounds = 4 * MaxBodyReads, 200
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range rounds {
+				if !p.take() {
+					refused.Add(1)
+					continue
+				}
+				granted.Add(1)
+				n := holders.Add(1)
+				for m := most.Load(); n > m && !most.CompareAndSwap(m, n); m = most.Load() {
+				}
+				runtime.Gosched()
+				holders.Add(-1)
+				p.give()
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	<-watched
+
+	if m := most.Load(); m > MaxBodyReads {
+		t.Errorf("%d places were held at once, want at most %d", m, MaxBodyReads)
+	}
+	if negative.Load() {
+		t.Error("the count of places held went below zero")
+	}
+	if n := p.held.Load(); n != 0 {
+		t.Errorf("%d places held after every holder gave its place back, want 0", n)
+	}
+	if granted.Load() == 0 || refused.Load() == 0 {
+		t.Errorf("%d takes granted and %d refused: the case must meet the bound and pass it", granted.Load(), refused.Load())
+	}
+	if granted.Load()+refused.Load() != workers*rounds {
+		t.Errorf("%d takes answered, want %d", granted.Load()+refused.Load(), workers*rounds)
+	}
 }

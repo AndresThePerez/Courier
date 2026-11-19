@@ -29,7 +29,7 @@ export function el(tag, opts = {}, children = []) {
   return node;
 }
 
-export function clear(node) {
+function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 

@@ -30,17 +30,35 @@ function exportsOf(text) {
   return names;
 }
 
-// importers are the other files that import a module, by its file name.
-const importers = (file) => sources.filter((s) => s.name !== `js/${file}`
-  && new RegExp(`from '(?:\\./|\\.\\./js/)${file.replace('.', '\\.')}'`).test(s.text));
+// importedNames lists the names a source takes from a module file: the names
+// inside its import braces (the name before any "as"), and, for a namespace
+// import, every name it reads off the namespace. A name that only appears as a
+// word elsewhere in the file (a local of the same name, a string, a comment)
+// is not an import of it.
+function importedNames(text, file) {
+  const from = `'(?:\\./|\\.\\./js/)${file.replace('.', '\\.')}'`;
+  const names = new Set();
+  for (const m of text.matchAll(new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*${from}`, 'g'))) {
+    for (const part of m[1].split(',')) {
+      const name = part.trim().split(/\s+as\s+/)[0];
+      if (name) names.add(name);
+    }
+  }
+  for (const m of text.matchAll(new RegExp(`import\\s*\\*\\s*as\\s+(\\w+)\\s*from\\s*${from}`, 'g'))) {
+    for (const use of text.matchAll(new RegExp(`\\b${m[1]}\\.(\\w+)`, 'g'))) names.add(use[1]);
+  }
+  return names;
+}
 
 test('every export of a page module is imported by another module or a test', () => {
   const unused = [];
   for (const file of modules) {
-    const users = importers(file);
+    const imported = new Set();
+    for (const s of sources) {
+      if (s.name !== `js/${file}`) for (const name of importedNames(s.text, file)) imported.add(name);
+    }
     for (const name of exportsOf(read(JS, file))) {
-      const word = new RegExp(`\\b${name}\\b`);
-      if (!users.some((s) => word.test(s.text))) unused.push(`${file} ${name}`);
+      if (!imported.has(name)) unused.push(`${file} ${name}`);
     }
   }
   assert.deepEqual(unused, []);
@@ -48,4 +66,16 @@ test('every export of a page module is imported by another module or a test', ()
 
 test('the scan finds an export nothing imports', () => {
   assert.deepEqual(exportsOf('export function a() {}\nexport const b = 1;\nexport const { c, d } = x;\nexport async function e() {}\n'), ['a', 'b', 'e', 'c', 'd']);
+});
+
+test('the scan reads named and namespace imports, and nothing else, as imports', () => {
+  const text = [
+    "import { a, b as bee } from './m.js';",
+    "import {\n  c,\n  d,\n} from '../js/m.js';",
+    "import * as ns from './m.js';",
+    "import { z } from './other.js';",
+    'ns.e(); ns.f.g; const h = 1; // i',
+    "const s = 'j';",
+  ].join('\n');
+  assert.deepEqual([...importedNames(text, 'm.js')].sort(), ['a', 'b', 'c', 'd', 'e', 'f']);
 });

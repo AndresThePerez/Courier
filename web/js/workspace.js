@@ -19,7 +19,7 @@ import * as storage from './storage.js';
 const KEY = 'courier.workspace.v1';
 const VERSION = 1;
 
-export const DELETED_ELSEWHERE = 'This request was deleted in another tab.';
+const DELETED_ELSEWHERE = 'This request was deleted in another tab.';
 export const WRITE_REFUSED = 'Could not save - this browser refused the write (storage full or disabled). The change stays on this page until you reload.';
 export const RESET_REFUSED = 'Could not reset - this browser refused the write (storage full or disabled). Your saved requests are unchanged.';
 

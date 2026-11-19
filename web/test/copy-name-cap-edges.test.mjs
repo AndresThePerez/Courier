@@ -107,3 +107,17 @@ test('a copy of a request with no name, or an empty one, is named from the fallb
   assert.equal(ws.fork({ id: 'x', endpoint: 'search' }).request.name, 'Request (copy)');
   assert.equal(ws.fork(named('')).request.name, 'Request (copy 2)');
 });
+
+test('a restored name of characters outside the BMP is cut in UTF-16 units, never past the server\'s cap in characters', () => {
+  const restored = (name) => requestOf({ id: 'run-astral', name, endpoint: 'search', params: {}, assertions: [] }).name;
+  const rocket = '\u{1F680}';
+  // 60 such characters fill the 120 units and are kept whole.
+  assert.equal(restored(rocket.repeat(60)), rocket.repeat(60));
+  // 100 of them are within the server's 120 characters but not within 120
+  // units: the page keeps 60, shorter than the server would, never longer.
+  for (const n of [61, 100, MaxName, MaxName + 30]) {
+    const name = restored(rocket.repeat(n));
+    assert.equal(name, rocket.repeat(60), `${n} characters`);
+    assert.ok(Array.from(name).length <= MaxName, 'longer than the server keeps');
+  }
+});

@@ -349,7 +349,7 @@ func TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete(t *testing.T) {
 			switch w := g.waiting.Load(); {
 			case w < 0:
 				underWait.Store(true)
-			case w > MaxBodyWaiters+64: // each over-bound entrant counts itself once before stepping back
+			case w > MaxBodyWaiters: // every entry weighs MaxBodyBytes, and one that does not fit is refused before it joins the line
 				overWait.Store(true)
 			}
 			runtime.Gosched()
@@ -406,7 +406,7 @@ func TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete(t *testing.T) {
 		t.Error("the waiting count went below zero")
 	}
 	if overWait.Load() {
-		t.Error("the waiting count grew past its bound plus the entrants stepping back")
+		t.Errorf("more than %d bodies at the cap waited at once", MaxBodyWaiters)
 	}
 	if n, w := g.inside, g.waiting.Load(); n != 0 || w != 0 || g.queued != 0 {
 		t.Errorf("after every entry ended: %d bytes inside, %d bytes and %d bodies waiting, want 0", n, g.queued, w)
