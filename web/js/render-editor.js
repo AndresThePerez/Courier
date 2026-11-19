@@ -16,7 +16,7 @@ import * as workspace from './workspace.js';
 import * as runner from './render-runner.js';
 import {
   opsByType, valueKind, coerceValue, textOf, requestPayload, requestProblem, assertionProblem, whereIn, refusedText,
-  capitalized, sameRequest, cutText, paramCutNote, unknownTypeNote,
+  capitalized, sameRequest, cutText, paramCutNote, unknownTypeNote, willBeCut,
 } from './request-model.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
@@ -501,6 +501,11 @@ function renderNotes(draft) {
   const cutNote = paramCutNote(draft.params);
   cn.hidden = !cutNote;
   if (cn.textContent !== cutNote) cn.textContent = cutNote;
+  // Each box the note is about is described by it, beside any refusal mark.
+  const values = Object.values(paramsOf(draft));
+  byId('param-rows').querySelectorAll('.param-value').forEach((box, i) => {
+    describe(box, 'param-cut-note', willBeCut(values[i]));
+  });
 
   const an = byId('assertion-note');
   const capped = assertionsOf(draft).length >= MaxAssertions
@@ -919,6 +924,17 @@ function paramMarkOf(state, draft) {
   return runner.refusedParam(draft);
 }
 
+// describe adds id to a control's aria-describedby, or takes it away, leaving
+// any other id there alone: one field can be described by a refusal and by a
+// note at once.
+function describe(control, id, on) {
+  const ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+  const next = on ? (ids.includes(id) ? ids : [...ids, id]) : ids.filter((x) => x !== id);
+  if (next.length === ids.length && next.every((x, i) => x === ids[i])) return;
+  if (next.length) control.setAttribute('aria-describedby', next.join(' '));
+  else control.removeAttribute('aria-describedby');
+}
+
 // renderParamMark is renderMark for a refused parameter. A named parameter
 // that has a row is marked on its value field; otherwise (no name, a name the
 // table does not hold, or an endpoint that takes none) the message sits at
@@ -940,18 +956,14 @@ function renderParamMark(state, draft) {
   const described = !mark ? [] : target ? [target] : [add, ...values];
   for (const control of [add, ...values]) {
     if (control !== target && control.hasAttribute('aria-invalid')) control.removeAttribute('aria-invalid');
-    if (!described.includes(control) && control.getAttribute('aria-describedby') === 'param-error') {
-      control.removeAttribute('aria-describedby');
-    }
+    if (!described.includes(control)) describe(control, 'param-error', false);
   }
   for (const old of box.querySelectorAll('.field-error')) {
     if (!holder || old.parentNode !== holder || old.textContent !== mark.message) old.remove();
   }
   if (!mark) return;
   if (target && target.getAttribute('aria-invalid') !== 'true') target.setAttribute('aria-invalid', 'true');
-  for (const control of described) {
-    if (control.getAttribute('aria-describedby') !== 'param-error') control.setAttribute('aria-describedby', 'param-error');
-  }
+  for (const control of described) describe(control, 'param-error', true);
   if (![...holder.children].some((c) => c.classList.contains('field-error'))) {
     holder.appendChild(el('p', { class: 'field-error fail', text: mark.message, attrs: { id: 'param-error' } }));
   }

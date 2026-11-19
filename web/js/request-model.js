@@ -379,13 +379,16 @@ export function unknownTypeNote(type) {
     : `Unknown assertion type "${clipped(name)}" - choose one of the listed types.`;
 }
 
+// willBeCut is whether the server will cut a parameter value when it is sent.
+export const willBeCut = (v) => typeof v === 'string' && cutParamValue(v) !== v;
+
 // paramCutNote says which parameter values the server will cut when they are
 // sent, or '' when every one fits. It asks cutParamValue, the page's copy of
 // the server's cut, rather than counting by a second rule.
 export function paramCutNote(params) {
   if (params === null || typeof params !== 'object' || Array.isArray(params)) return '';
   const keys = Object.entries(params)
-    .filter(([, v]) => typeof v === 'string' && cutParamValue(v) !== v)
+    .filter(([, v]) => willBeCut(v))
     .map(([k]) => clipped(k));
   if (keys.length === 0) return '';
   const limits = `longer than ${MaxParamValue} characters or ${MaxParamWords} words`;
