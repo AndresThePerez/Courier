@@ -50,9 +50,10 @@ export function valueKind(a) {
 // the *string* "107" cannot be expressed; the outcome then says so in plain
 // words ("cannot compare it to a number") rather than failing silently. Text
 // in a numeric slot is kept as typed, so the check below names the row
-// instead of the editor quietly inventing a zero.
+// instead of the editor quietly inventing a zero. An empty box is no value at
+// all, the same as a box never typed into (see assertionPayload).
 export function coerceValue(a, text) {
-  if (valueKind(a) === 'none') return undefined;
+  if (valueKind(a) === 'none' || text === '') return undefined;
   if (valueKind(a) === 'string') return text;
   const n = Number(text);
   return text.trim() !== '' && Number.isFinite(n) ? n : text;
@@ -85,11 +86,16 @@ export function requestPayload(r) {
   };
 }
 
+// An empty string is sent as no value, so it is refused by field like a box
+// never typed into. The server would accept it, and compare against nothing,
+// which a visitor who erased the box almost never means; a value stored empty
+// by an earlier build reads the same way. assertionProblem still accepts "",
+// because it mirrors the server.
 function assertionPayload(a) {
   if (!isPlain(a)) return a;
   const row = { type: a.type, op: a.op };
   if (a.type === 'json') row.path = a.path;
-  if (valueKind(a) !== 'none' && a.value !== undefined) row.value = a.value;
+  if (valueKind(a) !== 'none' && a.value !== undefined && a.value !== '') row.value = a.value;
   return row;
 }
 

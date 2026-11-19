@@ -106,11 +106,17 @@ const Cases = [
   [{ type: 'status', op: 'constructor', value: 200 }, false],
 ];
 
+// emptyBox is an empty string where the operator needs a value: the server
+// accepts it, but the page's builder sends it as no value, so the visitor is
+// asked for one.
+const emptyBox = (a) => a.value === '' && !(a.type === 'json' && a.op === 'exists');
+
 test('at every rule edge the client accepts exactly what the server accepts', () => {
   for (const [a, accepts] of Cases) {
+    assert.equal(assertionProblem(a) === null, accepts, `the server's rule: ${JSON.stringify(a).slice(0, 80)}`);
     const built = requestPayload({ id: 'x', endpoint: 'search', params: {}, assertions: [a] });
     const problem = requestProblem(built);
-    assert.equal(problem === null, accepts, `${JSON.stringify(a).slice(0, 80)} -> ${problem && problem.message}`);
+    assert.equal(problem === null, accepts && !emptyBox(a), `${JSON.stringify(a).slice(0, 80)} -> ${problem && problem.message}`);
   }
 });
 

@@ -62,7 +62,7 @@ const Odd = [
     { type: 'json', path: '$.total', op: 'lt', value: 100 },
     { type: 'json', path: '$.items', op: 'count', value: 0 },
     { type: 'json', path: '$.名前', op: 'contains', value: 'ünï ☃ \u{1F600}' },
-    { type: 'body_contains', op: 'contains', value: '' },
+    { type: 'body_contains', op: 'contains', value: ' ' },
   ] },
   // Fields the wire has no place for, at every level, and a value an exists
   // check ignores.

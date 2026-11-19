@@ -119,14 +119,17 @@ for (const c of CASES) {
     byId('send-request').click();
     await flush();
     const sent = fetchStub.calls.filter((c2) => c2.url === '/api/send');
-    if (!c.refused) {
+    // An empty value box is the page's own refusal, not the server's: the
+    // builder sends it as no value.
+    const emptyBox = a.value === '' && a.op !== 'exists';
+    if (!c.refused && !emptyBox) {
       assert.equal(sent.length, 1, 'the request was sent');
       assert.deepEqual(sent[0].json().assertions[0], JSON.parse(JSON.stringify(requestPayload({ assertions: [a] }).assertions[0])));
       assert.equal(byId('assertion-rows').querySelectorAll('[aria-invalid="true"]').length, 0);
       return;
     }
     assert.equal(sent.length, 0, 'nothing was sent');
-    const { message } = requestProblem({ assertions: [a] });
+    const { message } = requestProblem(emptyBox ? requestPayload({ assertions: [a] }) : { assertions: [a] });
     assert.equal(byId('send-status').textContent, `Refused - Assertion 1: ${message}`);
     const row = byId('assertion-rows').querySelector('.assert-row');
     const control = row.querySelector(c.part === 'path' ? '.assert-path' : 'input.assert-value');
