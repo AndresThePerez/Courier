@@ -139,7 +139,7 @@ const assertionOps = {
 // and are short; one past these bounds was not made by the page.
 export const MaxStoredAssertions = 20;
 const MaxParamValue = 500;
-const MaxName = 120;
+export const MaxName = 120;
 const MaxId = 200;
 const MaxParams = 32;
 const MaxParamKey = 64;

@@ -58,6 +58,18 @@ function encode(requests, counter) {
   return JSON.stringify(value);
 }
 
+// fitted shortens text to at most max UTF-16 units (the unit the stored name
+// is cut in), dropping whole characters so no half of a pair is left.
+function fitted(text, max) {
+  if (text.length <= max) return text;
+  let out = '';
+  for (const ch of text) {
+    if (out.length + ch.length > max) break;
+    out += ch;
+  }
+  return out;
+}
+
 export function createWorkspace({ storage: area, get, set, target = null, key = KEY }) {
   // The rules for what this tab may conclude from storage shared with other
   // tabs, and how changes merge into it, are createSyncedList's
@@ -115,14 +127,17 @@ export function createWorkspace({ storage: area, get, set, target = null, key = 
 
   // copyName numbers a fork so two copies of one request can be told apart in
   // the sidebar. Names stored by another tab count as taken too, even before
-  // its storage event has arrived.
+  // its storage event has arrived. A stored name is cut to the name cap on
+  // every read, so the suffix is kept whole and the base is shortened
+  // instead: cut, two numbered copies of one long name would read the same.
   function copyName(base) {
     const lists = [get().workspace, list.load()];
     const taken = new Set(lists.flat().map((req) => req.name));
-    if (!taken.has(`${base} (copy)`)) return `${base} (copy)`;
+    const named = (suffix) => `${fitted(base, storage.MaxName - suffix.length)}${suffix}`;
+    if (!taken.has(named(' (copy)'))) return named(' (copy)');
     let n = 2;
-    while (taken.has(`${base} (copy ${n})`)) n += 1;
-    return `${base} (copy ${n})`;
+    while (taken.has(named(` (copy ${n})`))) n += 1;
+    return named(` (copy ${n})`);
   }
 
   // remove deletes a request and closes it if it is open, returning what was
