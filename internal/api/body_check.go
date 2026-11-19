@@ -252,6 +252,7 @@ func renderPath(segs []pathSeg, limit int) (string, bool) {
 
 // clipRunes cuts s to at most n characters, the last three of them "...",
 // never splitting a character.
+// Not assert.Clip: here the "..." counts inside n, so a field stays within maxFieldLen.
 func clipRunes(s string, n int) string {
 	if utf8.RuneCountInString(s) <= n {
 		return s
