@@ -47,7 +47,7 @@ type heldChecks struct {
 func holdChecks(t *testing.T, s *Server) *heldChecks {
 	t.Helper()
 	h := &heldChecks{release: make(chan struct{})}
-	s.bodies.checking = func() {
+	s.bodies.checking = func(int64) {
 		h.calls.Add(1)
 		n := h.inside.Add(1)
 		for m := h.most.Load(); n > m && !h.most.CompareAndSwap(m, n); m = h.most.Load() {
@@ -72,8 +72,21 @@ func serveAsync(ctx context.Context, s *Server, path, contentType string, body i
 	}()
 }
 
-// gateIdle reports whether no body holds or waits for a check slot.
-func gateIdle(s *Server) bool { return len(s.bodies.slots) == 0 && s.bodies.waiting.Load() == 0 }
+// gateIdle reports whether no body is in the check or in line for it.
+func gateIdle(s *Server) bool {
+	inside, queued := s.bodies.load()
+	return inside == 0 && queued == 0 && s.bodies.waiting.Load() == 0
+}
+
+// checkedBytes is the weight of the bodies in the check.
+func checkedBytes(s *Server) int64 {
+	inside, _ := s.bodies.load()
+	return inside
+}
+
+// heavyBody is a body at the cap that is answered with its own 400: the gate
+// weighs bodies, so only bodies at the cap fill it MaxBodyChecks at a time.
+var heavyBody = `{"endpoint":"nowhere"}` + strings.Repeat(" ", MaxBodyBytes-len(`{"endpoint":"nowhere"}`))
 
 // Sixty-four bodies at the size cap, posted at once to both routes, are
 // checked and decoded at most MaxBodyChecks at a time; MaxBodyWaiters of the
@@ -142,14 +155,14 @@ func TestNoMoreThanMaxBodyChecksBodiesAreCheckedAtOnce(t *testing.T) {
 	waitFor(t, "the burst's goroutines to end", func() bool { return runtime.NumGoroutine() <= before })
 }
 
-// fillGate parks MaxBodyChecks bodies in the check and MaxBodyWaiters behind
-// them, and returns the channel their answers arrive on.
+// fillGate parks MaxBodyChecks bodies at the cap in the check and
+// MaxBodyWaiters behind them, and returns the channel their answers arrive on.
 func fillGate(t *testing.T, s *Server, h *heldChecks) <-chan *httptest.ResponseRecorder {
 	t.Helper()
 	n := MaxBodyChecks + MaxBodyWaiters
 	out := make(chan *httptest.ResponseRecorder, n)
 	for range n {
-		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(`{"endpoint":"nowhere"}`), out)
+		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(heavyBody), out)
 	}
 	waitFor(t, "the checks and the queue to fill", func() bool {
 		return h.inside.Load() == MaxBodyChecks && s.bodies.waiting.Load() == MaxBodyWaiters
@@ -228,8 +241,8 @@ func TestAStalledUploadHoldsNoCheckSlot(t *testing.T) {
 			t.Fatal("the stalled upload was never read")
 		}
 	}
-	if n := len(s.bodies.slots); n != 0 {
-		t.Errorf("%d check slots are held by uploads still arriving, want 0", n)
+	if n := checkedBytes(s); n != 0 {
+		t.Errorf("%d bytes of the check are held by uploads still arriving, want 0", n)
 	}
 
 	done := make(chan *httptest.ResponseRecorder, 1)
@@ -262,7 +275,7 @@ func TestAWaiterWhoseClientLeavesStopsWaiting(t *testing.T) {
 	h := holdChecks(t, s)
 	held := make(chan *httptest.ResponseRecorder, MaxBodyChecks)
 	for range MaxBodyChecks {
-		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(`{"endpoint":"nowhere"}`), held)
+		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(heavyBody), held)
 	}
 	waitFor(t, "the checks to fill", func() bool { return h.inside.Load() == MaxBodyChecks })
 

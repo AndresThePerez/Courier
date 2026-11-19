@@ -96,8 +96,8 @@ type Server struct {
 	metrics *metrics
 	started time.Time
 
-	// bodies bounds how many request bodies are checked and decoded at once,
-	// on both POST routes together (MaxBodyChecks).
+	// bodies bounds the bytes of the request bodies checked and decoded at
+	// once, on both POST routes together (MaxBodyChecks).
 	bodies *bodyGate
 
 	// runCtx is the parent of every run context. It outlives the HTTP request
@@ -139,7 +139,7 @@ func New(static fs.FS, opts Options) *Server {
 		runCtx:   ctx,
 		stopRuns: stop,
 		done:     make(chan struct{}),
-		bodies:   newBodyGate(MaxBodyChecks, MaxBodyWaiters),
+		bodies:   newBodyGate(MaxBodyChecks*MaxBodyBytes, MaxBodyWaiters*MaxBodyBytes),
 	}
 	// Three-step rather than one literal, because the wiring is genuinely
 	// circular: the run manager publishes through the metrics tap, and the tap
@@ -309,25 +309,30 @@ func writeError(w http.ResponseWriter, status int, field, format string, args ..
 // because encoding/json folds case.
 //
 // This is the check alone. Handlers go through Server.decodeJSON, which also
-// bounds how many bodies are checked at once.
+// bounds the bytes of the bodies checked at once.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	body, ok := readJSONBody(w, r)
 	return ok && decodeBody(w, body, v)
 }
 
-// decodeJSON is the package's decodeJSON with the body check held to
-// MaxBodyChecks at a time. The body is read in full before a slot is taken.
+// decodeJSON is the package's decodeJSON with the body check bounded by the
+// bytes of the bodies in it (bodyGate). The body is read in full before it
+// takes its place, so an upload in progress holds none.
 func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	body, ok := readJSONBody(w, r)
 	if !ok {
 		return false
 	}
-	if !s.bodies.enter(r.Context()) {
+	n := bodyWeight(len(body))
+	if !s.bodies.enter(r.Context(), n) {
 		w.Header().Set("Retry-After", bodyGateRetryAfter)
 		writeError(w, http.StatusServiceUnavailable, "", bodyGateBusy)
 		return false
 	}
-	defer s.bodies.leave()
+	defer s.bodies.leave(n)
+	if s.bodies.checking != nil {
+		s.bodies.checking(n)
+	}
 	return decodeBody(w, body, v)
 }
 
@@ -371,79 +376,161 @@ func decodeBody(w http.ResponseWriter, body []byte, v any) bool {
 }
 
 // Bounds on the body check, which runs before the one-run lock and the
-// one-send limit and so is open to every visitor at once. Decoding a body at
-// the cap can allocate over a hundred times its size, and the process has
-// 256 MB.
+// one-send limit and so is open to every visitor at once. They are weighed in
+// body bytes, not in bodies: what a check allocates grows with its body's
+// size, so a small body must not take the place of a body at the cap.
 //
-// What they can cost at once follows from the constants:
+// What the checks can allocate at once follows from the constants. The bodies
+// in the check weigh at most MaxBodyChecks x MaxBodyBytes in all. The widest
+// bodies at the cap measured allocate about 140 x their size to check and
+// decode, and TestDecodingAWideBodyStaysLinearInItsSize holds them to 192 x
+// (wideDecodeBound); TestAShortBodyWeighsTheFloor holds short bodies to
+// 192 x minBodyWeight. So the checks in flight allocate at most
+// 192 x 2 x 256 KiB, on the reading that bodies between the two ends allocate
+// in the same proportion, which is measured at the ends only. The bodies
+// waiting weigh at most MaxBodyWaiters x MaxBodyBytes, 16 x 256 KiB.
 //
-//	MaxBodyChecks x (one check of a body at MaxBodyBytes)
-//	  + MaxBodyWaiters x MaxBodyBytes
-//
-// One check of a body at the cap allocates at most 192 x MaxBodyBytes, 48 MiB
-// (TestDecodingAWideBodyStaysLinearInItsSize), so the checks in flight
-// allocate at most 2 x 48 MiB and the waiting bodies hold 16 x 256 KiB. A body
-// still arriving is not counted: it holds no slot (see Server.decodeJSON).
+// The bound leaves out what scales with connections rather than with these
+// constants: bodies read in full and then answered 503, and bodies still
+// arriving. It also leaves out the decoded value a request keeps after its
+// check, through validation and the start or the send, and garbage not yet
+// collected.
 const (
-	// MaxBodyChecks is how many bodies are checked and decoded at once
-	// (TestNoMoreThanMaxBodyChecksBodiesAreCheckedAtOnce). Two rather than
+	// MaxBodyChecks is how many bodies at the cap are checked and decoded at
+	// once; smaller bodies share the same MaxBodyChecks x MaxBodyBytes
+	// (TestNoMoreThanMaxBodyChecksBodiesAreCheckedAtOnce,
+	// TestAnOrdinaryBurstOfSmallPostsNeverSeesTheBodyGate). Two rather than
 	// one, so a body at the cap being checked does not hold up a small one.
 	MaxBodyChecks = 2
 
-	// MaxBodyWaiters is how many bodies, already read, may wait for a slot;
-	// one more is answered 503 at once, unchecked
+	// MaxBodyWaiters is how many bodies at the cap, already read, may wait for
+	// room, again shared by weight with smaller ones. A body that would take
+	// the waiting bodies past MaxBodyWaiters x MaxBodyBytes is answered 503 at
+	// once, unchecked
 	// (TestABodyBeyondMaxBodyWaitersIsAnswered503WithoutBeingChecked).
 	MaxBodyWaiters = 16
+
+	// minBodyWeight is what a body weighs however short it is. A check has a
+	// cost of its own beside its body's bytes, and without a floor the number
+	// of empty bodies in the check at once would have no bound
+	// (TestAShortBodyWeighsTheFloor).
+	minBodyWeight = 4 << 10
 )
+
+// bodyWeight is what a body of n bytes weighs in the gate.
+func bodyWeight(n int) int64 { return int64(max(n, minBodyWeight)) }
 
 // bodyGateBusy is the 503's message. The page shows it after "Refused - " on
 // Send and after "Could not start the run - " on Start.
 const bodyGateBusy = "the server is busy checking other requests; try again in a moment"
 
-// bodyGateRetryAfter is the 503's Retry-After, in seconds: a slot frees as
-// soon as one check ends.
+// bodyGateRetryAfter is the 503's Retry-After, in seconds: room frees as soon
+// as one check ends.
 const bodyGateRetryAfter = "1"
 
-// bodyGate is a counting semaphore with a bounded queue.
+// bodyGate admits bodies to the check by weight, in strict arrival order: a
+// body that does not fit waits, and every body that arrives after it waits
+// behind it, however small, so a body at the cap is never held out by a
+// stream of small ones (TestABodyAtTheCapIsAdmittedBeforeSmallerOnesBehindIt).
+//
+// Invariant, under mu: inside <= maxInside, queued <= maxQueued, queued and
+// waiting are the sum and the count of the bodies in line, and the head of
+// line does not fit (inside + line[0].n > maxInside) whenever line is not
+// empty. A body weighs at most MaxBodyBytes, so one alone always fits.
 type bodyGate struct {
-	slots   chan struct{}
+	mu        sync.Mutex
+	inside    int64
+	queued    int64
+	line      []*bodyWaiter
+	maxInside int64
+	maxQueued int64
+
+	// waiting is len(line), kept where a test can read it without the lock.
 	waiting atomic.Int64
-	maxWait int64
 
-	// checking, when set, runs while a slot is held. Tests park bodies in it
-	// to count how many are inside at once; production leaves it nil.
-	checking func()
+	// checking, when set, runs while a body is in the check, after its
+	// release is deferred. Tests park bodies in it to count how many are
+	// inside at once; production leaves it nil.
+	checking func(n int64)
 }
 
-func newBodyGate(slots, waiters int) *bodyGate {
-	return &bodyGate{slots: make(chan struct{}, slots), maxWait: int64(waiters)}
+// bodyWaiter is one body in line. admit is closed once it is let in.
+type bodyWaiter struct {
+	n     int64
+	admit chan struct{}
 }
 
-// enter takes a slot, waiting for one while fewer than maxWait others do. It
-// reports false when the queue is full or ctx ends first: a waiter whose
-// client has gone stops waiting.
-func (g *bodyGate) enter(ctx context.Context) bool {
+func newBodyGate(maxInside, maxQueued int64) *bodyGate {
+	return &bodyGate{maxInside: maxInside, maxQueued: maxQueued}
+}
+
+// enter lets in a body of weight n, waiting in line for room when there is
+// none. It reports false when the line has no room for n or ctx ends first:
+// a waiter whose client has gone leaves the line.
+func (g *bodyGate) enter(ctx context.Context, n int64) bool {
+	g.mu.Lock()
+	if len(g.line) == 0 && g.inside+n <= g.maxInside {
+		g.inside += n
+		g.mu.Unlock()
+		return true
+	}
+	if g.queued+n > g.maxQueued {
+		g.mu.Unlock()
+		return false
+	}
+	bw := &bodyWaiter{n: n, admit: make(chan struct{})}
+	g.line = append(g.line, bw)
+	g.queued += n
+	g.waiting.Store(int64(len(g.line)))
+	g.mu.Unlock()
+
 	select {
-	case g.slots <- struct{}{}:
+	case <-bw.admit:
+		return true
+	case <-ctx.Done():
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	select {
+	case <-bw.admit:
+		// Let in as ctx ended: it holds room it will not use.
+		g.inside -= n
 	default:
-		if g.waiting.Add(1) > g.maxWait {
-			g.waiting.Add(-1)
-			return false
-		}
-		defer g.waiting.Add(-1)
-		select {
-		case g.slots <- struct{}{}:
-		case <-ctx.Done():
-			return false
-		}
+		i := slices.Index(g.line, bw)
+		g.line = slices.Delete(g.line, i, i+1)
+		g.queued -= n
+		g.waiting.Store(int64(len(g.line)))
 	}
-	if g.checking != nil {
-		g.checking()
-	}
-	return true
+	g.admitLocked()
+	return false
 }
 
-func (g *bodyGate) leave() { <-g.slots }
+// leave gives back the room of a body of weight n.
+func (g *bodyGate) leave(n int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.inside -= n
+	g.admitLocked()
+}
+
+// admitLocked lets in, in order, every body at the head of the line that fits.
+func (g *bodyGate) admitLocked() {
+	for len(g.line) > 0 && g.inside+g.line[0].n <= g.maxInside {
+		bw := g.line[0]
+		g.line = slices.Delete(g.line, 0, 1)
+		g.queued -= bw.n
+		g.inside += bw.n
+		close(bw.admit)
+	}
+	g.waiting.Store(int64(len(g.line)))
+}
+
+// load reports the weight in the check and the weight in line.
+func (g *bodyGate) load() (inside, queued int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inside, g.queued
+}
 
 // decodeChecked is the decode that follows checkBody. The walk has already
 // refused every key v lacks; the decoder refuses them again so that a payload
