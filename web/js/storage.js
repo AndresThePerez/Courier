@@ -121,7 +121,10 @@ export function randomId(prefix) {
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // assertionOps is internal/assert's matrix, the same one the editor offers:
-// the only types and operators an assertion the page built can carry.
+// the only types and operators an assertion the page built can carry. It is a
+// copy because request-model.js, which holds the editor's, imports this file;
+// web/limits_test.go fails when the two differ, and holds the caps below to
+// the server's.
 const assertionOps = {
   status: ['eq', 'neq'],
   latency: ['lt'],

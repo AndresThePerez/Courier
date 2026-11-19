@@ -68,6 +68,27 @@ func TestOpsByTypeQuoteChangeIsCaughtByTheBehaviouralCheck(t *testing.T) {
 	}
 }
 
+func TestStoredMatrixDriftIsCaught(t *testing.T) {
+	model := shipped(t, "js/request-model.js")
+	store := shipped(t, "js/storage.js")
+	lacking := strings.Replace(store, "'exists', 'contains', 'count']", "'exists', 'contains']", 1)
+	if lacking == store {
+		t.Fatal("storage.js assertionOps no longer lists json count where this test removes it; update the test")
+	}
+	r := &recorder{}
+	drift := storedMatrixDrift(r, model, lacking)
+	if r.fatal != "" {
+		t.Fatalf("the reader refused the copy: %s", r.fatal)
+	}
+	if len(drift) != 1 || !strings.Contains(drift[0], `json "count"`) {
+		t.Fatalf("a stored matrix lacking json count was reported as %q", drift)
+	}
+	extra := strings.Replace(store, "latency: ['lt'],", "latency: ['lt', 'gt'],", 1)
+	if drift := storedMatrixDrift(r, model, extra); len(drift) != 1 {
+		t.Fatalf("a stored matrix keeping latency gt was reported as %q", drift)
+	}
+}
+
 func TestEmbeddedFilesExcludeTheTests(t *testing.T) {
 	err := fs.WalkDir(Files, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

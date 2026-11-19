@@ -242,16 +242,23 @@ func sample(typ, op string) assert.Assertion {
 }
 
 var (
-	opsBlock = regexp.MustCompile(`(?s)const opsByType = \{(.*?)\n\};`)
 	opsEntry = regexp.MustCompile(`(?m)^\s*(\w+): \[([^\]]*)\],?\s*$`)
 	opsName  = regexp.MustCompile(`'([^']*)'`)
 )
 
 func opsByType(t reporter, src string) map[string][]string {
 	t.Helper()
-	blocks := opsBlock.FindAllStringSubmatch(src, -1)
+	return matrix(t, "request-model.js", "opsByType", src)
+}
+
+// matrix reads one `const <name> = { type: ['op', ...], ... };` block out of
+// a source file.
+func matrix(t reporter, file, name, src string) map[string][]string {
+	t.Helper()
+	block := regexp.MustCompile(`(?s)const ` + regexp.QuoteMeta(name) + ` = \{(.*?)\n\};`)
+	blocks := block.FindAllStringSubmatch(src, -1)
 	if len(blocks) != 1 {
-		t.Fatalf("request-model.js: expected exactly one `const opsByType = {...};`, found %d - was it renamed or reshaped? Update this test with it", len(blocks))
+		t.Fatalf("%s: expected exactly one `const %s = {...};`, found %d - was it renamed or reshaped? Update this test with it", file, name, len(blocks))
 		return nil
 	}
 	body := blocks[0][1]
@@ -259,7 +266,7 @@ func opsByType(t reporter, src string) map[string][]string {
 	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
 		m := opsEntry.FindStringSubmatch(line)
 		if m == nil {
-			t.Fatalf("request-model.js opsByType: cannot read the line %q", strings.TrimSpace(line))
+			t.Fatalf("%s %s: cannot read the line %q", file, name, strings.TrimSpace(line))
 			return nil
 		}
 		var names []string
@@ -269,8 +276,72 @@ func opsByType(t reporter, src string) map[string][]string {
 		out[m[1]] = names
 	}
 	if len(out) == 0 {
-		t.Fatalf("request-model.js opsByType: no entries found")
+		t.Fatalf("%s %s: no entries found", file, name)
 	}
+	return out
+}
+
+// TestStoredRequestRulesMatchTheEditorAndTheServer holds storage.js's own
+// copy of the assertion matrix and of its three caps to the editor's and the
+// server's. storage.js rebuilds every request read back from the run setup
+// and saved collections, and drops an assertion whose operator its matrix
+// lacks: a copy behind the editor's would lose a stored check on reload with
+// nothing else failing. (It cannot import request-model.js, which imports it.)
+func TestStoredRequestRulesMatchTheEditorAndTheServer(t *testing.T) {
+	model := shipped(t, "js/request-model.js")
+	store := shipped(t, "js/storage.js")
+	for _, d := range storedMatrixDrift(t, model, store) {
+		t.Error(d)
+	}
+	cases := []struct {
+		name      string
+		got, want float64
+	}{
+		{"storage.js MaxStoredAssertions = sandbox.MaxAssertions",
+			number(t, "storage.js", store, `const MaxStoredAssertions = (\d+);`), sandbox.MaxAssertions},
+		{"storage.js MaxParamValue = sandbox.MaxParamValueLen",
+			number(t, "storage.js", store, `const MaxParamValue = (\d+);`), sandbox.MaxParamValueLen},
+		{"storage.js MaxName = sandbox.MaxNameLen",
+			number(t, "storage.js", store, `const MaxName = (\d+);`), sandbox.MaxNameLen},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s: frontend has %v, server has %v", c.name, c.got, c.want)
+		}
+	}
+}
+
+// storedMatrixDrift lists every way storage.js's assertionOps differs from
+// request-model.js's opsByType, which TestFrontendOperatorsMatchTheServer
+// holds to the server.
+func storedMatrixDrift(t reporter, model, store string) []string {
+	t.Helper()
+	editor := matrix(t, "request-model.js", "opsByType", model)
+	stored := matrix(t, "storage.js", "assertionOps", store)
+	var out []string
+	for typ, ops := range editor {
+		kept, ok := stored[typ]
+		if !ok {
+			out = append(out, fmt.Sprintf("storage.js assertionOps has no %q entry; a stored %s assertion is dropped on reload", typ, typ))
+			continue
+		}
+		for _, op := range ops {
+			if !slices.Contains(kept, op) {
+				out = append(out, fmt.Sprintf("storage.js assertionOps lacks %s %q, which the editor offers; it is dropped on reload", typ, op))
+			}
+		}
+		for _, op := range kept {
+			if !slices.Contains(ops, op) {
+				out = append(out, fmt.Sprintf("storage.js assertionOps keeps %s %q, which the editor does not offer", typ, op))
+			}
+		}
+	}
+	for typ := range stored {
+		if _, ok := editor[typ]; !ok {
+			out = append(out, fmt.Sprintf("storage.js assertionOps keeps type %q, which the editor does not offer", typ))
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 
