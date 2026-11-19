@@ -75,6 +75,8 @@ const Catalogs = {
     target: '',
   },
   noCollections: { collections: [], endpoints: [], target: 'example' },
+  // A collection whose requests are a nil slice marshals them as null.
+  nullRequests: { collections: [{ id: 'c3', name: 'Three', description: '', requests: null }], endpoints: null, target: '' },
 };
 
 const row = (extra = {}) => ({ index: 0, name: 'R', endpoint: 'search', query: '', status: 200, latency_ms: 1.5, size_bytes: 0, assertions: [outcome(true)], passed: true, skipped: false, body_truncated: false, ...extra });
@@ -104,6 +106,17 @@ const Reports = {
       slo: { p95_ms: 150, max_error_rate: 0.01, ladder_ms: [50, 150, 300], apdex_t_ms: 50, calibration_sequence: 'search-basics', calibration_date: '2026-08-22' },
       overall: { index: -1, name: '', requests: 1, ok: 1, errors: 0, aborted: 0, success_ratio: 1, requests_per_sec: 1, bytes: 10, latency: { min: 1, avg: 1, p50: 1, p90: 1, p95: 1, p99: 1, max: 1 }, sla: { under_50: 100, under_150: 100, under_300: 100 }, apdex: { score: 1, rating: 'Excellent', satisfied: 1, tolerating: 0, frustrated: 0 }, histogram: [{ label: '0-25', from: 0, to: 25, count: 1 }], status_counts: { 200: 1 }, error_kinds: {}, percentile_samples: 1 },
       per_request: [], overrun_ms: 0,
+    };
+    return r;
+  })(),
+  performancePerRequest: (() => {
+    const r = { ...reportBase, id: 'perf-3', mode: 'performance', status: 'completed' };
+    const stats = (index, extra = {}) => ({ index, name: index < 0 ? '' : `R${index}`, requests: 2, ok: 2, errors: 0, aborted: 0, success_ratio: 100, requests_per_sec: 2, bytes: 20, latency: { min: 1, avg: 1, p50: 1, p90: 1, p95: 1, p99: 1, max: 1 }, sla: { under_50: 100, under_150: 100, under_300: 100 }, apdex: { score: 1, rating: 'Excellent', satisfied: 2, tolerating: 0, frustrated: 0 }, histogram: [{ label: '0-25', from: 0, to: 25, count: 2 }], status_counts: { 200: 2 }, error_kinds: null, percentile_samples: 2, ...extra });
+    r.performance = {
+      verdict: 'PASS', verdict_reasons: [],
+      slo: { p95_ms: 150, max_error_rate: 0.01, ladder_ms: [50, 150, 300], apdex_t_ms: 50, calibration_sequence: 'search-basics', calibration_date: '2026-08-22' },
+      overall: stats(-1),
+      per_request: [stats(0), stats(1, { histogram: null, status_counts: null })], overrun_ms: 3,
     };
     return r;
   })(),

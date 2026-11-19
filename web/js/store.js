@@ -90,6 +90,21 @@ function notify() {
   }
 }
 
+// renderAll is the page's one subscriber, pane by pane: each render is guarded
+// the way notify guards a subscriber, so one pane that cannot draw costs only
+// that pane, and whatever the caller does after it (the live sync) still runs.
+// It lives here rather than in main.js because main.js boots on import, and
+// the guard is what the tests must be able to reach.
+export function renderAll(renders, state) {
+  for (const fn of renders) {
+    try {
+      fn(state);
+    } catch (err) {
+      console.error('render failed', err);
+    }
+  }
+}
+
 // deepCopy is the one place a catalog object becomes an editable one. The
 // curated collections are handed out by the server as a deep copy already;
 // this keeps the same guarantee inside the page, where the same object would

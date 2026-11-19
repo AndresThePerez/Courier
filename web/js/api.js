@@ -86,12 +86,13 @@ function isCatalogRequest(r) {
     && nullableListOf(isRecord)(r.assertions);
 }
 
+// A collection with no requests is a nil slice on the server, written as null.
 function isCollection(c) {
   return isRecord(c)
     && isText(c.id)
     && isText(c.name)
     && absentOr(isText)(c.description)
-    && listOf(isCatalogRequest)(c.requests);
+    && (c.requests === null || listOf(isCatalogRequest)(c.requests));
 }
 
 // An endpoint's method is not checked here: the badge reads only a method
@@ -127,6 +128,29 @@ export function isRow(r) {
 
 const isNullableRecord = (v) => v === undefined || v === null || isRecord(v);
 
+// isStats is one scope of a performance report (internal/report Stats): the
+// dashboard reads its blocks as records and its histogram item by item.
+function isStats(s) {
+  return isRecord(s)
+    && isNullableRecord(s.latency)
+    && isNullableRecord(s.sla)
+    && isNullableRecord(s.apdex)
+    && nullableListOf(isRecord)(s.histogram)
+    && isNullableRecord(s.status_counts)
+    && isNullableRecord(s.error_kinds);
+}
+
+// isPerformance is a report's performance block. Every list in it is a Go
+// slice, so null where nothing was recorded.
+function isPerformance(p) {
+  return isRecord(p)
+    && absentOr(isText)(p.verdict)
+    && nullableListOf(isText)(p.verdict_reasons)
+    && isNullableRecord(p.slo)
+    && (p.overall === undefined || p.overall === null || isStats(p.overall))
+    && nullableListOf(isStats)(p.per_request);
+}
+
 // isReport is a run's report, finished or not, as GET /api/runs/{id} serves
 // it.
 export function isReport(rep) {
@@ -140,7 +164,7 @@ export function isReport(rep) {
     && nullableListOf(isRecord)(rep.entries)
     && isNullableRecord(rep.functional)
     && (!rep.functional || (nullableListOf(isRow)(rep.functional.results) && absentOr(isText)(rep.functional.verdict)))
-    && isNullableRecord(rep.performance);
+    && (rep.performance === undefined || rep.performance === null || isPerformance(rep.performance));
 }
 
 // isSendResult is Send's 200. A result always carries the target's status,
@@ -193,8 +217,15 @@ async function getJSON(url) {
   return { ok: true, body: res.body };
 }
 
-export function getCollections() {
-  return getJSON('/api/collections');
+// getCollections answers the catalog with a collection's null requests read
+// as the empty list they stand for, so nothing that lists a collection has to
+// know how Go writes an empty slice.
+export async function getCollections() {
+  const res = await getJSON('/api/collections');
+  if (res.ok && isCatalog(res.body)) {
+    res.body.collections = res.body.collections.map((c) => (c.requests === null ? { ...c, requests: [] } : c));
+  }
+  return res;
 }
 
 export function getStatus() {

@@ -2,7 +2,7 @@
 // tabs and the render modules, and hands the rest to live.js: the catalog, the
 // one status poll the whole page shares, and the run being followed.
 
-import { get, set, subscribe } from './store.js';
+import { get, set, subscribe, renderAll } from './store.js';
 import { byId } from './dom.js';
 import * as api from './api.js';
 import { createLive } from './live.js';
@@ -54,12 +54,7 @@ function renderTopbar(state) {
 const page = createLive({ api, get, set, showTab });
 
 function render(state) {
-  renderTabs(state);
-  renderTopbar(state);
-  sidebar.render(state);
-  editor.render(state);
-  runner.render(state);
-  results.render(state);
+  renderAll([renderTabs, renderTopbar, sidebar.render, editor.render, runner.render, results.render], state);
   page.scheduleSync();
 }
 

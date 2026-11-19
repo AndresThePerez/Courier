@@ -534,19 +534,31 @@ function rungsOf(sla, slo) {
   return keyed.length > 0 ? [...new Set(keyed)].sort((x, y) => x - y) : [50, 150, DefaultGateMs * 2];
 }
 
-// Each rung's goal is RungGoalPct of responses under it. A rung that met it
-// is a pass. One that missed it is a failure at the verdict's gate and above
-// it; below the gate it is tighter than anything the run is judged by, so it
-// keeps the plain fill, and says in words that it missed.
+// The server judges a run by its p95 gate alone; marking each rung met at
+// RungGoalPct is this page's convention, and the server's shares count the
+// responses at or under a rung. A rung that met the mark is a pass. One that
+// missed it is a failure at the verdict's gate and above it; below the gate it
+// is tighter than anything the run is judged by, so it keeps the plain fill,
+// and says in words that it missed. The note names the gate only when the
+// report states one, so it never quotes a number the report did not send.
 function renderLadder(sla, slo) {
   const gate = gateOf(slo);
+  const stated = slo && typeof slo === 'object' && positive(slo.p95_ms);
+  const rung = stated ? `the ${msText(gate)}ms rung` : 'the rung at the verdict\'s p95 gate';
   replace(byId('sla-ladder'), [
     ...rungsOf(sla, slo).map((ms) => ladderBar(ms, sla[`under_${msText(ms)}`], gate)),
     el('p', {
       class: 'note',
-      text: `Each rung's goal is ${RungGoalPct}% of responses under it. ${msText(gate)}ms is the verdict's p95 gate: a rung there or above it that misses its goal is drawn as a failure, and one below it only describes the run.`,
+      text: `This page marks a rung's goal met when at least ${RungGoalPct}% of responses took that long or less.`
+        + ` Only ${rung} corresponds to the verdict's p95 gate: a rung at or above it that misses its goal is drawn as a failure, and one below it only describes the run.`,
     }),
   ]);
+}
+
+// shareText prints a share rounded down to one decimal, so a share under the
+// goal never reads as the goal, and one under 100 never reads as 100.
+function shareText(pct) {
+  return `${(Math.floor(pct * 10 + 1e-9) / 10).toFixed(1)}%`;
 }
 
 function ladderBar(ms, pct, gate) {
@@ -557,10 +569,10 @@ function ladderBar(ms, pct, gate) {
   const label = `under ${msText(ms)}ms`;
   const fill = el('div', { class: `bar-fill${tone}` });
   fill.style.width = `${known ? clampPct(pct) : 0}%`;
-  return el('div', { class: 'bar-row', attrs: { 'aria-label': `${label}: ${known ? `${pct.toFixed(1)}%` : 'no share'}, ${goal}` } }, [
+  return el('div', { class: 'bar-row', attrs: { 'aria-label': `${label}: ${known ? shareText(pct) : 'no share'}, ${goal}` } }, [
     el('span', { class: 'bar-label', text: label }),
     el('div', { class: 'bar-track' }, [fill]),
-    el('span', { class: 'bar-value mono', text: known ? `${pct.toFixed(1)}%` : '-' }),
+    el('span', { class: 'bar-value mono', text: known ? shareText(pct) : '-' }),
     el('span', { class: 'bar-goal', text: goal }),
   ]);
 }

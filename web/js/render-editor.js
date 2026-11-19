@@ -13,6 +13,7 @@ import { el, replace, byId, fmtMs, fmtBytes } from './dom.js';
 import { jsonView } from './json-view.js';
 import * as api from './api.js';
 import * as workspace from './workspace.js';
+import { methodBadge } from './render-runner.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
 // way; matching it here means a visitor meets the cap as a disabled button and
@@ -568,9 +569,13 @@ function changeAssertionType(index, type) {
 // jarring at best and drops a keystroke at worst — the first edit of a curated
 // request rebuilds both tables, because forking it changes its id. These two
 // carry the focused element and its caret across a rebuild by a stable key.
+// Only the editor's own keys are read: focus elsewhere on the page is not this
+// render's to move, and a key is compared as a string, never put into a
+// selector, because keys elsewhere on the page carry ids holding any character.
 function captureFocus() {
   const node = document.activeElement;
   if (!node || !node.dataset || !node.dataset.focusKey) return null;
+  if (!byId('editor-form').contains(node)) return null;
   const out = { key: node.dataset.focusKey, start: null, end: null };
   try {
     out.start = node.selectionStart;
@@ -583,7 +588,7 @@ function captureFocus() {
 
 function restoreFocus(focus) {
   if (!focus) return;
-  const node = document.querySelector(`[data-focus-key="${focus.key}"]`);
+  const node = [...byId('editor-form').querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === focus.key);
   if (!node || node === document.activeElement) return;
   node.focus();
   if (focus.start === null || focus.start === undefined) return;
@@ -653,10 +658,13 @@ function renderSend(state) {
   status.className = `send-status ${r.passed ? 'pass' : 'fail'}`;
 
   // The server hands back the endpoint id and an already-`?`-prefixed query
-  // string; the catalog is what turns the id back into the path it resolved to.
+  // string; the catalog is what turns the id back into the method and path it
+  // resolved to. The method is the badge's own reading of the catalog, so an
+  // endpoint the page does not know shows the same placeholder here.
   const ep = endpointById(r.endpoint);
+  const method = methodBadge(state.endpoints, r.endpoint).textContent;
   replace(box, [
-    el('p', { class: 'note mono', text: `GET ${ep ? ep.path : r.endpoint}${r.query || ''}` }),
+    el('p', { class: 'note mono', text: `${method} ${ep && typeof ep.path === 'string' ? ep.path : r.endpoint}${r.query || ''}` }),
     r.error && el('p', {
       class: 'note fail',
       text: `${r.error_kind ? `${r.error_kind}: ` : ''}${r.error}`,

@@ -8,7 +8,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { resetBrowser, fetchStub, eventSources, flush, listenerErrors } from './shim.mjs';
-import { resetState, get, set, subscribe } from '../js/store.js';
+import { resetState, get, set, subscribe, renderAll } from '../js/store.js';
 import * as api from '../js/api.js';
 import { createLive } from '../js/live.js';
 import * as sidebar from '../js/render-sidebar.js';
@@ -138,10 +138,7 @@ async function bootPage(t, server) {
     ...page.hooks.sidebar,
   });
   unsubscribe = subscribe((state) => {
-    sidebar.render(state);
-    editor.render(state);
-    runner.render(state);
-    results.render(state);
+    renderAll([sidebar.render, editor.render, runner.render, results.render], state);
     page.scheduleSync();
   });
   set({ activeTab: 'runner' });
