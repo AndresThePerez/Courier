@@ -64,7 +64,10 @@ for (const [what, answer] of [
   ['that never reached the server', new TypeError('Failed to fetch')],
   ['answered with a server error', { status: 500, body: { error: 'boom' } }],
 ]) {
-  test(`the cut sentence goes with the next Start ${what}`, async () => {
+  test(`the cut sentence goes with the next Start ${what}`, async (t) => {
+    // A 409 with a cooldown starts the runner's one-second countdown; under
+    // mocked timers it ends with the case instead of keeping the process up.
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
     runner.add(req(1));
     await cutRun();
     await start(answer);
