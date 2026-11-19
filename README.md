@@ -189,9 +189,10 @@ Server-enforced regardless of client input; structural violations are **rejected
 | Max assertions per request | 20 (rejected) |
 | Functional `delay_ms` | ≤ 1000 (clamped) |
 | Param value length | ≤ 500 chars (truncated, not rejected) |
-| Assertion string value / JSON path | ≤ 500 chars (rejected) |
+| Assertion string value / JSON path | ≤ 500 chars (rejected); a value is a number, string, boolean or null, never an object or array (rejected) |
 | Param/request name length | ≤ 120 chars (truncated) |
 | API request payload | ≤ 256 KiB (rejected) |
+| Request bodies checked at once | 2, with up to 16 more waiting; beyond that `503` with `Retry-After` |
 | Response body read for assertions | ≤ 1 MiB (truncated) |
 | Response body stored on a run result | ≤ 16 KiB preview |
 | Response body kept by the editor's **Send** | ≤ 256 KiB — the one response a visitor is actively reading is not cut to the preview size |

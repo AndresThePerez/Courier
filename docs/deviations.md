@@ -1325,3 +1325,55 @@ green until a `POST` endpoint exists. No colour is new: both hues are existing t
 non-text method, an endpoint id with quotes and brackets, and an endpoint not in the
 catalog, in all three lists; every list picking the method up once the catalog arrives; no
 list writing a method of its own).
+
+## N43 — Request bodies are checked a few at a time; an assertion value is one scalar
+
+**What the server did:** `POST /api/send` and `POST /api/runs` read, checked and decoded a
+body before the one-send limit and the one-run lock, for any number of visitors at once.
+Decoding a body at the 256 KiB cap builds tens of thousands of values from it, so enough
+such posts arriving together could take the process past its container's memory, and every
+visitor with it. Separately, an assertion's `value` was bounded only when it was a string:
+an object or an array on a `json exists` assertion, which ignores its value, was accepted,
+kept, and stored in the run's report, its replay log and its result frames.
+
+**What it does now:**
+
+- At most `MaxBodyChecks` = 2 bodies are checked and decoded at once, across both routes.
+  A body is read in full, under the size cap as before, before it takes a slot, so an
+  upload still arriving holds none. Up to `MaxBodyWaiters` = 16 bodies already read wait
+  for a slot, and a waiter whose client goes away stops waiting. A body that arrives with
+  16 already waiting is answered at once, unchecked, with `503`, a `Retry-After: 1` header,
+  the security headers and the one error shape:
+  `{"error":"the server is busy checking other requests; try again in a moment"}`.
+  Before, these routes never answered `503`. The page shows the sentence after
+  `Refused - ` on Send and after `Could not start the run - ` on Start. The `400`, `413`
+  and `415` answers are unchanged, and `413` and `415` are given without a slot. The
+  constants and the memory they bound are stated beside them in `internal/api/server.go`.
+- An assertion `value` that is an object or an array is refused by the body check, for
+  every assertion type and operator, with a `400` naming the value:
+  `{"error":"expected a number, a string, true, false or null, got an object","field":"sequence[1].assertions[0].value"}`
+  (`assertions[j].value` on Send; `an array` for an array). The value is walked before it
+  is refused, so a fault inside it, such as a duplicate key, is still named where it is.
+  Before, `json exists` accepted it with `200` or `202`, and every other type and operator
+  refused it later with a `400` at `assertions[j]` (for example "a status assertion needs a
+  numeric value, got an object"). A number, a string, `true`, `false` and `null` pass the
+  check exactly as before, and mean what they meant: only `json exists` accepts a boolean
+  or `null`.
+- The body check builds each payload type's field map once and shares it, rather than once
+  for every JSON object in the body.
+
+**Proof:** `internal/api/body_gate_test.go`: `TestNoMoreThanMaxBodyChecksBodiesAreCheckedAtOnce`
+(64 posts at the cap to both routes: never more than 2 inside, 16 waiting, the other 46
+answered `503`, nothing left behind), `TestABodyBeyondMaxBodyWaitersIsAnswered503WithoutBeingChecked`
+(the `503`, its header, body and security headers, a malformed body unchecked, `413` and
+`415` with the queue full), `TestAStalledUploadHoldsNoCheckSlot`,
+`TestAWaiterWhoseClientLeavesStopsWaiting`; `internal/api/assertion_value_test.go`:
+`TestAnAssertionValueThatIsAnObjectOrArrayIsRefused`,
+`TestScalarAssertionValuesStillPassTheShapeCheck`,
+`TestBooleanAndNullAssertionValuesKeepTheirMeaning`,
+`TestEveryCuratedRequestPassesTheBodyCheck`; `internal/api/decode_bounds_test.go`:
+`TestDecodingAWideBodyStaysLinearInItsSize` (the per-check allocation the bound is reasoned
+from), `TestARefusedAssertionValueCostsAboutItsSize`,
+`TestTheShapeCheckBuildsEachTypesFieldMapOnce`, `TestFieldMapsAreSharedSafelyOnFirstUse`;
+`internal/api/bench_test.go`: `BenchmarkCheckBodyManyObjects`. The existing tests of
+parallel starts and sends pass unchanged.
