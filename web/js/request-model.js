@@ -11,7 +11,7 @@
 // the page invented would be a request the visitor cannot send for no reason
 // the server would give.
 
-import { requestOf, MaxParamValue, MaxParamWords, MaxName } from './storage.js';
+import { requestOf, MaxParamValue, MaxParamWords, MaxName, cutParamValue } from './storage.js';
 
 // MaxAssertionText mirrors sandbox.MaxAssertionTextLen, the bound on an
 // assertion's JSON path and string value: counted in characters (runes), and
@@ -358,6 +358,21 @@ export function cutText(list, requestLabel = null) {
     said.push(m && who ? `${who}, ${cutField(m[2])}` : cutField(field));
   }
   return said.length > 0 ? `Cut to fit: ${said.join('; ')}.` : '';
+}
+
+// paramCutNote says which parameter values the server will cut when they are
+// sent, or '' when every one fits. It asks cutParamValue, the page's copy of
+// the server's cut, rather than counting by a second rule.
+export function paramCutNote(params) {
+  if (params === null || typeof params !== 'object' || Array.isArray(params)) return '';
+  const keys = Object.entries(params)
+    .filter(([, v]) => typeof v === 'string' && cutParamValue(v) !== v)
+    .map(([k]) => clipped(k));
+  if (keys.length === 0) return '';
+  const limits = `longer than ${MaxParamValue} characters or ${MaxParamWords} words`;
+  if (keys.length === 1) return `Parameter ${keys[0]} is ${limits} - it will be cut to fit when sent.`;
+  const named = `${keys.slice(0, -1).join(', ')} and ${keys[keys.length - 1]}`;
+  return `Parameters ${named} are ${limits} - they will be cut to fit when sent.`;
 }
 
 // ---------------------------------------------------------------- run settings

@@ -92,8 +92,6 @@ func TestFrontendLimitsMatchTheServer(t *testing.T) {
 			number(t, "render-runner.js", runner, `const MaxSequence = (\d+);`), sandbox.MaxSequence},
 		{"render-editor.js MaxAssertions = sandbox.MaxAssertions",
 			number(t, "render-editor.js", editor, `const MaxAssertions = (\d+);`), sandbox.MaxAssertions},
-		{"render-editor.js param value maxlength = sandbox.MaxParamValueLen",
-			number(t, "render-editor.js", editor, `maxlength: (\d+),`), sandbox.MaxParamValueLen},
 		{"index.html #editor-name maxlength = sandbox.MaxNameLen",
 			number(t, "index.html", page, `<input id="editor-name"[^>]*\smaxlength="(\d+)"`), sandbox.MaxNameLen},
 		{"store.js default concurrency = sandbox.DefaultConcurrency",
@@ -114,6 +112,16 @@ func TestFrontendLimitsMatchTheServer(t *testing.T) {
 			t.Errorf("%s: frontend has %v, server has %v", c.name, c.got, c.want)
 		}
 	}
+
+	// The parameter value box has no maxlength of its own: the only limit the
+	// page puts on a value is its copy of the server's cut, cutParamValue
+	// (storage.js MaxParamValue and MaxParamWords, held to the server in
+	// TestStoredRequestRulesMatchTheEditorAndTheServer), which the editor's note asks.
+	if strings.Contains(editor, "maxlength") {
+		t.Error("render-editor.js sets a maxlength; the parameter value box is limited by the cut alone")
+	}
+	numbers(t, "render-editor.js", editor, `paramCutNote\(draft\.params\)`)
+	numbers(t, "request-model.js", model, `cutParamValue\(v\) !== v`)
 }
 
 // TestFrontendClampsMatchTheServer checks render-runner.js's Limits table. The

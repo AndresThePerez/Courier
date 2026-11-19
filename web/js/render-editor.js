@@ -16,7 +16,7 @@ import * as workspace from './workspace.js';
 import * as runner from './render-runner.js';
 import {
   opsByType, valueKind, coerceValue, textOf, requestPayload, requestProblem, assertionProblem, whereIn, refusedText,
-  capitalized, sameRequest, cutText,
+  capitalized, sameRequest, cutText, paramCutNote,
 } from './request-model.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
@@ -493,6 +493,15 @@ function renderNotes(draft) {
   pn.hidden = !paramNote;
   if (pn.textContent !== paramNote) pn.textContent = paramNote;
 
+  // The value box sets no length limit: a browser counts one in UTF-16 units,
+  // and it would freeze a stored value already over it. The server cuts
+  // instead, and this says so before Send. The text changes only when a value
+  // crosses the limit, so the note is announced once per crossing.
+  const cn = byId('param-cut-note');
+  const cutNote = paramCutNote(draft.params);
+  cn.hidden = !cutNote;
+  if (cn.textContent !== cutNote) cn.textContent = cutNote;
+
   const an = byId('assertion-note');
   const capped = assertionsOf(draft).length >= MaxAssertions
     ? `${MaxAssertions} assertions is the cap - the server refuses a request carrying more.`
@@ -557,7 +566,6 @@ function paramRow(key, value, index, allowed, used) {
       type: 'text',
       attrs: {
         value: textOf(value),
-        maxlength: 256,
         autocomplete: 'off',
         spellcheck: 'false',
         placeholder: 'value',
