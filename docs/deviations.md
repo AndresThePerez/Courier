@@ -1702,8 +1702,12 @@ but the last byte of a 256 KiB body got the process killed.
   deadline per request, set on the connection with `http.NewResponseController` when the
   read of a body begins and cleared when it ends. The rule against a server-wide write or
   idle timeout still stands: either would cut a live stream, or a Send waiting up to 10s on
-  a slow target, at the deadline. This one covers the body alone and never reaches the
-  handler's own work, a stream, or the next request on the connection.
+  a slow target, at the deadline. This one ends a request whose declared body has not
+  arrived in full by the deadline, on any route, a stream's included: it is answered, or
+  its stream ended, at the deadline. A request that declares no body is never touched, and
+  one whose declared body has arrived in full is untouched from that moment, since net/http
+  clears the read deadline when a body reaches its end; so the handler's own work, a stream
+  and the next request on the connection are out of its reach once the body is in.
 - A request that declares a body on any route gets the same deadline from the moment it
   arrives, whether or not its handler reads the body. A handler that answers without
   reading it (the `415`, a `404` or `405` under `/api`, the mux's `405` for a verb a page
@@ -1768,7 +1772,8 @@ deadline answers), `TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadli
 128 places, none left), `TestThePlacesAndTheGateHoldTogetherUnderAMixedFlood`;
 `internal/api/unread_body_test.go`: `TestAnAnswerThatReadsNoBodyIsNotHeldByOneThatNeverArrives`
 (every route that answers without reading, with a `Content-Length` and chunked),
-`TestA415WithItsWholeBodyIsAnsweredAsBefore`;
+`TestA415WithItsWholeBodyIsAnsweredAsBefore`; `internal/api/declared_body_edge_test.go`:
+`TestAStreamWithADeclaredBodyIsCutOnlyWhenThatBodyNeverArrives`;
 `internal/api/body_reads_docs_test.go`: `TestTheBodyReadBoundsMatchTheDocuments`;
 `internal/api/compose_limits_test.go`: `TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit`.
 The existing tests of the gate and of bursts of 200 and 1,000 small posts pass unchanged,

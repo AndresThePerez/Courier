@@ -69,7 +69,8 @@ func main() {
 		// thing this design cannot tolerate. Slow-header attacks are bounded
 		// here; a declared body that is slow to arrive, whether the handler
 		// reads it or answers without it, is bounded per request by
-		// api.BodyReadDeadline, which covers the body alone.
+		// api.BodyReadDeadline, which never applies to a request that declares
+		// no body and stops applying once a declared body has arrived in full.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

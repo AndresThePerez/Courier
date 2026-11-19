@@ -387,9 +387,12 @@ stop every POST. The upload is bounded apart from the check: bodies are read
 answered `503` at once, its body unread, and a body that does not arrive in time is
 answered `408`. Here too the places are not shared between clients, so a client that
 keeps all 128 filled with stalled uploads turns every other POST away for as long as it
-keeps them, instead of getting the process killed. The deadline covers the read of the
-body alone, set when the read begins and cleared when it ends, so `ReadHeaderTimeout` is
-still the only server-wide timeout and a stream or a long Send never meets either. This
+keeps them, instead of getting the process killed. The deadline applies to a request that
+declares a body until that body has arrived in full: one that never finishes arriving is
+answered, or its stream ended, at the deadline, on any route. A request that declares no
+body is never touched, and once a declared body is in, the deadline is cleared, so
+`ReadHeaderTimeout` is still the only server-wide timeout and the handler's own work, a
+stream or a long Send never meets it after the body. This
 bounds what the checks in flight and the reads allocate; it leaves out bodies a client
 has sent that the kernel holds unread, which scale with connections, and the decoded
 value a request keeps after its check. An assertion's value is held to one scalar

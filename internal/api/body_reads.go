@@ -46,10 +46,15 @@ const (
 	// connection when a request that declares a body arrives
 	// (boundDeclaredBodies), set again when decodeJSON's read begins, and
 	// cleared when that read ends; net/http also clears it when a body
-	// reaches its end and sets it afresh for each request. So it never reaches
-	// the handler's own work after the body, a stream or the connection's next
-	// request: a write or idle timeout on the server would cut live streams
-	// and long Sends, and this is neither
+	// reaches its end and sets it afresh for each request. A request whose
+	// declared body has not arrived in full by the deadline is answered, or
+	// its stream ended, at the deadline, on any route, a stream's included
+	// (TestAStreamWithADeclaredBodyIsCutOnlyWhenThatBodyNeverArrives). A
+	// request that declares no body is never touched, and one whose declared
+	// body has arrived in full is untouched from that moment, so the handler's
+	// own work, a stream and the connection's next request are out of its
+	// reach once the body is in: a write or idle timeout on the server would
+	// cut live streams and long Sends, and this does neither
 	// (TestTheBodyReadDeadlineDoesNotReachTheHandlersOwnWork,
 	// TestAStreamOutlivesTheBodyReadDeadline,
 	// TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadline). Ten
