@@ -16,7 +16,7 @@ import * as workspace from './workspace.js';
 import * as runner from './render-runner.js';
 import {
   opsByType, valueKind, coerceValue, textOf, requestPayload, requestProblem, assertionProblem, whereIn, refusedText,
-  capitalized, sameRequest, cutText, paramCutNote,
+  capitalized, sameRequest, cutText, paramCutNote, unknownTypeNote,
 } from './request-model.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
@@ -643,6 +643,19 @@ function assertionRow(a, index) {
   }, assertionTypes.map((t) => el('option', { text: t, attrs: { value: t, selected: t === a.type } })));
   typeSelect.value = textOf(a.type);
 
+  // A type the page does not know (a stored assertion edited by hand) leaves
+  // the select blank, and Send refuses the row; the note says why before
+  // then. The select keeps the note's id in data-note, so a refusal marked on
+  // it and later cleared gives the description back.
+  const typeNoteId = `assert-type-note-${index}`;
+  const typeNote = opsOf(a.type).length === 0
+    ? el('p', { class: 'field-note', text: unknownTypeNote(a.type), attrs: { id: typeNoteId } })
+    : null;
+  if (typeNote) {
+    typeSelect.setAttribute('aria-describedby', typeNoteId);
+    typeSelect.dataset.note = typeNoteId;
+  }
+
   const opSelect = el('select', {
     class: 'assert-op',
     attrs: { name: `assert-op-${index}`, 'data-focus-key': `assert-op:${index}`, 'aria-label': 'Operator' },
@@ -704,6 +717,8 @@ function assertionRow(a, index) {
     title: 'Remove this assertion',
     on: { click: () => edit((d) => { d.assertions = d.assertions.filter((_, i) => i !== index); }) },
   }));
+
+  if (typeNote) children.push(typeNote);
 
   return el('div', { class: 'row assert-row' }, children);
 }
@@ -956,7 +971,8 @@ function renderMark(state, draft) {
     for (const control of row.querySelectorAll('[aria-invalid]')) {
       if (control !== target) {
         control.removeAttribute('aria-invalid');
-        control.removeAttribute('aria-describedby');
+        if (control.dataset.note) control.setAttribute('aria-describedby', control.dataset.note);
+        else control.removeAttribute('aria-describedby');
       }
     }
     for (const old of row.querySelectorAll('.field-error')) {

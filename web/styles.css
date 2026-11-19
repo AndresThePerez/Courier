@@ -270,7 +270,8 @@ option:disabled { color: var(--muted); }
 /* A control the server (or the same checks, run first) refused, and the
    sentence beside it that says why. */
 input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--fail); }
-.field-error { flex: 1 0 100%; margin: 0; font-size: 11px; overflow-wrap: anywhere; }
+.field-error, .field-note { flex: 1 0 100%; margin: 0; font-size: 11px; overflow-wrap: anywhere; }
+.field-note { color: var(--warn); }
 
 .editor-actions {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;

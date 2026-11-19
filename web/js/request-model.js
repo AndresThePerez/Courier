@@ -360,6 +360,16 @@ export function cutText(list, requestLabel = null) {
   return said.length > 0 ? `Cut to fit: ${said.join('; ')}.` : '';
 }
 
+// unknownTypeNote is the note beside an assertion whose type the page does
+// not know, naming the type as text, clipped like any other text the page
+// did not write.
+export function unknownTypeNote(type) {
+  const name = textOf(type);
+  return name === ''
+    ? 'Unknown assertion type - choose one of the listed types.'
+    : `Unknown assertion type "${clipped(name)}" - choose one of the listed types.`;
+}
+
 // paramCutNote says which parameter values the server will cut when they are
 // sent, or '' when every one fits. It asks cutParamValue, the page's copy of
 // the server's cut, rather than counting by a second rule.
