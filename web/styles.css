@@ -143,7 +143,9 @@ html, body {
   border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .req-open:hover { background: var(--line); }
-.req-open.is-selected { background: var(--line); color: var(--accent); }
+/* The accent on the darkest surface reads at 7:1, where on --line it read at
+   2:1; the inset bar marks the row without leaning on the colour alone. */
+.req-open.is-selected { background: var(--bg); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
 .method { color: var(--muted); font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
 /* Coloured by method from the endpoint catalog: GET on the pass hue, POST on
    the warn hue, anything else, and an endpoint the page does not know, muted. */
