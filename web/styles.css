@@ -674,7 +674,7 @@ code, .mono { font-family: var(--mono); }
   #target-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Nothing a finger presses is under 24 by 24px (WCAG 2.5.8). */
   .btn-mini, .link-btn, #sidebar-toggle { min-height: 24px; min-width: 24px; }
-  .req-open, .collection > summary, .res-head { min-height: 24px; }
+  .req-open, .collection > summary, .res-head, .jv-summary { min-height: 24px; }
   input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; flex: 0 0 auto; }
   /* The panel is the main pane's one scroll box: a table or a response body
      that would scroll inside it wraps instead. */
