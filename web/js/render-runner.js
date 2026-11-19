@@ -16,7 +16,9 @@ import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as api from './api.js';
 import { createRunConfig, createSavedCollections, SETUP_REFUSED } from './run-config.js';
 import { WRITE_REFUSED } from './workspace.js';
-import { requestPayload, runPayload, runProblem, runField, refusedText, capitalized, clampSetting } from './request-model.js';
+import {
+  requestPayload, runPayload, runProblem, runField, refusedText, capitalized, clampSetting, isQueueable,
+} from './request-model.js';
 
 // MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
 // enforces them either way; matching them here means a visitor meets a cap as a
@@ -91,7 +93,8 @@ const KneePoints = [
 
 // refresh / showTab are wired by main.js, which owns the status poll and the
 // tab routing. Reaching into main.js from here would be an import cycle.
-let hooks = { refresh: async () => {}, showTab: () => {}, watch: () => {}, over: () => false };
+// edit opens a queued entry in the editor, by its key.
+let hooks = { refresh: async () => {}, showTab: () => {}, watch: () => {}, over: () => false, edit: () => {} };
 
 // Module-local render memory and notes, the same arrangement render-editor.js
 // uses: none of this is application state, it is what this module has last
@@ -225,9 +228,34 @@ function nameOf(thing, fallback) {
 
 const capReached = (name) => `Could not add "${name}" - the run already holds ${MaxSequence} requests, the cap.`;
 
+// queueable answers whether a request may join the run: one the server would
+// refuse is never queued, so the run's note never has to name a row the page
+// let in knowing it was wrong.
+function queueable(request) {
+  try {
+    return isQueueable(request);
+  } catch (error) {
+    console.warn('queued request not checked', error);
+    return false;
+  }
+}
+
+// refuseAdd says, once and in both places a press is answered, that nothing
+// was added and why.
+function refuseAdd(name, count) {
+  const said = `"${name}" has an invalid assertion - fix it in the editor before queuing it.`;
+  sequenceNote = said;
+  sayAdded(said, count);
+  render(get());
+}
+
 // add is main.js's sidebar hook for the per-request `+` button.
 export function add(request) {
   const list = get().sequence;
+  if (!queueable(request)) {
+    refuseAdd(nameOf(request, 'that request'), list.length);
+    return;
+  }
   if (list.length >= MaxSequence) {
     sequenceNote = `${MaxSequence} requests is the cap - remove one before adding another.`;
     sayAdded(capReached(nameOf(request, 'that request')), list.length);
@@ -241,11 +269,18 @@ export function add(request) {
 
 // addAll is the "Add all to run" hook. A collection that does not fit is added
 // as far as it goes and the note says how far: silently dropping the tail, or
-// refusing the whole collection over one request, would both be worse than
-// saying what happened.
+// refusing the whole collection over the cap, would both be worse than saying
+// what happened. A collection holding a request the server would refuse is
+// another matter: adding the rest would queue a run other than the one the
+// collection describes, so none of it is added, and the note names the one.
 export function addAll(collection) {
   const list = get().sequence;
   const requests = (collection && collection.requests) || [];
+  const invalid = requests.find((r) => !queueable(r));
+  if (invalid) {
+    refuseAdd(nameOf(invalid, 'a request'), list.length);
+    return;
+  }
   const taken = requests.slice(0, Math.max(MaxSequence - list.length, 0));
 
   const name = nameOf(collection, 'that collection');
@@ -266,6 +301,29 @@ export function addAll(collection) {
     ? `Added ${taken.length} of the ${requests.length} requests in "${name}" to the run - ${total} queued, the cap.`
     : `Added the ${taken.length} request${taken.length === 1 ? '' : 's'} in "${name}" to the run - ${total} queued.`, total);
   setSetup({ sequence: [...list, ...taken.map((r) => entryFor(r))] });
+}
+
+// queuedEntry is the entry a key names, or null.
+export function queuedEntry(key) {
+  return get().sequence.find((e) => e.key === key) || null;
+}
+
+// queuedPosition is the 1-based row an entry is in now, or 0 when it is gone.
+export function queuedPosition(key) {
+  return get().sequence.findIndex((e) => e.key === key) + 1;
+}
+
+// repoint replaces the request one queued entry holds, keeping its key, its
+// position and whether it is checked: the editor's Save of a request opened
+// from that row, and the copy a curated request is forked into. A refusal of
+// that entry goes with a fix (fixed), and stays across a fork, which changes
+// nothing the server would read. Answers whether the entry was still there.
+export function repoint(key, request, { fixed = true } = {}) {
+  const list = get().sequence;
+  if (!list.some((e) => e.key === key)) return false;
+  if (fixed && refusal && refusal.key === key) refusal = null;
+  setSetup({ sequence: list.map((e) => (e.key === key ? { ...e, request: deepCopy(request) } : e)) });
+  return true;
 }
 
 // move is the whole reordering story: drag-and-drop is deliberately absent, and
@@ -824,6 +882,14 @@ function sequenceRow(entry, index, total, endpoints) {
       assertionChips(r.assertions),
       refused && el('span', { class: 'seq-error fail', text: refusalIn(refused), attrs: { id: errorId } }),
     ]),
+    el('button', {
+      class: 'btn btn-mini',
+      type: 'button',
+      text: 'Edit',
+      title: 'Open this queued request in the editor',
+      attrs: { 'aria-label': `Edit ${r.name || r.id}`, 'data-focus-key': `seq-edit:${entry.key}` },
+      on: { click: () => hooks.edit(entry.key) },
+    }),
     arrow('↑', `Move ${r.name || r.id} up`, `seq-up:${entry.key}`, index === 0, () => move(index, -1)),
     arrow('↓', `Move ${r.name || r.id} down`, `seq-down:${entry.key}`, index === total - 1, () => move(index, 1)),
     el('button', {

@@ -228,7 +228,9 @@ option:disabled { color: var(--muted); }
 .param-key { flex: 0 1 10rem; }
 .param-value { flex: 1 1 12rem; }
 .assert-type { flex: 0 1 9rem; }
-.assert-op { flex: 0 1 6rem; }
+/* The operator select is as wide as its longest operator, "contains": a
+   shrinking basis clipped it to "contain:" in narrow rows. */
+.assert-op { flex: 0 0 auto; }
 .assert-path { flex: 1 1 9rem; }
 .assert-value { flex: 1 1 8rem; }
 .assert-row .assert-value.muted { flex: 1 1 8rem; font-size: 12px; }

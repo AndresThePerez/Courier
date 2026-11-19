@@ -13,25 +13,16 @@ import { el, replace, byId, fmtMs, fmtBytes } from './dom.js';
 import { jsonView } from './json-view.js';
 import * as api from './api.js';
 import * as workspace from './workspace.js';
-import { methodBadge, refusedAssertion } from './render-runner.js';
+import * as runner from './render-runner.js';
 import {
-  valueKind, coerceValue, requestPayload, requestProblem, assertionProblem, whereIn, refusedText, capitalized,
+  opsByType, valueKind, coerceValue, textOf, requestPayload, requestProblem, assertionProblem, whereIn, refusedText,
+  capitalized,
 } from './request-model.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
 // way; matching it here means a visitor meets the cap as a disabled button and
 // a sentence, rather than as a 400 after they have already written row 21.
 const MaxAssertions = 20;
-
-// opsByType is internal/assert's matrix, transcribed. It is the whole
-// assertion language — there is no expression syntax — so the op select can
-// simply never offer an operator ValidateAssertion would refuse.
-const opsByType = {
-  status: ['eq', 'neq'],
-  latency: ['lt'],
-  json: ['eq', 'neq', 'gt', 'lt', 'exists', 'contains', 'count'],
-  body_contains: ['contains'],
-};
 
 const assertionTypes = Object.keys(opsByType);
 
@@ -46,6 +37,14 @@ let endpointsPainted = 0;
 let paramNote = '';
 let forkNote = '';
 let saveNote = '';
+// saveRefusal is the problem a refused Save named, for the request it was
+// refused for: { id, assertion, part, message }. An edit takes it away.
+let saveRefusal = null;
+
+// linked is the queued entry the open request was opened from by its row's
+// Edit, { key, id }: Save puts the request back into that entry. It holds only
+// while that request is the one open.
+let linked = null;
 
 // outbound is the Send that is out: which request it was made for, and the
 // pending marker it put in state. An answer is shown only under the request
@@ -72,8 +71,46 @@ export function onSelect() {
   paramNote = '';
   forkNote = '';
   saveNote = '';
+  saveRefusal = null;
+  linked = null;
   outbound = null;
   set({ send: null });
+}
+
+// openQueued is a queued row's Edit: it opens the request that entry holds, as
+// it was queued, and links the two so Save can put the fix back into that
+// entry. A queued request with no saved original to write to (a built-in one,
+// or a saved one deleted since) is first copied into My Workspace, and the
+// entry is pointed at the copy, so the run and the editor hold the same
+// request from then on.
+export function openQueued(key) {
+  const entry = runner.queuedEntry(key);
+  if (!entry || !isPlainRequest(entry.request)) return;
+  onSelect();
+  let request;
+  try {
+    request = deepCopy(entry.request);
+  } catch (error) {
+    console.warn('queued request not opened', error);
+    return;
+  }
+  const saved = get().workspace.some((r) => r.id === request.id);
+  if (!workspace.isWorkspaceId(request.id) || !saved) {
+    const forked = workspace.fork(request);
+    request = deepCopy(forked.request);
+    runner.repoint(key, request, { fixed: false });
+    forkNote = `Copied to My Workspace as "${request.name}" - the run now uses this copy.`;
+    if (!forked.ok) saveNote = workspace.WRITE_REFUSED;
+  }
+  linked = { key, id: request.id };
+  set({ selectedId: request.id, draft: request, editorNotice: '' });
+}
+
+const isPlainRequest = (r) => r !== null && typeof r === 'object' && !Array.isArray(r);
+
+// linkedKey is the queued entry the open draft is linked to, or null.
+function linkedKey(draft) {
+  return linked && draft && draft.id === linked.id && runner.queuedEntry(linked.key) ? linked.key : null;
 }
 
 // ---------------------------------------------------------------- fork-on-write
@@ -118,19 +155,50 @@ function edit(mutate) {
   const patch = { draft, selectedId: draft.id };
   // A refusal is about the request as it was sent; once it is edited, the
   // refusal and its mark describe something that is no longer on screen.
+  if (saveRefusal) {
+    saveRefusal = null;
+    saveNote = '';
+  }
   const send = get().send;
   if (send && !send.pending && send.kind === 'invalid') patch.send = null;
   set(patch);
 }
 
+// saveDraft is Save. A request the server would refuse is not saved: the
+// refusal is said beside the assertion, and Save is what would put the request
+// into a queued entry it was opened from, so that entry is not touched either.
+// (Keystrokes are still kept in this browser as they are typed, so a reload
+// loses nothing; Save is the step that calls a request done.)
 function saveDraft() {
+  const current = get().draft;
+  if (!current) return;
+  let problem = null;
+  try {
+    problem = requestProblem(requestPayload(current));
+  } catch {
+    problem = null;
+  }
+  if (problem) {
+    const where = whereIn(problem.field);
+    saveRefusal = { id: current.id, assertion: problem.assertion, part: problem.part, message: problem.message };
+    saveNote = `Not saved - ${where && where.label ? `${capitalized(where.label)}: ` : ''}${problem.message}`;
+    set({});
+    return;
+  }
+  const key = linkedKey(current);
   const draft = own();
   if (!draft) return;
   const saved = workspace.save(draft);
   if (saved.deleted) return;
+  // The queued entry is the run's own copy and is stored with the run setup,
+  // so it is updated whether or not the browser took the workspace write.
+  const position = key && runner.repoint(key, draft) ? runner.queuedPosition(key) : 0;
   // Only a write the browser accepted may claim the request is saved: a full
   // or disabled localStorage throws, and the visitor would lose it on reload.
-  saveNote = saved.ok ? `Saved "${draft.name || draft.id}" to My Workspace.` : workspace.WRITE_REFUSED;
+  const name = textOf(draft.name) || draft.id;
+  saveNote = !saved.ok ? workspace.WRITE_REFUSED
+    : position ? `Saved "${name}" to My Workspace and to request ${position} in the run.`
+      : `Saved "${name}" to My Workspace.`;
   set({ draft, selectedId: draft.id });
 }
 
@@ -152,7 +220,7 @@ function changeEndpoint(id) {
   const draft = get().draft;
   if (!draft) return;
   const allowed = allowedParams(id);
-  const dropped = Object.keys(draft.params || {}).filter((key) => !allowed.includes(key));
+  const dropped = Object.keys(paramsOf(draft)).filter((key) => !allowed.includes(key));
   const ep = endpointById(id);
 
   paramNote = dropped.length
@@ -161,7 +229,7 @@ function changeEndpoint(id) {
 
   edit((d) => {
     const kept = {};
-    for (const [key, value] of Object.entries(d.params || {})) {
+    for (const [key, value] of Object.entries(paramsOf(d))) {
       if (allowed.includes(key)) kept[key] = value;
     }
     d.endpoint = id;
@@ -172,11 +240,23 @@ function changeEndpoint(id) {
 function addParam() {
   const draft = get().draft;
   if (!draft) return;
-  const used = Object.keys(draft.params || {});
+  const used = Object.keys(paramsOf(draft));
   const next = allowedParams(draft.endpoint).find((p) => !used.includes(p));
   if (!next) return;
   paramNote = '';
-  edit((d) => { d.params = { ...(d.params || {}), [next]: '' }; });
+  edit((d) => { d.params = { ...paramsOf(d), [next]: '' }; });
+}
+
+// paramsOf and assertionsOf read a request's two tables as the editor draws
+// them. A request saved by an older build may hold something else there; it
+// is drawn as empty rather than read as something it is not.
+function paramsOf(draft) {
+  const p = draft.params;
+  return p !== null && typeof p === 'object' && !Array.isArray(p) ? p : {};
+}
+
+function assertionsOf(draft) {
+  return Array.isArray(draft.assertions) ? draft.assertions : [];
 }
 
 // renameParam rewrites one key in place. Params are a JSON object, so their
@@ -195,15 +275,14 @@ function renameParam(params, from, to) {
 
 function addAssertion() {
   const draft = get().draft;
-  if (!draft || (draft.assertions || []).length >= MaxAssertions) return;
+  if (!draft || assertionsOf(draft).length >= MaxAssertions) return;
   edit((d) => {
-    d.assertions = [...(d.assertions || []), { type: 'status', op: 'eq', value: 200 }];
+    d.assertions = [...assertionsOf(d), { type: 'status', op: 'eq', value: 200 }];
   });
 }
 
 function valueText(a) {
-  if (a.value === undefined || a.value === null) return '';
-  return String(a.value);
+  return textOf(a.value);
 }
 
 // ---------------------------------------------------------------- send
@@ -293,8 +372,8 @@ export function render(state) {
 // between structural changes, because rebuilding one under a visitor mid-word
 // throws away their caret.
 function signature(draft) {
-  const params = Object.keys(draft.params || {}).join(',');
-  const asserts = (draft.assertions || []).map((a) => `${a.type}:${a.op}`).join('|');
+  const params = Object.keys(paramsOf(draft)).join(',');
+  const asserts = assertionsOf(draft).map((a) => (isPlainRequest(a) ? `${textOf(a.type)}:${textOf(a.op)}` : '?')).join('|');
   return `${draft.id}::${draft.endpoint}::${params}::${asserts}`;
 }
 
@@ -312,7 +391,7 @@ function renderEndpoints(state, draft) {
 
 function renderName(draft) {
   const input = byId('editor-name');
-  const name = draft.name || '';
+  const name = textOf(draft.name);
   // Never write over the field the visitor is typing into: assigning a value
   // moves the caret to the end, and their own keystroke is what put that value
   // into state a moment ago anyway.
@@ -336,7 +415,7 @@ function renderNotes(draft) {
   if (pn.textContent !== paramNote) pn.textContent = paramNote;
 
   const an = byId('assertion-note');
-  const capped = (draft.assertions || []).length >= MaxAssertions
+  const capped = assertionsOf(draft).length >= MaxAssertions
     ? `${MaxAssertions} assertions is the cap - the server refuses a request carrying more.`
     : '';
   an.hidden = !capped;
@@ -349,7 +428,7 @@ function renderParams(draft) {
   const rows = byId('param-rows');
   const focus = captureFocus();
   const allowed = allowedParams(draft.endpoint);
-  const entries = Object.entries(draft.params || {});
+  const entries = Object.entries(paramsOf(draft));
   const ep = endpointById(draft.endpoint);
 
   byId('add-param').disabled = allowed.length === 0 || entries.length >= allowed.length;
@@ -383,7 +462,7 @@ function paramRow(key, value, index, allowed, used) {
     on: {
       change: (e) => {
         const next = e.target.value;
-        edit((d) => { d.params = renameParam(d.params || {}, key, next); });
+        edit((d) => { d.params = renameParam(paramsOf(d), key, next); });
       },
     },
   }, allowed.map((name) => el('option', {
@@ -398,7 +477,7 @@ function paramRow(key, value, index, allowed, used) {
       class: 'param-value mono',
       type: 'text',
       attrs: {
-        value,
+        value: textOf(value),
         maxlength: 500,
         autocomplete: 'off',
         spellcheck: 'false',
@@ -409,7 +488,7 @@ function paramRow(key, value, index, allowed, used) {
       on: {
         input: (e) => {
           const text = e.target.value;
-          edit((d) => { d.params = { ...(d.params || {}), [key]: text }; });
+          edit((d) => { d.params = { ...paramsOf(d), [key]: text }; });
         },
       },
     }),
@@ -422,7 +501,7 @@ function paramRow(key, value, index, allowed, used) {
         click: () => {
           paramNote = '';
           edit((d) => {
-            const next = { ...(d.params || {}) };
+            const next = { ...paramsOf(d) };
             delete next[key];
             d.params = next;
           });
@@ -437,7 +516,7 @@ function paramRow(key, value, index, allowed, used) {
 function renderAssertions(draft) {
   const rows = byId('assertion-rows');
   const focus = captureFocus();
-  const list = draft.assertions || [];
+  const list = assertionsOf(draft);
 
   byId('add-assertion').disabled = list.length >= MaxAssertions;
 
@@ -453,6 +532,20 @@ function renderAssertions(draft) {
 }
 
 function assertionRow(a, index) {
+  if (!isPlainRequest(a)) {
+    // Something an older build stored where an assertion goes: it is said,
+    // and can be removed, but never read as an assertion.
+    return el('div', { class: 'row assert-row' }, [
+      el('span', { class: 'assert-value muted', text: 'This assertion cannot be shown.' }),
+      el('button', {
+        class: 'btn btn-mini',
+        type: 'button',
+        text: 'x',
+        title: 'Remove this assertion',
+        on: { click: () => edit((d) => { d.assertions = assertionsOf(d).filter((_, i) => i !== index); }) },
+      }),
+    ]);
+  }
   const kind = valueKind(a);
 
   const typeSelect = el('select', {
@@ -460,14 +553,14 @@ function assertionRow(a, index) {
     attrs: { 'data-focus-key': `assert-type:${index}`, 'aria-label': 'Assertion type' },
     on: { change: (e) => changeAssertionType(index, e.target.value) },
   }, assertionTypes.map((t) => el('option', { text: t, attrs: { value: t, selected: t === a.type } })));
-  typeSelect.value = a.type;
+  typeSelect.value = textOf(a.type);
 
   const opSelect = el('select', {
     class: 'assert-op',
     attrs: { 'data-focus-key': `assert-op:${index}`, 'aria-label': 'Operator' },
     on: { change: (e) => { const op = e.target.value; edit((d) => { d.assertions[index].op = op; }); } },
   }, (opsByType[a.type] || []).map((op) => el('option', { text: op, attrs: { value: op, selected: op === a.op } })));
-  opSelect.value = a.op;
+  opSelect.value = textOf(a.op);
 
   const children = [typeSelect];
 
@@ -478,7 +571,7 @@ function assertionRow(a, index) {
       class: 'assert-path mono',
       type: 'text',
       attrs: {
-        value: a.path || '',
+        value: textOf(a.path),
         placeholder: '$.total',
         autocomplete: 'off',
         spellcheck: 'false',
@@ -636,7 +729,7 @@ function renderSend(state) {
   // resolved to. The method is the badge's own reading of the catalog, so an
   // endpoint the page does not know shows the same placeholder here.
   const ep = endpointById(r.endpoint);
-  const method = methodBadge(state.endpoints, r.endpoint).textContent;
+  const method = runner.methodBadge(state.endpoints, r.endpoint).textContent;
   replace(box, [
     el('p', { class: 'note mono', text: `${method} ${ep && typeof ep.path === 'string' ? ep.path : r.endpoint}${r.query || ''}` }),
     r.error && el('p', {
@@ -659,15 +752,16 @@ function sendRefusal(send) {
 
 // ---------------------------------------------------------------- field marks
 
-// markOf is the refusal the open request carries, if any: Send's own, or the
-// run's when the refused queued request is the one open.
+// markOf is the refusal the open request carries, if any: Send's own, a
+// refused Save's, or the run's when the refused queued request is the one open.
 function markOf(state, draft) {
   const send = state.send;
   if (send && !send.pending && send.kind === 'invalid') {
     const where = whereIn(typeof send.field === 'string' ? send.field : '');
     if (where && where.assertion !== null) return { assertion: where.assertion, part: where.part || send.part || '', message: send.error };
   }
-  return refusedAssertion(draft, null);
+  if (saveRefusal && saveRefusal.id === draft.id && saveRefusal.assertion !== null) return saveRefusal;
+  return runner.refusedAssertion(draft, linkedKey(draft));
 }
 
 // markTarget is the control a refusal points at. A refusal that names only
@@ -678,6 +772,8 @@ function markTarget(row, assertion, part) {
   const value = row.querySelector('input.assert-value');
   if (part === 'path' && path) return path;
   if (part === 'value' && value) return value;
+  if (part === 'type') return row.querySelector('.assert-type');
+  if (part === 'op') return row.querySelector('.assert-op');
   let found = '';
   try {
     const problem = assertionProblem(requestPayload({ assertions: [assertion] }).assertions[0]);

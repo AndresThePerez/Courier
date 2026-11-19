@@ -87,7 +87,7 @@ test('every other bound stays: a name cut to 120, a parameter to 500, 20 asserti
   assert.equal(Object.hasOwn(j, 'path'), false);
 });
 
-test('a 1 MB assertion value restores, renders and is sent by Start without throwing or stalling', async () => {
+test('a 1 MB assertion value restores, renders and is refused by Start, by field, without throwing or stalling', async () => {
   const huge = 'h'.repeat(1 << 20);
   localStorage.setItem(SETUP, setupText(request([{ type: 'body_contains', op: 'contains', value: huge }])));
   const t0 = performance.now();
@@ -102,9 +102,10 @@ test('a 1 MB assertion value restores, renders and is sent by Start without thro
   byId('start-run').click();
   await flush();
   const startMs = performance.now() - t1;
-  const sent = fetchStub.calls.find((c) => c.url === '/api/runs').json();
-  assert.equal(sent.sequence[0].assertions[0].value.length, huge.length, 'sent whole, for the server to refuse by field');
-  assert.equal(byId('start-note').textContent, 'Refused - Request 1, assertion 1: value too long');
+  // Kept whole, never cut, and refused by field the way the server would refuse it.
+  assert.equal(fetchStub.calls.filter((c) => c.url === '/api/runs').length, 0, 'nothing was sent');
+  assert.equal(get().sequence[0].request.assertions[0].value.length, huge.length);
+  assert.equal(byId('start-note').textContent, `Refused - Request 1, assertion 1: the value is ${huge.length} characters; the cap is 500`);
   assert.equal(byId('start-run').textContent, 'Start run');
   console.log(`1 MB value: restore and render ${restoredMs.toFixed(1)}ms, Start ${startMs.toFixed(1)}ms`);
   assert.ok(restoredMs < 3000 && startMs < 3000, `restore ${restoredMs.toFixed(0)}ms, start ${startMs.toFixed(0)}ms`);

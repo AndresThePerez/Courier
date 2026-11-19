@@ -64,7 +64,15 @@ async function boot() {
   runner.restore();
 
   editor.init();
-  runner.init(page.hooks.runner);
+  runner.init({
+    ...page.hooks.runner,
+    // A queued row's Edit: the editor opens that entry, and its Save is what
+    // puts the fix back into the run.
+    edit: (key) => {
+      editor.openQueued(key);
+      showTab('editor');
+    },
+  });
   sidebar.init({
     select: (request) => {
       // The editor clears the previous request's notes and response first, so

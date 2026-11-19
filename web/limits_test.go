@@ -1,7 +1,9 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -76,6 +78,7 @@ func TestFrontendLimitsMatchTheServer(t *testing.T) {
 	runner := shipped(t, "js/render-runner.js")
 	editor := shipped(t, "js/render-editor.js")
 	store := shipped(t, "js/store.js")
+	model := shipped(t, "js/request-model.js")
 	page := shipped(t, "index.html")
 
 	cases := []struct {
@@ -97,6 +100,8 @@ func TestFrontendLimitsMatchTheServer(t *testing.T) {
 			number(t, "store.js", store, `options: \{[^}]*\bduration_secs: (\d+)[^}]*\}`), sandbox.DefaultDurationSecs},
 		{"store.js default delay_ms = the server's delay fallback (0)",
 			number(t, "store.js", store, `options: \{[^}]*\bdelay_ms: (\d+)[^}]*\}`), 0},
+		{"request-model.js MaxAssertionText = sandbox.MaxParamValueLen (assertion path and string value)",
+			number(t, "request-model.js", model, `const MaxAssertionText = (\d+);`), sandbox.MaxParamValueLen},
 		{"render-runner.js BudgetRefill = budget.Refill",
 			number(t, "render-runner.js", runner, `const BudgetRefill = (\d+(?:\.\d+)?);`), budget.Refill},
 		{"render-runner.js BudgetBurst = budget.Burst",
@@ -179,31 +184,31 @@ func TestFrontendClampsMatchTheServer(t *testing.T) {
 	}
 }
 
-// TestFrontendOperatorsMatchTheServer checks render-editor.js's opsByType
+// TestFrontendOperatorsMatchTheServer checks request-model.js's opsByType
 // behaviourally: the Go matrix is unexported, and ValidateAssertion is the one
 // place it is enforced. Every operator the editor offers must validate, and
 // every one it withholds must be refused.
 func TestFrontendOperatorsMatchTheServer(t *testing.T) {
-	editor := shipped(t, "js/render-editor.js")
-	offered := opsByType(t, editor)
+	model := shipped(t, "js/request-model.js")
+	offered := opsByType(t, model)
 
 	types := []string{assert.TypeStatus, assert.TypeLatency, assert.TypeJSON, assert.TypeBodyContains}
 	ops := []string{"eq", "neq", "lt", "gt", "exists", "contains", "count"}
 
 	for name := range offered {
 		if !slices.Contains(types, name) {
-			t.Errorf("render-editor.js offers assertion type %q, which this test does not know; add it here", name)
+			t.Errorf("request-model.js offers assertion type %q, which this test does not know; add it here", name)
 		}
 	}
 	for _, typ := range types {
 		listed, ok := offered[typ]
 		if !ok {
-			t.Errorf("render-editor.js opsByType has no %q entry", typ)
+			t.Errorf("request-model.js opsByType has no %q entry", typ)
 			continue
 		}
 		for _, op := range listed {
 			if !slices.Contains(ops, op) {
-				t.Errorf("render-editor.js offers %s %q, which this test does not know; add it here", typ, op)
+				t.Errorf("request-model.js offers %s %q, which this test does not know; add it here", typ, op)
 			}
 		}
 		for _, op := range ops {
@@ -246,7 +251,7 @@ func opsByType(t reporter, src string) map[string][]string {
 	t.Helper()
 	blocks := opsBlock.FindAllStringSubmatch(src, -1)
 	if len(blocks) != 1 {
-		t.Fatalf("render-editor.js: expected exactly one `const opsByType = {...};`, found %d - was it renamed or reshaped? Update this test with it", len(blocks))
+		t.Fatalf("request-model.js: expected exactly one `const opsByType = {...};`, found %d - was it renamed or reshaped? Update this test with it", len(blocks))
 		return nil
 	}
 	body := blocks[0][1]
@@ -254,7 +259,7 @@ func opsByType(t reporter, src string) map[string][]string {
 	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
 		m := opsEntry.FindStringSubmatch(line)
 		if m == nil {
-			t.Fatalf("render-editor.js opsByType: cannot read the line %q", strings.TrimSpace(line))
+			t.Fatalf("request-model.js opsByType: cannot read the line %q", strings.TrimSpace(line))
 			return nil
 		}
 		var names []string
@@ -264,7 +269,7 @@ func opsByType(t reporter, src string) map[string][]string {
 		out[m[1]] = names
 	}
 	if len(out) == 0 {
-		t.Fatalf("render-editor.js opsByType: no entries found")
+		t.Fatalf("request-model.js opsByType: no entries found")
 	}
 	return out
 }
@@ -306,6 +311,60 @@ func TestLimitLookupsFailLoudly(t *testing.T) {
 		c.run(r)
 		if r.fatal == "" {
 			t.Errorf("%s: the lookup passed silently", c.name)
+		}
+	}
+}
+
+// TestClientAssertionRulesMatchTheServer runs the page's own table of
+// assertion cases (web/test/assertion-rules.test.mjs, where the node suite
+// holds the page's checks to it) through sandbox.ValidateRequest: a case the
+// table says the page refuses must be one the server refuses, and the other
+// way round. The table is JSON between two marker lines.
+func TestClientAssertionRulesMatchTheServer(t *testing.T) {
+	src, err := os.ReadFile("test/assertion-rules.test.mjs")
+	if err != nil {
+		t.Fatalf("read the case table: %v", err)
+	}
+	block := regexp.MustCompile(`(?s)// cases:begin\nconst CASES = (\[.*?\]);\n// cases:end`).FindAllSubmatch(src, -1)
+	if len(block) != 1 {
+		t.Fatalf("assertion-rules.test.mjs: expected exactly one case table between the markers, found %d", len(block))
+	}
+	var cases []struct {
+		Rule      string         `json:"rule"`
+		Mirrors   string         `json:"mirrors"`
+		Assertion map[string]any `json:"assertion"`
+		Refused   bool           `json:"refused"`
+		Fill      *struct {
+			Key, Prefix, Unit string
+			Count             int
+		} `json:"fill"`
+	}
+	if err := json.Unmarshal(block[0][1], &cases); err != nil {
+		t.Fatalf("the case table is not JSON: %v", err)
+	}
+	if len(cases) < 40 {
+		t.Fatalf("the case table holds %d cases; it lost some", len(cases))
+	}
+	endpoints := sandbox.Endpoints()
+	if len(endpoints) == 0 {
+		t.Fatal("the sandbox catalog is empty")
+	}
+	for _, c := range cases {
+		a := c.Assertion
+		if c.Fill != nil {
+			a[c.Fill.Key] = c.Fill.Prefix + strings.Repeat(c.Fill.Unit, c.Fill.Count)
+		}
+		wire, err := json.Marshal(map[string]any{"id": "r1", "endpoint": endpoints[0].ID, "assertions": []any{a}})
+		if err != nil {
+			t.Fatalf("%s: %v", c.Rule, err)
+		}
+		var r sandbox.Request
+		if err := json.Unmarshal(wire, &r); err != nil {
+			t.Fatalf("%s: %v", c.Rule, err)
+		}
+		_, err = sandbox.ValidateRequest(r)
+		if refused := err != nil; refused != c.Refused {
+			t.Errorf("%s (%s): the page says refused=%v, the server says refused=%v (%v)", c.Rule, c.Mirrors, c.Refused, refused, err)
 		}
 	}
 }

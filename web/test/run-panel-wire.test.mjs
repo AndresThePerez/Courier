@@ -172,9 +172,14 @@ test('a request built in the editor with every assertion type and operator reloa
     openWorkspaceRequest(id);
     PAIRS.forEach(([type, op], j) => addAssertion(type, op, PATHS[(i + j) % PATHS.length], text));
     assert.equal(get().draft.assertions.length, PAIRS.length);
-    runner.add(workspace.find(id));
   });
   assert.deepEqual(listenerErrors, []);
+  // Most of these the server would refuse, and + refuses to queue them; a
+  // run setup stored by an older page can still hold them, so the setup is
+  // stored as such a page would have stored it.
+  set({ sequence: ids.map((id, i) => ({ key: `built-${i}`, enabled: true, request: workspace.find(id) })) });
+  assert.equal(runner.createRunSetup(localStorage).save(get()).ok, true);
+  paint();
   assert.equal(get().sequence.length, TEXTS.length);
 
   const queued = get().sequence.map((e) => JSON.parse(JSON.stringify(e.request)));
@@ -206,22 +211,24 @@ test('a JSON path or assertion value the editor accepts at 600 characters is not
   assert.equal(typed[0].path.length, 602, 'the editor took the whole path');
   assert.equal(typed[1].value.length, 600, 'the editor took the whole value');
 
-  // Send posts them whole. The answer here only lets the post be read: the
-  // server itself refuses an assertion string value or JSON path over 500
-  // characters with a 400 naming the field.
+  // The server refuses an assertion string value or JSON path over 500
+  // characters with a 400 naming the field, so Send refuses them the same
+  // way, by field, and posts nothing.
   fetchStub.respond('/api/send', { status: 200, body: { status: 200, headers: {}, body: '', assertions: [] } }, { method: 'POST' });
   byId('send-request').click();
   await flush();
-  const posted = fetchStub.calls.find((c) => c.url === '/api/send').json();
-  assert.equal(posted.assertions[0].path.length, 602);
-  assert.equal(posted.assertions[1].value.length, 600);
+  assert.equal(fetchStub.calls.filter((c) => c.url === '/api/send').length, 0);
+  paint();
+  assert.equal(byId('send-status').textContent, 'Refused - Assertion 1: the path is 602 characters; the cap is 500');
 
+  // Nor is it queued, and the page says so: nothing is left for a reload to change.
   runner.add(workspace.find('ws-long'));
   runner.render(get());
   const note = byId('sequence-note');
-  const said = !note.hidden && note.textContent !== '';
-  const restored = runner.createRunSetup(localStorage).load().sequence[0].request.assertions;
-  assert.ok(said || JSON.stringify(restored) === JSON.stringify(typed), `reload changed what the page accepted: path ${restored[0] && restored[0].path.length}, value ${restored[1] && restored[1].value && restored[1].value.length}, dropped ${typed.length - restored.length}`);
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, '"Built ws-long" has an invalid assertion - fix it in the editor before queuing it.');
+  assert.equal(get().sequence.length, 0);
+  assert.equal(runner.createRunSetup(localStorage).load().sequence.length, 0);
 });
 
 // ------------------------------------------------------------------ fail-safes

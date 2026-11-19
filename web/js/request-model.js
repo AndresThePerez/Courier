@@ -11,7 +11,23 @@
 // the page invented would be a request the visitor cannot send for no reason
 // the server would give.
 
+// MaxAssertionText mirrors sandbox.MaxParamValueLen as the validator applies
+// it to an assertion's JSON path and string value: counted in characters
+// (runes), and refused over it rather than cut.
+const MaxAssertionText = 500;
+
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// opsByType is internal/assert's matrix, transcribed. It is the whole
+// assertion language — there is no expression syntax — so the editor's
+// operator select can simply never offer an operator ValidateAssertion would
+// refuse, and a request stored with one is refused here by field.
+export const opsByType = {
+  status: ['eq', 'neq'],
+  latency: ['lt'],
+  json: ['eq', 'neq', 'gt', 'lt', 'exists', 'contains', 'count'],
+  body_contains: ['contains'],
+};
 
 // valueKind is ValidateAssertion's value rule read back out: which kind of
 // value each (type, op) pair accepts. "none" is `json exists`, whose value the
@@ -92,15 +108,101 @@ export function runPayload(mode, requests, options) {
 
 // ---------------------------------------------------------------- the checks
 
+// runes counts characters the way the server does (utf8.RuneCountInString):
+// a character outside the BMP is one, not the two UTF-16 units of .length.
+function runes(s) {
+  let n = 0;
+  for (const _ of s) n += 1;
+  return n;
+}
+
+const isWhole = (n) => Number.isFinite(n) && Math.trunc(n) === n;
+
+// isGoInt mirrors strconv.Atoi: an optional sign and decimal digits, within
+// a 64-bit int.
+function isGoInt(text) {
+  if (!/^[+-]?[0-9]+$/.test(text)) return false;
+  const n = BigInt(text);
+  return n >= -(2n ** 63n) && n < 2n ** 63n;
+}
+
+// pathProblem mirrors parsePath (internal/assert/jsonpath.go):
+//   path = "$" *( "." field | "[" int "]" ), field = 1*( any char but "." and "[" )
+function pathProblem(path) {
+  if (path !== '$' && !path.startsWith('$.') && !path.startsWith('$[')) return 'the path must start with $';
+  let rest = path.slice(1);
+  while (rest !== '') {
+    if (rest[0] === '.') {
+      rest = rest.slice(1);
+      const dot = rest.indexOf('.');
+      const bracket = rest.indexOf('[');
+      const ends = [dot, bracket].filter((i) => i >= 0);
+      const end = ends.length > 0 ? Math.min(...ends) : rest.length;
+      if (end === 0) return 'the path has an empty field name';
+      rest = rest.slice(end);
+    } else if (rest[0] === '[') {
+      const closing = rest.indexOf(']');
+      if (closing < 0) return 'the path has an unclosed [';
+      if (!isGoInt(rest.slice(1, closing))) return 'the path has a bad array index';
+      rest = rest.slice(closing + 1);
+    } else {
+      return `the path has an unexpected ${JSON.stringify(rest[0])}`;
+    }
+  }
+  return '';
+}
+
 // assertionProblem answers what the server would refuse about one built
 // assertion, as { part, message } (part names the control: path or value),
-// or null.
+// or null. The order is the server's, so the first problem named is the one
+// its 400 would name.
 export function assertionProblem(a) {
-  if (!isPlain(a)) return null;
-  // internal/assert/assertion.go ValidateAssertion: a json assertion
-  // requires a path.
-  if (a.type === 'json' && (typeof a.path !== 'string' || a.path === '')) {
-    return { part: 'path', message: 'JSON path is required' };
+  if (!isPlain(a)) return { part: '', message: 'this assertion cannot be read' };
+  const { type, op, path, value } = a;
+  const json = type === 'json';
+
+  // internal/sandbox/validate.go validateAssertion: both strings bounded first.
+  if (typeof path === 'string' && runes(path) > MaxAssertionText) {
+    return { part: 'path', message: `the path is ${runes(path)} characters; the cap is ${MaxAssertionText}` };
+  }
+  if (typeof value === 'string' && runes(value) > MaxAssertionText) {
+    return { part: 'value', message: `the value is ${runes(value)} characters; the cap is ${MaxAssertionText}` };
+  }
+
+  // internal/assert/assertion.go ValidateAssertion: a known type and one of
+  // its operators, then a json path that is there and parses.
+  if (typeof type !== 'string' || !Object.hasOwn(opsByType, type)) {
+    return { part: 'type', message: `unknown assertion type ${JSON.stringify(String(type).slice(0, 64))}` };
+  }
+  if (!opsByType[type].includes(op)) {
+    return { part: 'op', message: `operator ${JSON.stringify(String(op).slice(0, 64))} is not valid for a ${type} assertion` };
+  }
+  if (json) {
+    if (typeof path !== 'string' || path === '') return { part: 'path', message: 'JSON path is required' };
+    const bad = pathProblem(path);
+    if (bad) return { part: 'path', message: bad };
+  }
+
+  const number = typeof value === 'number';
+  if (type === 'status') {
+    if (!number || !Number.isFinite(value)) return { part: 'value', message: 'a status assertion needs a numeric value' };
+    if (!(isWhole(value) && value >= 100 && value <= 599)) {
+      return { part: 'value', message: 'a status assertion needs a whole number from 100 to 599' };
+    }
+  } else if (type === 'latency') {
+    if (!number || !Number.isFinite(value)) return { part: 'value', message: 'a latency assertion needs a numeric value' };
+    if (!(value > 0)) return { part: 'value', message: 'a latency bound must be above 0 ms' };
+  } else if (type === 'body_contains') {
+    if (typeof value !== 'string') return { part: 'value', message: 'body_contains needs a string value' };
+  } else if (json && op !== 'exists') {
+    if (op === 'gt' || op === 'lt' || op === 'count') {
+      if (!number || !Number.isFinite(value)) return { part: 'value', message: `${op} needs a numeric value` };
+      if (op === 'count' && !(isWhole(value) && value >= 0)) {
+        return { part: 'value', message: 'count needs a whole number of 0 or more' };
+      }
+    } else if (!(number && Number.isFinite(value)) && typeof value !== 'string') {
+      return { part: 'value', message: `${op} needs a number or a string value` };
+    }
   }
   return null;
 }
