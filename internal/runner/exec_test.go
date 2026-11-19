@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -235,13 +237,49 @@ func TestEntriesResolvePathsFromTheCatalog(t *testing.T) {
 	}
 }
 
-// closedTarget is the base URL of a port nothing listens on any more.
+// closedTarget is a loopback address nothing listens on, held for the test.
+// A port merely closed again can be handed by the OS to another test's
+// listener, which turns a refused dial into some other failure. A socket bound
+// to the port but never listening keeps it: a dial is refused, and no listener
+// can bind it until the test ends. internal/api's tests hold theirs the same
+// way; a shared helper would have to be an exported production symbol.
 func closedTarget(t *testing.T) string {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	addr := srv.URL
-	srv.Close()
-	return addr
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syscall.CloseOnExec(fd)
+	t.Cleanup(func() { _ = syscall.Close(fd) })
+	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	sa, err := syscall.Getsockname(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", sa.(*syscall.SockaddrInet4).Port)
+}
+
+// The refused target stays refused for the whole test: no listener another
+// test opens can take its port, so a dial there can only be refused.
+func TestAClosedTargetsPortCannotBeTakenByAnotherListener(t *testing.T) {
+	u, err := url.Parse(closedTarget(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if ln, err := net.Listen("tcp", u.Host); err == nil {
+			_ = ln.Close()
+			t.Fatalf("a listener opened on the refused target's address %s: a dispatch there would no longer be refused", u.Host)
+		}
+	}
+	if c, err := net.Dial("tcp", u.Host); err == nil {
+		_ = c.Close()
+		t.Fatal("a dial to the refused target connected")
+	} else if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("a dial to the refused target failed with %v, want connection refused", err)
+	}
 }
 
 // droppingTarget sends a status line and half a body, then hangs up.

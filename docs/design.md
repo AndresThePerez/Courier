@@ -364,8 +364,8 @@ says what was clamped rather than echoing what was asked for. Both halves are
 [`internal/sandbox/validate.go`](../internal/sandbox/validate.go).
 
 A parameter value sits between the two, and is cut rather than refused: a value is sent
-as its first 32 words and then its first 256 characters, because the target itself
-refuses a search text over 256 characters or 32 terms with a `400`, and a value sent
+as its first 32 words and then its first 256 characters, because the target is about
+to refuse a search text over 256 characters or 32 terms with a `400`, and a value sent
 whole past that would come back as the target's refusal rather than as an answer. A
 shorter query is still one the target answers, and the `truncated` list on Send's `200`
 and the run's `202` names every value cut, so the cut is never silent. An assertion's
