@@ -172,6 +172,9 @@
 
       <div id="panel-results" class="panel" role="tabpanel" aria-labelledby="tab-results">
        <div class="panel-inner">
+        <!-- A history run that could not be opened is said here, where the
+             click took the visitor, at every width. -->
+        <p id="history-open-note" class="note" role="status" hidden></p>
         <div class="results-head">
           <!-- The summary is the one live region: it announces at most every five
                seconds during a run and immediately on every state change. The

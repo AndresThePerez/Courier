@@ -55,7 +55,7 @@ var requiredIDs = []string{
 	"ledger", "ledger-fill", "ledger-value", "ledger-note",
 
 	// results — shared header and the live transport's own note
-	"results-empty", "results-summary", "download-pdf", "transport-note",
+	"history-open-note", "results-empty", "results-summary", "download-pdf", "transport-note",
 
 	// results — functional
 	"functional-results", "results-filter", "results-rows",

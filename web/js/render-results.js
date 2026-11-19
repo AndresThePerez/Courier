@@ -67,6 +67,8 @@ export function render(state) {
     rowNodes = new Map();
   }
 
+  renderHistoryOpenNote(state.historyNote, runId);
+
   byId('results-empty').hidden = Boolean(mode);
   byId('functional-results').hidden = mode !== 'functional';
   byId('perf-live').hidden = mode !== 'performance' || Boolean(rep);
@@ -232,6 +234,21 @@ function statusClass(status) {
   if (status === 'completed') return '';
   if (status === 'running') return ' is-live';
   return ' is-warn';
+}
+
+// renderHistoryOpenNote says on this tab that a history run could not be
+// opened: the click showed this tab, and below 900px closed the drawer the
+// sidebar's own sentence is in. That sentence is not a live region, so this
+// line is the one announcement. It speaks for the click it followed, so it
+// goes once this tab shows another run than the one it was showing then.
+let historyOpenNote = { note: '', runId: null };
+
+function renderHistoryOpenNote(note, runId) {
+  if ((note || '') !== historyOpenNote.note) historyOpenNote = { note: note || '', runId };
+  const said = historyOpenNote.note && historyOpenNote.runId === runId ? historyOpenNote.note : '';
+  const line = byId('history-open-note');
+  line.hidden = !said;
+  if (line.textContent !== said) line.textContent = said;
 }
 
 const Verdicts = ['PASS', 'FAIL', 'N/A'];
