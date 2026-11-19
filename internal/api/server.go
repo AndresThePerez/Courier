@@ -61,6 +61,11 @@ type Options struct {
 	// budget's 5s cooldown floor can be crossed without sleeping through it
 	// once per run.
 	Now func() time.Time
+
+	// BodyReadDeadline is how long a POST body may take to arrive. Production
+	// leaves it zero, meaning the BodyReadDeadline constant; a test shortens
+	// it so a stalled upload can be cut without waiting ten seconds.
+	BodyReadDeadline time.Duration
 }
 
 // Server is Courier's http.Handler. It owns the executor, the run manager, and
@@ -92,6 +97,11 @@ type Server struct {
 	// once, on both POST routes together (MaxBodyChecks).
 	bodies *bodyGate
 
+	// reads bounds the POST bodies being read at once (MaxBodyReads), and
+	// readDeadline the time one may take to arrive.
+	reads        *readPlaces
+	readDeadline time.Duration
+
 	// runCtx is the parent of every run context. It outlives the HTTP request
 	// that started the run — a visitor closing the tab must not cancel the run
 	// everyone else is watching — and is cancelled by Close, which is what
@@ -115,6 +125,10 @@ func New(static fs.FS, opts Options) *Server {
 	if now == nil {
 		now = time.Now
 	}
+	readDeadline := opts.BodyReadDeadline
+	if readDeadline <= 0 {
+		readDeadline = BodyReadDeadline
+	}
 
 	ex := runner.NewExecutor(opts.TargetURL)
 	bus := sse.New(log)
@@ -132,6 +146,9 @@ func New(static fs.FS, opts Options) *Server {
 		stopRuns: stop,
 		done:     make(chan struct{}),
 		bodies:   newBodyGate(MaxBodyChecks*MaxBodyBytes, MaxBodyWaiters*MaxBodyBytes),
+		reads:    &readPlaces{max: MaxBodyReads},
+
+		readDeadline: readDeadline,
 	}
 	// Three-step rather than one literal, because the wiring is genuinely
 	// circular: the run manager publishes through the metrics tap, and the tap

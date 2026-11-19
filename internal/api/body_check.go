@@ -8,11 +8,13 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/assert"
@@ -38,18 +40,44 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return ok && decodeBody(w, body, v)
 }
 
-// decodeJSON is the package's decodeJSON with the body check bounded by the
-// bytes of the bodies in it (bodyGate). The body is read in full before it
-// takes its place, so an upload in progress holds none.
+// decodeJSON is the package's decodeJSON with the body's read bounded by a
+// place and a deadline (body_reads.go) and its check by the bytes of the
+// bodies in it (bodyGate). The body is read in full before it enters the
+// gate, so an upload in progress holds a place but no room in the check, and
+// the place is given back as the read ends, before the body waits for room.
 func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	body, ok := readJSONBody(w, r)
+	if !isJSONContentType(r.Header.Values("Content-Type")) {
+		refuseContentType(w)
+		return false
+	}
+	rc := http.NewResponseController(w)
+	if !s.reads.take() {
+		// The answer does not wait for the body. The server still drains what
+		// it can of the body after answering; the deadline keeps a client that
+		// sends nothing from holding the connection open for that.
+		if r.Body != http.NoBody {
+			_ = rc.SetReadDeadline(time.Now().Add(s.readDeadline))
+		}
+		w.Header().Set("Connection", "close")
+		answerBusy(w)
+		return false
+	}
+	held := true
+	defer func() {
+		if held {
+			s.reads.give()
+		}
+	}()
+
+	body, ok := s.readBody(w, r, rc)
+	held = false
+	s.reads.give()
 	if !ok {
 		return false
 	}
 	n := bodyWeight(len(body))
 	if !s.bodies.enter(r.Context(), n) {
-		w.Header().Set("Retry-After", bodyGateRetryAfter)
-		writeError(w, http.StatusServiceUnavailable, "", bodyGateBusy)
+		answerBusy(w)
 		return false
 	}
 	defer s.bodies.leave(n)
@@ -59,22 +87,62 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool 
 	return decodeBody(w, body, v)
 }
 
+// readBody reads the body under the size cap and the read deadline. The
+// deadline is cleared once the body has arrived, so it does not reach what
+// the handler does next; after a read that failed it is left in place, since
+// the connection is closed after the answer and must not wait on the client.
+func (s *Server) readBody(w http.ResponseWriter, r *http.Request, rc *http.ResponseController) ([]byte, bool) {
+	// A request with no body has nothing to wait for, and the server is
+	// already watching its connection for the client going away.
+	limited := r.Body != http.NoBody && rc.SetReadDeadline(time.Now().Add(s.readDeadline)) == nil
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
+	if err == nil {
+		if limited {
+			_ = rc.SetReadDeadline(time.Time{})
+		}
+		return body, true
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		w.Header().Set("Connection", "close")
+		writeError(w, http.StatusRequestTimeout, "body", "the body did not arrive within %s", s.readDeadline)
+		return nil, false
+	}
+	answerReadError(w, err)
+	return nil, false
+}
+
+// answerBusy is the 503 of a body turned away before it is checked.
+func answerBusy(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", bodyGateRetryAfter)
+	writeError(w, http.StatusServiceUnavailable, "", bodyGateBusy)
+}
+
+func refuseContentType(w http.ResponseWriter) {
+	writeError(w, http.StatusUnsupportedMediaType, "body", "Content-Type must be application/json")
+}
+
+// answerReadError answers 413 for a body over the cap and 400 for one that
+// could not be read.
+func answerReadError(w http.ResponseWriter, err error) {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		writeError(w, http.StatusRequestEntityTooLarge, "body", "payload exceeds the %d byte limit", MaxBodyBytes)
+		return
+	}
+	writeError(w, http.StatusBadRequest, "body", "the body could not be read")
+}
+
 // readJSONBody answers 415 for a body that is not JSON and 413 for one over
 // the cap, and otherwise returns the body whole.
 func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
-		writeError(w, http.StatusUnsupportedMediaType, "body", "Content-Type must be application/json")
+		refuseContentType(w)
 		return nil, false
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
 	if err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			writeError(w, http.StatusRequestEntityTooLarge, "body", "payload exceeds the %d byte limit", MaxBodyBytes)
-			return nil, false
-		}
-		writeError(w, http.StatusBadRequest, "body", "the body could not be read")
+		answerReadError(w, err)
 		return nil, false
 	}
 	return body, true
