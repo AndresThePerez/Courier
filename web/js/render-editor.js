@@ -33,7 +33,10 @@ const assertionTypes = Object.keys(opsByType);
 let lastDraft = null;
 let lastSignature = '';
 let lastSend = null;
-let endpointsPainted = 0;
+let lastSendEndpoints = null;
+let lastTableEndpoints = null;
+let endpointsPainted = null;
+let pickerPainted = null;
 let paramNote = '';
 let forkNote = '';
 let saveNote = '';
@@ -406,12 +409,16 @@ export function render(state) {
   renderName(draft);
   renderOrigin(draft);
 
+  // The parameter table is drawn from the catalog as well as the draft: a
+  // request opened before the catalog arrived would otherwise keep saying its
+  // endpoint takes no parameters.
   const sig = signature(draft);
-  if (draft !== lastDraft || sig !== lastSignature) {
+  if (draft !== lastDraft || sig !== lastSignature || state.endpoints !== lastTableEndpoints) {
     renderParams(draft);
     renderAssertions(draft);
     lastDraft = draft;
     lastSignature = sig;
+    lastTableEndpoints = state.endpoints;
   }
 
   renderNotes(draft);
@@ -431,12 +438,13 @@ function signature(draft) {
 
 function renderEndpoints(state, draft) {
   const select = byId('endpoint-select');
-  if (state.endpoints.length !== endpointsPainted) {
+  if (state.endpoints !== endpointsPainted || select !== pickerPainted) {
     replace(select, state.endpoints.map((e) => el('option', {
       text: `${e.label} - ${e.method} ${e.path}`,
       attrs: { value: e.id },
     })));
-    endpointsPainted = state.endpoints.length;
+    endpointsPainted = state.endpoints;
+    pickerPainted = select;
   }
   if (select.value !== draft.endpoint) select.value = draft.endpoint;
 }
@@ -726,9 +734,12 @@ function restoreFocus(focus) {
 // ---------------------------------------------------------------- response
 
 function renderSend(state) {
+  // The line above a response names its method and path from the catalog, so
+  // a catalog arriving after the answer is a change to what is shown.
   const send = state.send;
-  if (send === lastSend) return;
+  if (send === lastSend && state.endpoints === lastSendEndpoints) return;
   lastSend = send;
+  lastSendEndpoints = state.endpoints;
 
   const status = byId('send-status');
   const box = byId('send-response');
