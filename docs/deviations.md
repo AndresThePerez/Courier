@@ -1513,3 +1513,155 @@ rule, and is brought into line separately.
 summary, the live and the rebuilt `run_finished`); `internal/pdf/verdict_rule_test.go`:
 `TestAPrintedRunThatAssertedNothingIsNA`. `TestFunctionalVerdict` and
 `TestFunctionalVerdictLabelsAreUnchanged` now give their passing row an assertion that passed.
+
+## N46 — What a client of the API meets that it did not before
+
+N36 to N45 record most of what changed on the wire after commit `1d66ca1`. This entry
+records the rest: for a client that is not the shipped page, what `/api` answered at
+`1d66ca1` and what it answers now. It does not repeat N43 (the bound on body checks and
+its `503`, and an assertion value that is an object or an array) or N44 (the parameter
+cut, and the 500-character cap on an assertion's path and string value, which did not
+exist at `1d66ca1`: such text was accepted at any length the body cap allowed).
+
+**Bodies of `POST /api/send` and `POST /api/runs`.**
+
+- **Content-Type.** Before, it was not read, and a body sent with none was decoded. Now a
+  body needs exactly one `Content-Type` naming `application/json`, with no parameter but an
+  optional `charset=utf-8`; anything else is a `415`,
+  `{"error":"Content-Type must be application/json","field":"body"}`, given before the
+  body is read.
+- **Over the 256 KiB cap.** Before, a `400` with `"error":"body: payload exceeds the
+  262144 byte limit"`. Now a `413` with `"error":"payload exceeds the 262144 byte limit"`
+  and `"field":"body"`, whether or not the client sent an honest `Content-Length`.
+- **Strict decoding.** Before, the first JSON value was decoded with Go's defaults: data
+  after it was ignored, an unknown key was dropped (`{"endpoint":"healthz","url":"x"}`
+  was sent and answered `200`), a duplicate key let the last one win, a key matched a
+  field whatever its case, and a syntax or type error came back as Go's decoder text after
+  `body: `. Now each of these is a `400`:
+  - a syntax error, or a body that stops inside a value: `field` `body`,
+    `malformed JSON at byte N`;
+  - no value, or data after the first one: `field` `body`,
+    `body must hold exactly one JSON value`; a value that is not an object:
+    `body must be a JSON object`;
+  - an unknown key, a key in another case included: `unknown field "url"`, with `field`
+    naming the object it is in (`body` at the top level, `sequence[1]` or `assertions[0]`
+    inside);
+  - a duplicate key: `duplicate key "endpoint"`, with `field` naming the key itself
+    (`endpoint`, `params.q`);
+  - a value of the wrong type, named by its JSON path and described in JSON's words:
+    `options.concurrency` with `expected a whole number, got a string`,
+    `sequence[1].params.q` with `expected a string, got a number`; a number too large for
+    its field: `the number ... is out of range`.
+
+**Error bodies.** Before, `error` began with the field it named:
+`{"error":"sequence[5].assertions[0]: operator \"x\" is not valid ...","field":"sequence[5].assertions[0]"}`.
+Now the field is said once, in `field`, and `error` is the sentence alone. A field reads
+as the validator writes it (`sequence[2].params.q`, `assertions[0].value`,
+`options.concurrency`), `body` stands for the body as a whole, and an error about no part
+of the payload carries no `field`. Client text an error quotes (a run id, a key, an
+operator, an endpoint id, a path) is cut to its first 64 characters and marked `...`,
+never inside a character, and a `field` is at most 200 characters.
+
+**Routes.** Before, a `GET` on an `/api` path no route took was a JSON `404`, and a `GET`
+on `/api/send` a JSON `405`; every other wrong verb, and any verb but `GET` on an unknown
+`/api` path, got Go's router's plain-text `Method Not Allowed` (`POST /api/nope` was a
+`405` with `Allow: GET, HEAD`). Now every `/api` request no route takes is answered in
+JSON, with the security headers: a `405` with `Allow` read from the route table when the
+path takes another verb (`PUT /api/runs/x` gets `Allow: DELETE, GET, HEAD`), otherwise a
+`404`, `no such endpoint "<path>"`, whatever the verb. Outside `/api`, a directory of the
+page (`/js/`) used to answer with a listing of its files; it is now a `404`.
+
+**A request that got no response.**
+
+- **The `error` sentence.** Before, `error` on Send's `200` and on a run's result rows
+  was Go's transport error, which names the target's internal address and port. Now it is
+  one of four fixed sentences, chosen by what failed: `could not connect to the target`,
+  `the connection dropped while reading the response` (a status line arrived and its body
+  did not), `the target did not respond within 10s`, and
+  `stopped by Courier before a response arrived`. `error_kind` is unchanged. The same
+  sentences are what the stream, the stored report and the PDF carry; the raw error is
+  logged once per failed dispatch as `dispatch_failed`.
+- **Its assertions.** Before, they were evaluated against status 0, an empty body and the
+  time the failure took, so `latency lt 10000` passed on a quick refusal and
+  `status neq 500` passed on the 0 that stood for no status. Now every one fails, keeps
+  its `expected`, and reads `"actual":"no response"` with
+  `"error":"not evaluated: the request got no response"`. A body that broke off after its
+  status line is still evaluated: that status is real.
+- **Redirects.** Before, a `3xx` from the target was followed by Go's client, up to ten
+  hops, wherever its `Location` pointed. Now the `3xx` is the answer: its status, size and
+  body are what Send returns and the assertions read, and a performance run counts it
+  under its own status as a response that is not a `2xx`: an error, never `ok`.
+
+**Numbers in assertions.** Before, any number was accepted. Now a `status` value is a
+whole number from 100 to 599, a `latency` bound is above 0 ms, and a json `count` is a
+whole number of 0 or more; anything else is a `400` at `assertions[j]`, for example
+`a status assertion needs a whole number from 100 to 599, got 200.5` or
+`a latency bound must be above 0 ms, got -5`. `gt`, `lt`, `eq` and `neq` on a json path
+take any finite number, as before.
+
+**What was cut.** Before, nothing told a client that a string had been cut to its cap.
+Now Send's `200` carries `truncated`, the fields it cut (`params.q`, `name`, `id`), and
+the run's `202` carries the same list in the run's notation
+(`sequence[1].params.q`); the key is absent when nothing was cut. N44 states the
+parameter rule.
+
+**Available on the wire for other clients.** The shipped page reads `truncated` (below)
+and the history row's `verdict`. It does not read:
+
+- the `id:` line on each stream frame, or resuming with `Last-Event-ID` (N38). The page
+  opens one stream per run it follows, closes it on `run_finished` and on any error, and
+  then reads the run's report every 500 ms until the run ends rather than reconnecting, so
+  it never sends `Last-Event-ID` and never waits out the `retry: 60000` line;
+- `percentile_samples` on each block of stats (N39): no file of the page names it;
+- `Retry-After: 1` on the body check's `503` (N43): the page does not retry (below).
+
+**What the page does that the wire does not require.**
+
+- **An empty value box is refused.** The server accepts an empty string as an
+  assertion's value wherever it accepts a string (`json eq ""`, `body_contains ""`). The
+  page sends a box left empty, or typed into and erased, as no value at all, so Send,
+  Save and Start refuse the row beside the box, as they refuse a box never typed into. A
+  comparison with the empty string can be sent by another client, not from the page.
+- **The page says what the server cut.** It reads `truncated` into one sentence beside
+  Send's answer (`Cut to fit: parameter q (256 characters, 32 words at most).`), and after
+  Start names each request by its row in the run, as a refusal of the same run does. A
+  field it does not know is shown as it came, clipped.
+- **A `503` from Send or Start reads as busy.** The page shows `Busy - ` and the server's
+  sentence, gives the control back at once, marks no field and no row, and sends nothing
+  again by itself: the visitor presses again. **Amends N43**, which says the page shows the
+  sentence after `Refused - ` on Send and after `Could not start the run - ` on Start.
+
+**Proof:** `internal/api/server_test.go`: `TestPostBodiesMustBeDeclaredJSON`,
+`TestOversizeBodiesAre413AtTheExactCap`, `TestOversizeBodiesWithoutAnHonestLengthAre413`,
+`TestBodiesAreDecodedStrictly` (every decoding case above),
+`TestAClientSuppliedTargetIsRefusedByName`, `TestRefusedBodiesNameTheKeyAndDispatchNothing`,
+`TestTheBrowserClientsPayloadsStillDecode`, `TestWrongVerbOnAnAPIPathAnswers405`,
+`TestUnknownAPIPathsAnswerAJSON404ForEveryVerb`, `TestEveryVerbOnEveryAPIPathAnswersJSON`;
+`internal/api/handler_edges_test.go`: `TestWrongContentTypeIsRefusedBeforeTheBodyIsRead`;
+`internal/api/runs_test.go`: `TestErrorBodiesStateTheFieldOnce`,
+`TestStartedRunReportsTruncatedFields`; `internal/api/echo_clip_test.go`:
+`TestUnknownRunErrorsClipTheID`, `TestUnknownRunErrorsQuoteAShortIDWhole`;
+`internal/api/decode_bounds_test.go`: `TestErrorBodiesBoundWhatTheyEcho`;
+`internal/api/target_address_test.go`: `TestAdversarialBodiesGetTheOneErrorShape`,
+`TestAHugeMultibyteRunIDIsClippedOnARuneBoundary`; `internal/api/static_test.go`:
+`TestDirectoriesAreNotListed`; `internal/api/send_test.go`:
+`TestSendFailuresCarryFixedMessagesAndNoAddress`, `TestSendLogsTheRawErrorOnce`,
+`TestRunSurfacesCarryNoTargetAddress`, `TestSendEvaluatesNoAssertionWithoutAResponse`,
+`TestSendRecordsARedirectWithoutFollowingIt`, `TestSendRefusesAMeaninglessAssertion`,
+`TestSendReportsTruncatedParameters`; `internal/runner/exec_test.go`:
+`TestFailedDispatchesCarryFixedMessages`, `TestRedirectsAreRecordedNotFollowed`;
+`internal/runner/functional_test.go`: `TestFunctionalRowsCarryFixedMessagesAndNoAddress`,
+`TestAssertionsAreNotEvaluatedWithoutAResponse`, `TestAssertionsReadTheStatusOfADroppedBody`,
+`TestFunctionalRecordsARedirectWithoutFollowingIt`; `internal/runner/perf_test.go`:
+`TestPerfRecordsRedirectsWithoutFollowingThem`; `internal/runner/broken_target_test.go`:
+`TestRedirectsOfEveryShapeStayOnTheTarget`, `TestNoResponseFailsEveryOperator` (which
+also holds `contains ""` to be a valid assertion); `internal/assert/assertion_test.go`:
+`TestValidateAssertionRefusesMeaninglessNumbers`; `internal/sandbox/validate_test.go`:
+`TestAssertionStringsOverTheCapAreRefused`, `TestTruncationsNameWhatWasCut`;
+`web/test/live.test.mjs`: `a stream error falls back to polling`,
+`a stream that ends before run_finished is polled at once, and the poll delivers the end`;
+`web/test/empty-value-box.test.mjs` (an erased box refused by Send, Save and Start, and
+the rule that mirrors the server still accepting an empty string);
+`web/test/cut-note.test.mjs` (the sentence after Send and after Start);
+`web/test/server-busy.test.mjs` and `web/test/param-marks-busy-edges.test.mjs` (the
+`503` read as busy on both, never retried).

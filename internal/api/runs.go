@@ -366,6 +366,10 @@ func (s *Server) streamHeaders(w http.ResponseWriter) {
 // lastEventID is the id a reconnecting EventSource says it saw last. Anything
 // that is not a plain non-negative integer replays the whole log: a viewer
 // with a duplicate row is better off than one with a missing one.
+//
+// The shipped page never resumes a stream: it closes its EventSource on any
+// error and reads the run's report by polling instead, so it never sends this
+// header. Resuming is available on the wire for other clients.
 func lastEventID(r *http.Request) uint64 {
 	n, err := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64)
 	if err != nil {

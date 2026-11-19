@@ -52,12 +52,14 @@ const (
 // bodyWeight is what a body of n bytes weighs in the gate.
 func bodyWeight(n int) int64 { return int64(max(n, minBodyWeight)) }
 
-// bodyGateBusy is the 503's message. The page shows it after "Refused - " on
-// Send and after "Could not start the run - " on Start.
+// bodyGateBusy is the 503's message. The page shows it after "Busy - " on
+// Send and on Start.
 const bodyGateBusy = "the server is busy checking other requests; try again in a moment"
 
 // bodyGateRetryAfter is the 503's Retry-After, in seconds: room frees as soon
-// as one check ends.
+// as one check ends. The shipped page does not read it and never retries by
+// itself (its visitor presses again); it is available on the wire for other
+// clients.
 const bodyGateRetryAfter = "1"
 
 // bodyGate admits bodies to the check by weight, in strict arrival order: a
