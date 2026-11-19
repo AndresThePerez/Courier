@@ -207,6 +207,58 @@ func straightIn(g *bodyGate, n int64) bool {
 	return g.enter(ctx, n)
 }
 
+// Room freed that fits a small waiter but not the body at the cap ahead of it
+// lets nobody in: the small one waits its turn rather than slipping past.
+// Then the bodies go in in the order they arrived.
+func TestRoomThatFitsOnlyASmallWaiterBehindTheHeadLetsNobodyIn(t *testing.T) {
+	g := newBodyGate(MaxBodyChecks*MaxBodyBytes, MaxBodyWaiters*MaxBodyBytes)
+	for _, n := range []int64{MaxBodyBytes, minBodyWeight, minBodyWeight} {
+		if !straightIn(g, n) {
+			t.Fatalf("a body of %d did not go straight in", n)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), enterDeadline)
+	defer cancel()
+	admitted := make(chan int64, 2)
+	for i, n := range []int64{MaxBodyBytes, minBodyWeight} {
+		go func() {
+			if g.enter(ctx, n) {
+				admitted <- n
+			} else {
+				admitted <- -1
+			}
+		}()
+		waitFor(t, "a body to wait", func() bool { return g.waiting.Load() == int64(i+1) })
+	}
+
+	// One small body leaves: the head still does not fit; the small one
+	// behind it would.
+	g.leave(minBodyWeight)
+	if in, q := g.load(); in != MaxBodyBytes+minBodyWeight || q != MaxBodyBytes+minBodyWeight || g.waiting.Load() != 2 {
+		t.Fatalf("after a small body left: %d bytes inside, %d in line, %d waiting; want %d inside and both waiters still in line",
+			in, q, g.waiting.Load(), MaxBodyBytes+minBodyWeight)
+	}
+
+	// The other small body leaves: the head goes in, and the small one
+	// still waits behind the check that has no room for it.
+	g.leave(minBodyWeight)
+	if n := <-admitted; n != MaxBodyBytes {
+		t.Fatalf("the first body let in weighs %d, want the body at the cap that arrived first (-1: it waited out its deadline while room was free)", n)
+	}
+	if in, q := g.load(); in != 2*MaxBodyBytes || q != minBodyWeight {
+		t.Fatalf("after the head went in: %d bytes inside and %d in line, want %d and %d", in, q, 2*MaxBodyBytes, minBodyWeight)
+	}
+	g.leave(MaxBodyBytes)
+	if n := <-admitted; n != minBodyWeight {
+		t.Fatalf("the second body let in weighs %d, want the small one (-1: it waited out its deadline while room was free)", n)
+	}
+	g.leave(MaxBodyBytes)
+	g.leave(minBodyWeight)
+	if in, q := g.load(); in != 0 || q != 0 || g.waiting.Load() != 0 {
+		t.Errorf("at the end: %d bytes inside, %d in line, %d waiting, want none", in, q, g.waiting.Load())
+	}
+}
+
 // A waiter cancelled at the very moment room is handed to it either goes in
 // and leaves, or gives its room back; either way the gate ends empty and the
 // next body goes straight in.

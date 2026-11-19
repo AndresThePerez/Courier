@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/AndresThePerez/courier/internal/sandbox"
 )
@@ -123,13 +125,18 @@ func TestAShortBodyWeighsTheFloor(t *testing.T) {
 	}
 }
 
+// enterDeadline bounds an enter that is not cancelled on purpose, so a body
+// left waiting while room is free fails an assertion instead of hanging the
+// test. Generous: suites running alongside must never trip it.
+const enterDeadline = 10 * time.Second
+
 // Bodies of every weight, completing, giving up or cancelled while room is
 // handed to them, never put more than the gate's weight in the check or in
 // line, and leave both at zero.
 func TestTheBodyGateWeighsMixedSizesThroughCancelAndComplete(t *testing.T) {
 	const maxInside, maxQueued = 2 * MaxBodyBytes, 4 * MaxBodyBytes
 	g := newBodyGate(maxInside, maxQueued)
-	var inside, most atomic.Int64
+	var inside, most, stuck atomic.Int64
 	var bad atomic.Value
 	const workers, rounds = 64, 80
 	var wg sync.WaitGroup
@@ -139,15 +146,22 @@ func TestTheBodyGateWeighsMixedSizesThroughCancelAndComplete(t *testing.T) {
 			defer wg.Done()
 			rng := rand.New(rand.NewPCG(uint64(w), 11))
 			for range rounds {
+				if stuck.Load() > 0 {
+					return
+				}
 				n := bodyWeight(rng.IntN(MaxBodyBytes + 1))
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithTimeout(context.Background(), enterDeadline)
 				switch rng.IntN(3) {
 				case 0:
 					cancel()
 				case 1:
 					go func() { runtime.Gosched(); cancel() }()
 				}
-				if g.enter(ctx, n) {
+				ok := g.enter(ctx, n)
+				if !ok && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					stuck.Add(1)
+				}
+				if ok {
 					v := inside.Add(n)
 					for m := most.Load(); v > m && !most.CompareAndSwap(m, v); m = most.Load() {
 					}
@@ -164,6 +178,9 @@ func TestTheBodyGateWeighsMixedSizesThroughCancelAndComplete(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	if n := stuck.Load(); n > 0 {
+		t.Errorf("%d bodies waited out their %s deadline while room was free: a wake-up was lost or room was kept", n, enterDeadline)
+	}
 	if v := bad.Load(); v != nil {
 		t.Errorf("the gate's weights left their bounds: %s", v)
 	}

@@ -334,7 +334,7 @@ func TestWaitersCancelledAllAtOnceGiveBackEveryPlace(t *testing.T) {
 // count, and nothing held at the end.
 func TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete(t *testing.T) {
 	g := newBodyGate(MaxBodyChecks*MaxBodyBytes, MaxBodyWaiters*MaxBodyBytes)
-	var inside, most, refused atomic.Int64
+	var inside, most, refused, stuck atomic.Int64
 	var overWait, underWait atomic.Bool
 	stop := make(chan struct{})
 	watched := make(chan struct{})
@@ -364,14 +364,21 @@ func TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete(t *testing.T) {
 			defer wg.Done()
 			rng := rand.New(rand.NewPCG(uint64(w), 7))
 			for range rounds {
-				ctx, cancel := context.WithCancel(context.Background())
+				if stuck.Load() > 0 {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), enterDeadline)
 				switch rng.IntN(3) {
 				case 0:
 					cancel()
 				case 1:
 					go func() { runtime.Gosched(); cancel() }()
 				}
-				if g.enter(ctx, MaxBodyBytes) {
+				ok := g.enter(ctx, MaxBodyBytes)
+				if !ok && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					stuck.Add(1)
+				}
+				if ok {
 					n := inside.Add(1)
 					for m := most.Load(); n > m && !most.CompareAndSwap(m, n); m = most.Load() {
 					}
@@ -389,6 +396,9 @@ func TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete(t *testing.T) {
 	close(stop)
 	<-watched
 
+	if n := stuck.Load(); n > 0 {
+		t.Errorf("%d entries waited out their %s deadline while a slot was free: a wake-up was lost or a slot was kept", n, enterDeadline)
+	}
 	if m := most.Load(); m > MaxBodyChecks {
 		t.Errorf("%d entries held a slot at once, want at most %d", m, MaxBodyChecks)
 	}
