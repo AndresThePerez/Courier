@@ -109,6 +109,19 @@ export function openQueued(key) {
   set({ selectedId: request.id, draft: request, editorNotice: '' });
 }
 
+// editQueued is a queued row's Edit as the page wires it: the entry opens,
+// the editor is shown, and focus moves to the request's name. Left on the
+// Edit button, focus would sit inside the Runner panel the switch just hid.
+// The editor is shown before it is focused because a hidden field cannot take
+// focus, and showTab's hash change reaches the page only as a later event.
+export function editQueued(key, showTab) {
+  openQueued(key);
+  showTab('editor');
+  if (!get().draft) return;
+  if (get().activeTab !== 'editor') set({ activeTab: 'editor' });
+  byId('editor-name').focus();
+}
+
 const isPlainRequest = (r) => r !== null && typeof r === 'object' && !Array.isArray(r);
 
 // linkedKey is the queued entry the open draft is linked to, or null.

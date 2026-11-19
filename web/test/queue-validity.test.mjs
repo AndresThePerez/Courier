@@ -22,7 +22,7 @@ const Refused = (name) => `"${name}" has an invalid assertion - fix it in the ed
 let unsubscribe = null;
 let opened = [];
 
-function boot({ setup, saved } = {}) {
+function boot({ setup, saved, edit } = {}) {
   if (setup) localStorage.setItem(SETUP, JSON.stringify(setup));
   if (saved) localStorage.setItem(WORKSPACE, JSON.stringify({ version: 1, requests: saved }));
   workspace.init();
@@ -30,7 +30,7 @@ function boot({ setup, saved } = {}) {
   runner.restore();
   editor.init();
   // The page's wiring of the row's Edit (main.js does the same).
-  runner.init({ edit: (key) => { editor.openQueued(key); opened.push(key); set({ activeTab: 'editor' }); } });
+  runner.init({ edit: edit || ((key) => { editor.openQueued(key); opened.push(key); set({ activeTab: 'editor' }); }) });
   sidebar.init({
     select: (request) => { editor.onSelect(); sidebar.selectRequest(request); },
     add: (request) => runner.add(request),
@@ -221,6 +221,23 @@ test('opening another request ends the link: its Save does not touch the queued 
   byId('save-request').click();
   assert.equal(byId('editor-note').textContent, 'Saved "Bad" to My Workspace.');
   assert.equal(get().sequence[0].request.assertions[1].path, '', 'the queued copy is unchanged');
+});
+
+test('Edit as the page wires it shows the editor and moves focus to the request\'s name there', () => {
+  // A hash change reaches the page as an event after the click returns, so
+  // this showTab only records what it was asked to show, as location would.
+  const shown = [];
+  boot({ saved: [good('ws-b')], setup: setupOf([good('ws-b')]), edit: (key) => editor.editQueued(key, (name) => shown.push(name)) });
+  let tabWhenFocused = null;
+  byId('editor-name').addEventListener('focus', () => { tabWhenFocused = get().activeTab; });
+  const button = editOf(0);
+  button.focus();
+  button.click();
+  assert.deepEqual(shown, ['editor']);
+  assert.equal(get().draft.id, 'ws-b');
+  assert.ok(document.activeElement === byId('editor-name'), 'focus left the Runner panel for the editor');
+  assert.equal(tabWhenFocused, 'editor', 'the editor was the shown tab when it took focus');
+  assert.equal(byId('editor-name').value, 'Good 1');
 });
 
 const storedRequest = (id) => JSON.parse(localStorage.peek(WORKSPACE)).requests.find((r) => r.id === id) || null;

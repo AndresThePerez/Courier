@@ -68,10 +68,7 @@ async function boot() {
     ...page.hooks.runner,
     // A queued row's Edit: the editor opens that entry, and its Save is what
     // puts the fix back into the run.
-    edit: (key) => {
-      editor.openQueued(key);
-      showTab('editor');
-    },
+    edit: (key) => editor.editQueued(key, showTab),
   });
   sidebar.init({
     select: (request) => {
