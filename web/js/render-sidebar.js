@@ -46,9 +46,9 @@ function setDrawer(open) {
   byId('sidebar-toggle').setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
-// closeDrawer puts the drawer away once a request is picked in it: below
-// 900px it covers the page, and the request just opened is what the visitor
-// came for. Above 900px the sidebar is a pane and stays.
+// closeDrawer puts the drawer away once a request or a run is picked in it:
+// below 900px it covers the page, and what was just opened is what the
+// visitor came for. Above 900px the sidebar is a pane and stays.
 function closeDrawer() {
   if (!window.matchMedia('(max-width: 900px)').matches) return;
   byId('app').classList.remove('sidebar-open');
@@ -214,7 +214,7 @@ function requestRow(request, selectedId, listId, counts, endpoints) {
     ]),
     queuedMark(counts, request.id),
     el('button', {
-      class: 'btn btn-mini',
+      class: 'btn btn-mini req-add',
       type: 'button',
       text: '+',
       title: 'Add to the run sequence',
@@ -312,7 +312,14 @@ function historyRow(entry) {
       type: 'button',
       title: `${entry.id} - ${entry.summary}`,
       attrs: { 'data-focus-key': `history:${entry.id}` },
-      on: { click: () => hooks.openRun(entry.id) },
+      // Below 900px the drawer covers the report this opens, so it is put
+      // away as it is when a request is picked.
+      on: {
+        click: () => {
+          hooks.openRun(entry.id);
+          closeDrawer();
+        },
+      },
     }, [
       el('span', { class: 'method', text: entry.mode === 'performance' ? 'PERF' : 'FUNC' }),
       ' ',
@@ -393,13 +400,20 @@ function keyOf(inputs) {
 }
 
 // draw rebuilds a part when its key moved and records the key only once the
-// part was built, so a build that threw is tried again on the next render.
+// part was built, so a build that threw is tried again on the next render. A
+// build that throws costs that part alone, the way renderAll isolates the
+// page's panes: the parts after it and the focus restore still run.
 function draw(id, inputs, build) {
   const node = byId(id);
   const key = keyOf(inputs);
   const last = drawn.get(id);
   if (last && last.node === node && last.key === key) return;
-  build(node);
+  try {
+    build(node);
+  } catch (err) {
+    console.error(`sidebar part ${id} could not be drawn`, err);
+    return;
+  }
   drawn.set(id, { node, key });
 }
 

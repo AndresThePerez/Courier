@@ -1,5 +1,6 @@
 // The drawer below 900px at its edges: a window narrowed with focus in the
-// sidebar, the request already selected picked again, a history run opened,
+// sidebar, the request already selected picked again, a history run opened
+// (which closes the drawer as a pick does),
 // open-pick-open in quick succession, and a window widened with the drawer
 // shut. Focus is never left inside an inert subtree, and the sidebar is never
 // inert while it is a visible pane.
@@ -90,15 +91,23 @@ test('below 900px, picking the request that is already selected still closes the
   assert.deepEqual(listenerErrors, []);
 });
 
-test('below 900px, opening a history run leaves the drawer open and its button focused', () => {
+test('below 900px, opening a history run closes the drawer, and focus goes where picking a request sends it', () => {
   boot({ narrow: true });
   byId('sidebar-toggle').click();
   const button = byId('history-list').querySelector('button');
   button.focus();
   button.click();
   assert.deepEqual(opened, ['run-1']);
-  assert.deepEqual(shut(), OPEN);
-  assert.ok(document.activeElement === button);
+  assert.deepEqual(shut(), CLOSED);
+  assert.ok(!drawer().contains(document.activeElement), 'focus was left inside the inert drawer');
+  const afterRun = document.activeElement;
+
+  byId('sidebar-toggle').click();
+  const pick = row('Find');
+  pick.focus();
+  pick.click();
+  assert.ok(document.activeElement === afterRun, 'focus went somewhere other than where a pick sends it');
+  assert.deepEqual(listenerErrors, []);
 });
 
 test('open, pick, open, pick in quick succession ends shut, and the toggle\'s expanded state follows every step', () => {

@@ -75,6 +75,6 @@ test('a copy made because the saved request changed elsewhere while open says th
   assert.equal(note(), saidFor(copy.name));
   assert.notEqual(copy.name, 'Typed', 'what was typed is in the run before Save');
   const row = byId('sequence-list').querySelectorAll('.seq-row')[0];
-  assert.equal(row.querySelector('.seq-name').textContent, copy.name, 'the queued row still shows the request it held before the copy');
+  assert.equal(row.querySelector('.seq-name').textContent, copy.name, 'the queued row does not show the copy the entry now holds');
   assert.deepEqual(listenerErrors, []);
 });

@@ -48,10 +48,14 @@ test('below 900px, picking a request in the open drawer closes it, makes it iner
   byId('sidebar-toggle').click();
   assert.deepEqual(closed(), { open: true, inert: false, hidden: null, expanded: 'true' });
 
-  row('collections-tree', 'Find').click();
+  const find = row('collections-tree', 'Find');
+  find.focus();
+  assert.ok(document.activeElement === find, 'the row did not take focus; the check below would prove nothing');
+  find.click();
   assert.deepEqual(picked, ['b1']);
   assert.deepEqual(closed(), { open: false, inert: true, hidden: 'true', expanded: 'false' });
   assert.ok(!drawer().contains(document.activeElement), 'focus was left inside the closed drawer');
+  assert.ok(document.activeElement === byId('sidebar-toggle'), 'focus did not go to the drawer\'s toggle');
 
   byId('sidebar-toggle').click();
   assert.deepEqual(closed(), { open: true, inert: false, hidden: null, expanded: 'true' });
