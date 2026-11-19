@@ -457,6 +457,11 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
    keeps the codes in one column whichever mark a row wears, or none: a
    skipped row's empty cell holds the same column. */
 .res-mark, .res-unmarked { flex: 0 0 4.2rem; color: var(--muted); font-size: 11px; }
+/* The status pill holds one column too, sized for its longest text, "no
+   response" (about 6.5rem with its padding), so the method and name after it
+   start in the same place on every row. A longer text would widen its own
+   pill rather than be cut. */
+.pill.res-status { flex: 0 0 7rem; text-align: center; }
 .res-detail { padding: 0.1rem 0.6rem 0.6rem; border-top: 1px solid var(--line); }
 .res-detail .block-heading { margin-top: 0.8rem; }
 

@@ -432,7 +432,7 @@ function resultRow(r, finished, endpoints) {
   const head = el('summary', { class: 'res-head', attrs: { 'data-focus-key': `res:${r.index}` } }, [
     el('span', { class: 'res-index mono', text: String((r.index || 0) + 1) }),
     rowMark(r, outcomes),
-    el('span', { class: `pill${r.skipped ? ' is-muted' : ''}`, text: pillText(r) }),
+    el('span', { class: `pill res-status${r.skipped ? ' is-muted' : ''}`, text: pillText(r) }),
     methodBadge(endpoints, r.endpoint),
     el('span', { class: 'res-body' }, [
       el('span', { class: 'res-name', text: r.name || r.endpoint }),

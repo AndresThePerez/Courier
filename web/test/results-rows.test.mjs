@@ -99,3 +99,30 @@ test('a skipped row has the same head cells in the same order as a passed one, i
   assert.ok(selectors.includes('.res-mark') && selectors.includes(`.${s[1]}`), `the column is held by ${selectors.join(', ')}`);
   assert.deepEqual(listenerErrors, []);
 });
+
+// The status pill holds one column on every row, so the method and the name
+// after it start at the same place whatever the pill says. The column is wide
+// enough for the longest text the page draws there: an upper-case letter of
+// the 10px pill font is under 0.8em wide with its 0.06em letter spacing, and
+// the pill adds 0.45rem of padding a side and a 1px border.
+test('every row\'s status pill, a code, no response or skipped, holds one column wide enough for the longest of them', () => {
+  live([
+    row(0),
+    row(1, { status: 0, passed: false, error: 'could not connect to the target', error_kind: 'connection', assertions: [] }),
+    row(2, { status: 0, passed: false, skipped: true, assertions: [] }),
+  ]);
+  const pills = [...byId('results-rows').querySelectorAll('.res-head')].map((h) => h.children[2]);
+  assert.deepEqual(pills.map((p) => p.textContent), ['200', 'no response', 'skipped'], 'the pills are not the case');
+  for (const p of pills) assert.ok(p.classList.contains('pill') && p.classList.contains('res-status'), `pill classes "${p.className}"`);
+
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const m = /(?:^|\})\s*\.pill\.res-status\s*\{([^}]*)\}/.exec(css);
+  assert.ok(m, 'no rule for .pill.res-status');
+  const basis = /flex:\s*0 0 ([\d.]+)rem/.exec(m[1]);
+  assert.ok(basis, `the column neither grows nor shrinks: ${m[1]}`);
+  const longest = Math.max(...pills.map((p) => p.textContent.length));
+  const needed = (longest * 0.8 * 10 + 2 * 0.45 * 16 + 2) / 16;
+  assert.ok(Number(basis[1]) >= needed, `${basis[1]}rem is under the ${needed.toFixed(2)}rem "${'x'.repeat(longest)}" needs`);
+  assert.match(m[1], /text-align:\s*center/);
+  assert.deepEqual(listenerErrors, []);
+});
