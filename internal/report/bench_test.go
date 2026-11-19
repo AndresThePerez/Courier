@@ -27,8 +27,8 @@ func latencies(n int) []float64 {
 	return out
 }
 
-// sortedLatencies pre-sorts outside the timed loop: Percentile and Histogram
-// take an already-sorted slice, and measuring the sort here would hide them.
+// sortedLatencies pre-sorts outside the timed loop: Percentile takes an
+// already-sorted slice, and measuring the sort here would hide it.
 func sortedLatencies(n int) []float64 {
 	s := latencies(n)
 	slices.Sort(s)
@@ -42,18 +42,6 @@ func BenchmarkPercentile(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				_ = Percentile(s, 95)
-			}
-		})
-	}
-}
-
-func BenchmarkHistogram(b *testing.B) {
-	for _, n := range sampleCounts {
-		s := sortedLatencies(n)
-		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				_ = Histogram(s)
 			}
 		})
 	}

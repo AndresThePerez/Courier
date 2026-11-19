@@ -41,10 +41,15 @@ func TestPercentileNearestRank(t *testing.T) {
 }
 
 // Buckets are the deploy-calibrated values, sized to the server's measured
-// 29-517ms range.
+// 29-517ms range, and half-open: a latency on a bound counts in the bucket
+// above it.
 func TestHistogramBucketsAndBoundaries(t *testing.T) {
 	s := []float64{1, 24.9, 25, 49, 50, 99, 100, 199, 200, 399, 400, 1200}
-	buckets := Histogram(s)
+	tal := newTally()
+	for _, ms := range s {
+		tal.AddResponse(200, ms, 0)
+	}
+	buckets := ComputeStats(-1, "overall", tal, time.Second).Histogram
 	if len(buckets) != 6 {
 		t.Fatalf("len(buckets) = %d, want 6", len(buckets))
 	}
@@ -62,8 +67,8 @@ func TestHistogramBucketsAndBoundaries(t *testing.T) {
 	if total != len(s) {
 		t.Errorf("bucket counts sum to %d, want %d", total, len(s))
 	}
-	if len(Histogram(nil)) != 6 {
-		t.Error("histogram must always have six buckets, even when empty")
+	if got := ComputeStats(-1, "overall", newTally(), time.Second).Histogram; len(got) != 6 {
+		t.Errorf("an empty tally has %d histogram buckets, want all six", len(got))
 	}
 }
 

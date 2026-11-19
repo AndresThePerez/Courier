@@ -361,21 +361,6 @@ var buckets = []Bucket{
 	{Label: "400ms+", From: 400, To: 0},
 }
 
-// Histogram buckets a latency distribution. It always returns all six buckets,
-// empty ones included, so a chart keeps a stable shape as a run progresses.
-func Histogram(sorted []float64) []Bucket {
-	out := slices.Clone(buckets)
-	for _, ms := range sorted {
-		for i := range out {
-			if out[i].To == 0 || ms < out[i].To {
-				out[i].Count++
-				break
-			}
-		}
-	}
-	return out
-}
-
 // IsCalibrated reports whether a run dispatched the sequence the SLO constants
 // were measured against. Order does not matter and a subset is not enough: the
 // gate was derived from the whole five-request mix, and a subset of it measures
