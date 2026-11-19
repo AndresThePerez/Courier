@@ -16,7 +16,7 @@ import * as workspace from './workspace.js';
 import * as runner from './render-runner.js';
 import {
   opsByType, valueKind, coerceValue, textOf, requestPayload, requestProblem, assertionProblem, whereIn, refusedText,
-  capitalized, sameRequest,
+  capitalized, sameRequest, cutText,
 } from './request-model.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
@@ -773,6 +773,12 @@ function renderSend(state) {
   const status = byId('send-status');
   const box = byId('send-response');
   byId('send-request').disabled = Boolean(send && send.pending);
+  // What the server cut from the request it sent is said with its answer,
+  // and goes with the next Send.
+  const cut = byId('send-cut');
+  const cutSaid = send && send.result ? cutText(send.result.truncated) : '';
+  cut.hidden = !cutSaid;
+  if (cut.textContent !== cutSaid) cut.textContent = cutSaid;
 
   if (!send) {
     status.textContent = '';

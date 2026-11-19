@@ -31,7 +31,7 @@ var requiredIDs = []string{
 	"editor-notice", "editor-empty", "editor-form", "editor-name", "editor-origin", "editor-note",
 	"endpoint-select", "param-rows", "add-param", "param-note",
 	"assertion-rows", "add-assertion", "assertion-note",
-	"send-request", "save-request", "send-status", "send-response",
+	"send-request", "save-request", "send-status", "send-cut", "send-response",
 
 	// first screen: what Courier is and how it is used
 	"product-statement", "first-steps",

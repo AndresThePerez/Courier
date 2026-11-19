@@ -142,8 +142,8 @@ const assertionOps = {
 // page's or the catalog's and are short; one past these bounds was not made
 // by the page.
 const MaxStoredAssertions = 20;
-const MaxParamValue = 256;
-const MaxParamWords = 32;
+export const MaxParamValue = 256;
+export const MaxParamWords = 32;
 export const MaxName = 120;
 const MaxId = 200;
 const MaxParams = 32;

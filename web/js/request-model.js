@@ -11,7 +11,7 @@
 // the page invented would be a request the visitor cannot send for no reason
 // the server would give.
 
-import { requestOf } from './storage.js';
+import { requestOf, MaxParamValue, MaxParamWords, MaxName } from './storage.js';
 
 // MaxAssertionText mirrors sandbox.MaxAssertionTextLen, the bound on an
 // assertion's JSON path and string value: counted in characters (runes), and
@@ -321,6 +321,35 @@ export const capitalized = (text) => (text ? text[0].toUpperCase() + text.slice(
 // once, then the server's message.
 export function refusedText(where, message) {
   return where ? `Refused - ${where}: ${message}` : `Refused - ${message}`;
+}
+
+// ---------------------------------------------------------------- cuts
+
+// cutField reads one field the server lists in `truncated` ("params.q",
+// "name", "id") as what a visitor calls it, with the limit it was cut to; a
+// field this does not know is shown as it came.
+function cutField(rest) {
+  const param = /^params\.(.+)$/s.exec(rest);
+  if (param) return `parameter ${param[1]} (${MaxParamValue} characters, ${MaxParamWords} words at most)`;
+  if (rest === 'name' || rest === 'id') return `${rest} (${MaxName} characters at most)`;
+  return rest;
+}
+
+// cutText is the one sentence the server's `truncated` list reads as, or ''
+// for none. requestLabel(index) names the request a run's field belongs to
+// ("Request 2"), from the index the server gives in its own payload; Send's
+// fields belong to the one request sent and are named without it. Only a
+// list of text is read.
+export function cutText(list, requestLabel = null) {
+  if (!Array.isArray(list)) return '';
+  const said = [];
+  for (const field of list) {
+    if (typeof field !== 'string' || field === '') continue;
+    const m = requestLabel ? /^sequence\[(\d+)\]\.(.+)$/s.exec(field) : null;
+    const who = m ? requestLabel(Number(m[1])) : '';
+    said.push(m && who ? `${who}, ${cutField(m[2])}` : cutField(field));
+  }
+  return said.length > 0 ? `Cut to fit: ${said.join('; ')}.` : '';
 }
 
 // ---------------------------------------------------------------- run settings
