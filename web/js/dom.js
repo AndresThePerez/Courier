@@ -64,3 +64,15 @@ export function fmtTime(iso) {
   if (Number.isNaN(d.getTime())) return '-';
   return d.toLocaleTimeString();
 }
+
+// fmtDateTime is a run's start as a day and a time, in the visitor's locale and
+// time zone unless a test names others: history lists runs across days, and a
+// time alone reads as today. Unknown or unreadable is a dash, as in fmtTime.
+export function fmtDateTime(iso, { locale, timeZone } = {}) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '-';
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone,
+  }).format(d);
+}

@@ -620,8 +620,8 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     }
   }
 
-  // openRun reopens a stored run from the history rail. History is kept to the
-  // five most recent runs, list and click-to-reopen only. Whatever the tab was
+  // openRun reopens a stored run from the history rail. History lists every
+  // run the server keeps, list and click-to-reopen only. Whatever the tab was
   // showing or following stays until the report is here: a click that fails
   // must not cost the visitor the run they were watching.
   function openRun(id) {

@@ -155,6 +155,8 @@ html, body {
 /* "in run" marks a request already queued; it never shrinks, so a long name
    is what gives way. */
 .in-run { flex: 0 0 auto; font-size: 10px; color: var(--accent); white-space: nowrap; }
+/* A history row's verdict, in the hue that already means it. */
+.history-verdict { font-size: 10px; letter-spacing: 0.04em; }
 .req-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The answer to + and "Add all". Empty, it takes no room; it is never hidden,
    because a live region taken out of the page is not announced when it

@@ -2,7 +2,7 @@
 // requests and saved collections), and history.
 
 import { get, set, deepCopy } from './store.js';
-import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
+import { el, replace, byId, fmtMs, fmtDateTime } from './dom.js';
 import * as workspace from './workspace.js';
 import { savedCollections, methodBadge } from './render-runner.js';
 
@@ -289,8 +289,14 @@ function renderSaved(list, counts, endpoints) {
   }));
 }
 
+// A verdict is coloured by what it says; one this page does not know is muted.
+const verdictTone = { PASS: 'pass', FAIL: 'fail', 'N/A': 'muted' };
+
 function historyRow(entry) {
   const status = entry.status === 'completed' ? '' : ` (${entry.status})`;
+  const verdict = entry.verdict
+    ? el('span', { class: `history-verdict mono ${verdictTone[entry.verdict] || 'muted'}`, text: entry.verdict })
+    : null;
   return el('div', { class: 'req-row' }, [
     el('button', {
       class: 'req-open',
@@ -301,7 +307,9 @@ function historyRow(entry) {
     }, [
       el('span', { class: 'method', text: entry.mode === 'performance' ? 'PERF' : 'FUNC' }),
       ' ',
-      el('span', { text: `${fmtTime(entry.started_at)}${status}` }),
+      el('span', { text: `${fmtDateTime(entry.started_at)}${status}` }),
+      verdict && ' ',
+      verdict,
       el('div', { class: 'note', text: `${entry.summary} - ${fmtMs(entry.duration_ms)}` }),
     ]),
   ]);
@@ -475,11 +483,11 @@ function renderWorkspace(ws, state, counts) {
 }
 
 function renderHistory(hist, state) {
-  // The five most recent runs, list and click-to-reopen only.
-  const recent = state.history.slice(0, 5);
-  const rows = recent.length === 0
+  // Every run the server keeps (at most 20), newest first as it sends them,
+  // list and click-to-reopen only; the sidebar is what scrolls.
+  const rows = state.history.length === 0
     ? [el('div', { class: 'tree-empty', text: 'No runs yet.' })]
-    : recent.map(historyRow);
+    : state.history.map(historyRow);
   // An entry that could not be opened says so here, beside the list it was
   // clicked in; nothing else on the page would explain the click.
   replace(hist, [state.historyNote ? el('div', { class: 'note', text: state.historyNote }) : null, ...rows]);
