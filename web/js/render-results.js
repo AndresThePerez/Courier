@@ -459,7 +459,7 @@ function renderDashboard(rep) {
   const overall = perf.overall || {};
   renderVerdict(rep, perf);
   renderLadder(overall.sla || {});
-  renderApdex(overall.apdex || {});
+  renderApdex(overall.apdex || {}, perf.slo);
   renderLatency(overall.latency || {});
   renderHistogram(overall.histogram || []);
   renderPerRequest(perf.per_request || []);
@@ -538,7 +538,23 @@ function clampPct(n) {
   return Math.min(Math.max(n, 0), 100);
 }
 
-function renderApdex(apdex) {
+// apdexT is the threshold the report's Apdex was scored against, or null when
+// the report does not say: the heading and the note then name no number
+// rather than one the server may not have used.
+function apdexT(slo) {
+  const t = slo && typeof slo === 'object' ? slo.apdex_t_ms : null;
+  return typeof t === 'number' && Number.isFinite(t) && t > 0 ? t : null;
+}
+
+// msText writes a threshold the way the report states it: 50, 37.5.
+function msText(ms) {
+  return String(Number(ms.toPrecision(4)));
+}
+
+function renderApdex(apdex, slo) {
+  const t = apdexT(slo);
+  setText(byId('apdex-heading'), t === null ? 'Apdex' : `Apdex - T = ${msText(t)}ms`);
+  const bands = t === null ? '' : `Satisfied at or under ${msText(t)}ms, tolerating at or under ${msText(4 * t)}ms. `;
   const n = (apdex.satisfied || 0) + (apdex.tolerating || 0) + (apdex.frustrated || 0);
   replace(byId('apdex-block'), [
     el('div', { class: 'apdex-head' }, [
@@ -551,7 +567,7 @@ function renderApdex(apdex) {
     }),
     el('p', {
       class: 'note',
-      text: 'Satisfied at or under 50ms, tolerating at or under 200ms. Every non-2xx and every transport failure counts as frustrated however fast it was; dispatches Courier aborted are not counted at all.',
+      text: `${bands}Every non-2xx and every transport failure counts as frustrated however fast it was; dispatches Courier aborted are not counted at all.`,
     }),
   ]);
 }

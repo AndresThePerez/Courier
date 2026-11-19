@@ -60,7 +60,7 @@ var requiredIDs = []string{
 	"perf-live", "perf-elapsed", "perf-rps", "perf-counters",
 
 	// results — performance dashboard
-	"perf-dashboard", "verdict-badge", "sla-ladder", "apdex-block",
+	"perf-dashboard", "verdict-badge", "sla-ladder", "apdex-heading", "apdex-block",
 	"latency-table", "histogram", "per-request-table", "error-block",
 }
 
