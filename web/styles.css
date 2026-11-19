@@ -436,8 +436,9 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
 .res-target { color: var(--muted); font-size: 11px; }
 .res-num { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
 /* Whether a row's checks held, kept apart from its status code. A fixed width
-   keeps the codes in one column whichever mark a row wears. */
-.res-mark { flex: 0 0 4.2rem; color: var(--muted); font-size: 11px; }
+   keeps the codes in one column whichever mark a row wears, or none: a
+   skipped row's empty cell holds the same column. */
+.res-mark, .res-unmarked { flex: 0 0 4.2rem; color: var(--muted); font-size: 11px; }
 .res-detail { padding: 0.1rem 0.6rem 0.6rem; border-top: 1px solid var(--line); }
 .res-detail .block-heading { margin-top: 0.8rem; }
 

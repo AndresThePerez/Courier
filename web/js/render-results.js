@@ -384,11 +384,13 @@ function pillText(r) {
 // rowMark says whether a row's assertions held, apart from its status code:
 // a 400 a request expected is a pass, and a 200 it did not expect a failure,
 // so the code itself is never coloured. A skipped row was not checked and has
-// no mark; one that passed with nothing to check says so rather than wearing
-// a green PASS nobody earned. A failure without a response is still a FAIL:
-// the server failed every check it could not make.
+// no mark, but keeps the empty cell, so its other cells line up with every
+// other row's; there is nothing in it to announce. One that passed with
+// nothing to check says so rather than wearing a green PASS nobody earned. A
+// failure without a response is still a FAIL: the server failed every check
+// it could not make.
 function rowMark(r, outcomes) {
-  if (r.skipped) return null;
+  if (r.skipped) return el('span', { class: 'res-unmarked', attrs: { 'aria-hidden': 'true' } });
   if (!r.passed) return el('span', { class: 'res-mark mono fail', text: 'FAIL' });
   if (outcomes.length === 0) return el('span', { class: 'res-mark mono', text: 'no checks' });
   return el('span', { class: 'res-mark mono pass', text: 'PASS' });
