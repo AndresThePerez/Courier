@@ -41,15 +41,13 @@
 
       <section class="rail-section">
         <!-- Reset sits beside the heading, not in it: a control inside an h2
-             becomes part of the heading's name. The badge stays in the
-             heading, which is named by its first line alone. -->
+             becomes part of the heading's name. The badge sits under the
+             row, outside the heading too, so the heading reads as its name. -->
         <div class="rail-heading-row">
-          <h2 class="rail-heading" aria-labelledby="workspace-heading-name">
-            <span id="workspace-heading-name">My Workspace</span>
-            <span class="badge">Saved in this browser only</span>
-          </h2>
+          <h2 class="rail-heading">My Workspace</h2>
           <button id="reset-workspace" type="button" class="link-btn">Reset</button>
         </div>
+        <p class="badge rail-heading-badge">Saved in this browser only</p>
         <div id="reset-confirm" class="confirm" hidden></div>
         <div id="workspace-note" class="note" role="status" hidden></div>
         <div id="workspace-tree" class="tree"></div>

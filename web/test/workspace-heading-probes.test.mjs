@@ -1,6 +1,6 @@
 // The My Workspace heading row and the note a queued copy leaves, probed at
 // their edges: the heading row holds the heading and Reset and nothing else,
-// the confirm and the workspace note keep their place after it, Cancel and a
+// the badge, the confirm and the workspace note keep their place after it, Cancel and a
 // refused reset behave as before, and the copy note is shown only while it is
 // true.
 
@@ -56,21 +56,20 @@ const confirmButton = (text) => [...byId('reset-confirm').querySelectorAll('butt
 const note = () => (byId('editor-note').hidden ? '' : byId('editor-note').textContent);
 const editOf = (i) => [...[...byId('sequence-list').querySelectorAll('.seq-row')][i].querySelectorAll('button')].find((b) => b.textContent === 'Edit');
 
-test('the heading row holds the heading then Reset and nothing else, followed by the confirm, the note and the tree in that order', () => {
+test('the heading row holds the heading then Reset and nothing else, followed by the badge, the confirm, the note and the tree in that order', () => {
   const reset = byId('reset-workspace');
   const row = reset.parentNode;
   assert.deepEqual([...row.children].map((c) => c.localName), ['h2', 'button']);
   const h = row.children[0];
-  const label = h.getAttribute('aria-labelledby');
-  assert.ok(label, 'the heading is not named by its first line');
-  assert.equal(document.querySelectorAll(`[id="${label}"]`).length, 1, 'the heading\'s name is not one element');
-  assert.ok(h.contains(byId(label)), 'the heading is named by something outside it');
-  assert.equal(byId(label).textContent.trim(), 'My Workspace');
+  assert.equal(h.getAttribute('aria-labelledby'), null, 'a heading named by its own text needs no aria-labelledby');
+  assert.equal(h.children.length, 0, 'the heading holds more than its name');
+  assert.equal(h.textContent.trim(), 'My Workspace');
   assert.equal(document.querySelectorAll('#reset-workspace').length, 1);
 
   const section = [...row.parentNode.children];
-  const after = section.slice(section.indexOf(row) + 1).map((n) => n.id);
-  assert.deepEqual(after.slice(0, 3), ['reset-confirm', 'workspace-note', 'workspace-tree']);
+  const following = section.slice(section.indexOf(row) + 1);
+  assert.ok(following[0].classList.contains('badge'), 'the badge does not come first after the heading row');
+  assert.deepEqual(following.slice(1, 4).map((n) => n.id), ['reset-confirm', 'workspace-note', 'workspace-tree']);
 });
 
 test('Reset then Cancel keeps every saved request, hides the confirm, and a second Reset opens one confirm with two choices', () => {

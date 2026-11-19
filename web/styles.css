@@ -107,16 +107,17 @@ html, body {
 }
 /* A heading with a badge and a control: the 280px rail cannot hold all three
    on one line, so the heading's name and Reset share the first line at its two
-   ends and the badge takes its own line under the name, wrapping inside the
-   heading before it could push anything sideways. */
+   ends and the badge takes its own line under them, wrapping before it could
+   push anything sideways. The badge is outside the heading, so the heading
+   reads as its name alone; it keeps the weight it had inside it. */
 .rail-heading-row {
   display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem;
-  margin: 0 0 0.4rem;
+  margin: 0;
 }
 .rail-heading-row > .rail-heading { display: block; flex: 1 1 auto; min-width: 0; margin: 0; }
-.rail-heading-row > .rail-heading .badge {
-  display: block; width: fit-content; max-width: 100%; margin-top: 0.15rem;
-  white-space: normal; overflow-wrap: anywhere;
+.badge.rail-heading-badge {
+  display: block; width: fit-content; max-width: 100%; margin: 0.15rem 0 0.4rem;
+  font-weight: bold; white-space: normal; overflow-wrap: anywhere;
 }
 .rail-heading-row > .link-btn { flex: 0 0 auto; }
 .tree { display: flex; flex-direction: column; gap: 0.15rem; }

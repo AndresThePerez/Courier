@@ -1,7 +1,7 @@
 // The My Workspace heading: its name is the section's name, the "saved in
-// this browser only" badge sits in it beside that name, and Reset is a
-// control of its own beside the heading rather than part of it, still
-// opening the same inline confirm.
+// this browser only" badge sits right under the heading's row, outside the
+// heading, and Reset is a control of its own beside the heading rather than
+// part of it, still opening the same inline confirm.
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,12 +36,15 @@ function nameOf(node) {
   return node.textContent.replace(/\s+/g, ' ').trim();
 }
 
-test('the My Workspace heading is named My Workspace and holds the badge, not the Reset control', () => {
+test('the My Workspace heading is named My Workspace, the badge follows its row, and Reset is not in it', () => {
   const h = heading();
   assert.equal(nameOf(h), 'My Workspace');
-  const badge = [...h.querySelectorAll('.badge')];
-  assert.equal(badge.length, 1, 'the badge left the heading');
-  assert.equal(badge[0].textContent, 'Saved in this browser only');
+  assert.equal(h.textContent.trim(), 'My Workspace', 'the heading holds more than its name');
+  const row = h.parentNode;
+  const siblings = [...row.parentNode.children];
+  const badge = siblings[siblings.indexOf(row) + 1];
+  assert.ok(badge && badge.classList.contains('badge'), 'the badge is not the element right after the heading row');
+  assert.equal(badge.textContent, 'Saved in this browser only');
   assert.equal(h.querySelector('button'), null, 'a control inside the heading becomes part of its name');
 
   const reset = byId('reset-workspace');
