@@ -523,7 +523,7 @@ function paramRow(key, value, index, allowed, used) {
   // sharing a key would silently collapse into one.
   const keySelect = el('select', {
     class: 'param-key mono',
-    attrs: { 'data-focus-key': `param-key:${index}`, 'aria-label': 'Parameter name' },
+    attrs: { name: `param-key-${index}`, 'data-focus-key': `param-key:${index}`, 'aria-label': 'Parameter name' },
     on: {
       change: (e) => {
         const next = e.target.value;
@@ -547,6 +547,7 @@ function paramRow(key, value, index, allowed, used) {
         autocomplete: 'off',
         spellcheck: 'false',
         placeholder: 'value',
+        name: `param-value-${index}`,
         'aria-label': `Value for ${key}`,
         'data-focus-key': `param-value:${index}`,
       },
@@ -615,14 +616,14 @@ function assertionRow(a, index) {
 
   const typeSelect = el('select', {
     class: 'assert-type',
-    attrs: { 'data-focus-key': `assert-type:${index}`, 'aria-label': 'Assertion type' },
+    attrs: { name: `assert-type-${index}`, 'data-focus-key': `assert-type:${index}`, 'aria-label': 'Assertion type' },
     on: { change: (e) => changeAssertionType(index, e.target.value) },
   }, assertionTypes.map((t) => el('option', { text: t, attrs: { value: t, selected: t === a.type } })));
   typeSelect.value = textOf(a.type);
 
   const opSelect = el('select', {
     class: 'assert-op',
-    attrs: { 'data-focus-key': `assert-op:${index}`, 'aria-label': 'Operator' },
+    attrs: { name: `assert-op-${index}`, 'data-focus-key': `assert-op:${index}`, 'aria-label': 'Operator' },
     on: { change: (e) => { const op = e.target.value; edit((d) => { d.assertions[index].op = op; }); } },
   }, (opsByType[a.type] || []).map((op) => el('option', { text: op, attrs: { value: op, selected: op === a.op } })));
   opSelect.value = textOf(a.op);
@@ -640,6 +641,7 @@ function assertionRow(a, index) {
         placeholder: '$.total',
         autocomplete: 'off',
         spellcheck: 'false',
+        name: `assert-path-${index}`,
         'aria-label': 'JSON path',
         'data-focus-key': `assert-path:${index}`,
       },
@@ -660,6 +662,7 @@ function assertionRow(a, index) {
         placeholder: kind === 'number' ? 'number' : 'value',
         autocomplete: 'off',
         spellcheck: 'false',
+        name: `assert-value-${index}`,
         'aria-label': 'Expected value',
         'data-focus-key': `assert-value:${index}`,
       },

@@ -158,10 +158,15 @@ function renderSummary(state, rep, run, mode) {
   const throttled =
     mode === 'performance' && status === 'running' && !stateChanged && now - lastSummaryAt < SummaryThrottleMs;
   // The summary is the page's live region, so a render that would draw it
-  // exactly as it stands (a status poll, a keystroke elsewhere) leaves it be:
-  // replacing it would announce it again.
-  const drawn = [shown, bits.filter(Boolean).join('  ·  '), state.spectator ? 'spectating' : ''].join('|');
-  const unchanged = node === lastSummaryNode && id === lastSummaryRunId && drawn === lastSummaryDrawn;
+  // exactly as it stands (a status poll, a keystroke elsewhere, the same start
+  // time written another way) leaves it be: replacing it would announce it
+  // again. What is compared is what the nodes below would say, and nothing
+  // else.
+  const meta = bits.filter(Boolean).join('  ·  ');
+  const gone = Boolean(!rep && outcome && outcome.status === 'unavailable');
+  const lost = Boolean(!rep && outcome && outcome.report === 'failed');
+  const drawn = JSON.stringify([mode, status, judged && [judged.text, judged.tone], Boolean(state.spectator), meta, gone, lost]);
+  const unchanged = node === lastSummaryNode && drawn === lastSummaryDrawn;
 
   if (!throttled && !unchanged) {
     lastSummaryRunId = id;
@@ -176,12 +181,12 @@ function renderSummary(state, rep, run, mode) {
         judged && el('span', { class: `pill run-verdict${judged.tone}`, title: 'Verdict', text: judged.text }),
         state.spectator && el('span', { class: 'badge', text: 'spectating' }),
       ]),
-      el('div', { class: 'results-meta mono', text: bits.filter(Boolean).join('  ·  ') }),
-      !rep && outcome && outcome.status === 'unavailable' && el('p', {
+      el('div', { class: 'results-meta mono', text: meta }),
+      gone && el('p', {
         class: 'note',
         text: 'This run is no longer on the server.',
       }),
-      !rep && outcome && outcome.report === 'failed' && el('p', {
+      lost && el('p', {
         class: 'note',
         text: 'The finished report could not be loaded - open it from History.',
       }),

@@ -883,6 +883,7 @@ function sequenceRow(entry, index, total, endpoints) {
     class: 'seq-check',
     type: 'checkbox',
     attrs: {
+      name: `seq-check-${entry.key}`,
       'aria-label': `Include ${r.name || r.id} in the run`,
       'data-focus-key': `seq-check:${entry.key}`,
     },
