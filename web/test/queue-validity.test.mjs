@@ -63,7 +63,7 @@ test('Save refuses a draft the server would refuse, with the reason beside the a
   boot({ saved: [bad('ws-b')] });
   sidebar.selectRequest(workspace.find('ws-b'));
   byId('save-request').click();
-  assert.equal(byId('editor-note').textContent, 'Not saved - Assertion 2: JSON path is required');
+  assert.equal(byId('editor-note').textContent, 'Kept in this browser, but not ready to run - Assertion 2: JSON path is required');
   const path = assertionRow(1).querySelector('.assert-path');
   assert.equal(path.getAttribute('aria-invalid'), 'true');
   assert.equal(byId(path.getAttribute('aria-describedby')).textContent, 'JSON path is required');

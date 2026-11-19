@@ -237,7 +237,7 @@ test('a second Edit on a row marked refused keeps the mark and the note, and the
   typeInto(pathInput(0), '');
   byId('save-request').click();
   const refused = note();
-  assert.match(refused, /^Not saved/);
+  assert.match(refused, /^Kept in this browser, but not ready to run - /);
   assert.deepEqual(marked(), [2]);
   editOf(1).click();
   assert.equal(note(), refused, 'the second press changed the note');

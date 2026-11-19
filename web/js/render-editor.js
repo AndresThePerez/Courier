@@ -224,11 +224,11 @@ function edit(mutate) {
   set(patch);
 }
 
-// saveDraft is Save. A request the server would refuse is not saved: the
-// refusal is said beside the assertion, and Save is what would put the request
-// into a queued entry it was opened from, so that entry is not touched either.
-// (Keystrokes are still kept in this browser as they are typed, so a reload
-// loses nothing; Save is the step that calls a request done.)
+// saveDraft is Save. Keystrokes are kept in this browser as they are typed,
+// so a reload loses nothing, and the sentence says so; Save is the step that
+// calls a request ready to run. A request the server would refuse is not: the
+// refusal is said beside the field, and the queued entry it was opened from,
+// which Save would update, is not touched.
 function saveDraft() {
   const current = get().draft;
   if (!current) return;
@@ -241,7 +241,7 @@ function saveDraft() {
   if (problem) {
     const where = whereIn(problem.field);
     saveRefusal = { id: current.id, assertion: problem.assertion, part: problem.part, message: problem.message };
-    saveNote = `Not saved - ${where && where.label ? `${capitalized(where.label)}: ` : ''}${problem.message}`;
+    saveNote = `Kept in this browser, but not ready to run - ${where && where.label ? `${capitalized(where.label)}: ` : ''}${problem.message}`;
     set({});
     return;
   }
