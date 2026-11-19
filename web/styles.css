@@ -456,8 +456,11 @@ a.btn { display: inline-block; text-decoration: none; color: var(--text); }
 .res-num { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
 /* Whether a row's checks held, kept apart from its status code. A fixed width
    keeps the codes in one column whichever mark a row wears, or none: a
-   skipped row's empty cell holds the same column. */
-.res-mark, .res-unmarked { flex: 0 0 4.2rem; color: var(--muted); font-size: 11px; }
+   skipped row's empty cell holds the same column. The width takes the longest
+   mark, "no checks", on one line (by the estimate
+   web/test/results-rows.test.mjs makes), so a run that asserted nothing does
+   not wear rows twice as tall. */
+.res-mark, .res-unmarked { flex: 0 0 4.8rem; color: var(--muted); font-size: 11px; white-space: nowrap; }
 /* The status pill holds one column too, sized for its longest text, "no
    response" (at most about 7.3rem of the 14px root with its padding, by the
    estimate web/test/results-rows.test.mjs makes), so the method and name

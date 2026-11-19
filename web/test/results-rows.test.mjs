@@ -92,11 +92,49 @@ test('a skipped row has the same head cells in the same order as a passed one, i
   assert.equal(skipped.querySelector('.res-mark'), null, 'a skipped row counts as marked');
 
   // The empty cell holds the mark's column: it takes the mark's own width.
-  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
-  const rule = css.match(/([^{}]*)\{[^}]*flex: 0 0 4\.2rem[^}]*\}/);
-  assert.ok(rule, 'the mark column rule');
-  const selectors = rule[1].split(',').map((x) => x.trim().split('\n').pop().trim());
-  assert.ok(selectors.includes('.res-mark') && selectors.includes(`.${s[1]}`), `the column is held by ${selectors.join(', ')}`);
+  const rule = markRule();
+  assert.ok(rule.selectors.includes('.res-mark') && rule.selectors.includes(`.${s[1]}`), `the column is held by ${rule.selectors.join(', ')}`);
+  assert.match(rule.body, /flex:\s*0 0 [\d.]+rem/, 'the mark column neither grows nor shrinks');
+  assert.deepEqual(listenerErrors, []);
+});
+
+// markRule is the stylesheet rule that sizes the mark column: its selectors
+// and its declarations, comments left out.
+function markRule() {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...css.matchAll(/([^{}]*)\{([^}]*)\}/g)]
+    .map((m) => ({ selectors: m[1].split(',').map((x) => x.trim()), body: m[2] }))
+    .filter((r) => r.selectors.includes('.res-mark'));
+  assert.equal(rules.length, 1, `rules for .res-mark: ${rules.length}`);
+  return rules[0];
+}
+
+// The mark holds one line on every row: the longest mark the page draws,
+// "no checks", fits its column at the 14px root without wrapping, so every
+// row of a run that asserted nothing is as tall as one that passed. A
+// character of the monospace font the mark is set in is under 0.65em wide.
+test('every mark, PASS, FAIL or no checks, fits its column on one line', () => {
+  live([
+    row(0),
+    row(1, { passed: false, assertions: [{ assertion: { type: 'status', op: 'eq', value: 201 }, passed: false, expected: '201', actual: '200' }] }),
+    row(2, { assertions: [] }),
+  ]);
+  const marks = [...byId('results-rows').querySelectorAll('.res-head')].map((h) => h.children[1]);
+  assert.deepEqual(marks.map((m) => m.textContent), ['PASS', 'FAIL', 'no checks'], 'the marks are not the case');
+  for (const m of marks) assert.ok(m.classList.contains('res-mark') && m.classList.contains('mono'), `mark classes "${m.className}"`);
+
+  const rule = markRule();
+  assert.match(rule.body, /white-space:\s*nowrap/, 'the mark may wrap');
+  const basis = /flex:\s*0 0 ([\d.]+)rem/.exec(rule.body);
+  const font = /font-size:\s*(\d+(?:\.\d+)?)px/.exec(rule.body);
+  assert.ok(basis && font, `the column's width or the mark's font size is not where the estimate reads it: ${rule.body}`);
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rootRule = /(?:^|\})\s*html\s*,\s*body\s*\{([^}]*)\}/.exec(css);
+  const root = rootRule && /font:\s*(\d+(?:\.\d+)?)px/.exec(rootRule[1]);
+  assert.ok(root, 'the root font size is not set in px');
+  const longest = Math.max(...marks.map((m) => m.textContent.length));
+  const needed = (longest * 0.65 * Number(font[1])) / Number(root[1]);
+  assert.ok(Number(basis[1]) >= needed, `${basis[1]}rem is under the ${needed.toFixed(2)}rem "no checks" needs`);
   assert.deepEqual(listenerErrors, []);
 });
 
