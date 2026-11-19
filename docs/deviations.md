@@ -1502,8 +1502,9 @@ the rule is kept. A skipped row counts for nothing, whatever assertions it lists
 was evaluated.
 
 **What the page shows:** the page takes the verdict the server sends. Its own fallback,
-which works the verdict out from the rows when a report carries none, still follows N38's
-rule, and is brought into line separately.
+which works the verdict out from the rows when a report carries none, follows the same
+table: `web/test/verdict-table.test.mjs` holds it to each row, a completed run with no
+assertion anywhere and every request answered reading `N/A - nothing was asserted`.
 
 **Proof:** `internal/report/verdict_rule_test.go`:
 `TestTheFunctionalVerdictRuleCaseByCase` (every row of the table);
@@ -1746,3 +1747,21 @@ deadline answers), `TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadli
 `internal/api/compose_limits_test.go`: `TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit`.
 The existing tests of the gate and of bursts of 200 and 1,000 small posts pass unchanged,
 run 30 times each with the race detector at `GOMAXPROCS` 1, 4 and 16.
+
+## N48 — What older entries say that is no longer so
+
+Corrections to entries this record keeps as written:
+
+- **N18** says the stream handler uses `SubscribeReplay`. It subscribes through
+  `SubscribeRun` (`internal/api/runs.go`), which also reports which run the replay belongs
+  to and resumes after a `Last-Event-ID` (N38). `Subscribe` and `SubscribeReplay` remain,
+  each built on `SubscribeRun`, and only tests call them.
+- **N44** says the editor's parameter input takes at most 256 characters, by its
+  `maxlength`. It has none now: a browser counts `maxlength` in UTF-16 units, so it stopped
+  a value at 128 characters outside the BMP where the server keeps 256, and a stored value
+  already over it could not be typed into until it was shortened. A note under the
+  parameter table says instead, before anything is sent, which values the server will cut:
+  `Parameter q is longer than 256 characters or 32 words - it will be cut to fit when sent.`
+  It asks the page's copy of the server's cut (`cutParamValue` in `web/js/storage.js`),
+  and `web/limits_test.go` holds the editor to having no other limit
+  (`web/test/param-cut-editor-note.test.mjs`).

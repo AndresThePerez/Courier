@@ -30,8 +30,9 @@ const (
 	MaxAssertions = 20
 
 	// A parameter value is cut, never refused, to the target's own limits on
-	// a search text: it refuses a q over 256 characters or 32 terms with a
-	// 400, so a longer value sent whole would come back as that refusal.
+	// a search text: it is about to refuse a q over 256 characters or 32
+	// terms with a 400, so a longer value sent whole would come back as that
+	// refusal.
 	// CutParamValue states the rule exactly.
 	MaxParamValueLen = 256 // characters, not bytes
 	MaxParamWords    = 32  // white-space-separated words
