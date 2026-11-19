@@ -103,8 +103,9 @@ test('a skipped row has the same head cells in the same order as a passed one, i
 // The status pill holds one column on every row, so the method and the name
 // after it start at the same place whatever the pill says. The column is wide
 // enough for the longest text the page draws there: an upper-case letter of
-// the 10px pill font is under 0.8em wide with its 0.06em letter spacing, and
-// the pill adds 0.45rem of padding a side and a 1px border.
+// the pill font is under 0.8em wide with its 0.06em letter spacing, and the
+// pill adds its padding a side and a 1px border. A rem is the root's font
+// size, which the stylesheet sets on html, so every size is read from it.
 test('every row\'s status pill, a code, no response or skipped, holds one column wide enough for the longest of them', () => {
   live([
     row(0),
@@ -121,7 +122,17 @@ test('every row\'s status pill, a code, no response or skipped, holds one column
   const basis = /flex:\s*0 0 ([\d.]+)rem/.exec(m[1]);
   assert.ok(basis, `the column neither grows nor shrinks: ${m[1]}`);
   const longest = Math.max(...pills.map((p) => p.textContent.length));
-  const needed = (longest * 0.8 * 10 + 2 * 0.45 * 16 + 2) / 16;
+  const rootRule = /(?:^|\})\s*html\s*,\s*body\s*\{([^}]*)\}/.exec(css);
+  assert.ok(rootRule, 'no rule for html, body');
+  const root = /font:\s*(\d+(?:\.\d+)?)px/.exec(rootRule[1]);
+  assert.ok(root, `the root font size is not set in px: ${rootRule[1]}`);
+  const pillRule = /(?:^|\})\s*\.pill\s*\{([^}]*)\}/.exec(css);
+  assert.ok(pillRule, 'no rule for .pill');
+  const pillFont = /font-size:\s*(\d+(?:\.\d+)?)px/.exec(pillRule[1]);
+  const pad = /padding:\s*[\d.]+rem\s+([\d.]+)rem/.exec(pillRule[1]);
+  assert.ok(pillFont && pad, `the pill's font size or padding is not where the estimate reads it: ${pillRule[1]}`);
+  const rem = Number(root[1]);
+  const needed = (longest * 0.8 * Number(pillFont[1]) + 2 * Number(pad[1]) * rem + 2) / rem;
   assert.ok(Number(basis[1]) >= needed, `${basis[1]}rem is under the ${needed.toFixed(2)}rem "${'x'.repeat(longest)}" needs`);
   assert.match(m[1], /text-align:\s*center/);
   assert.deepEqual(listenerErrors, []);
