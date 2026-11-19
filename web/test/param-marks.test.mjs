@@ -130,3 +130,25 @@ test('a run refused for a parameter marks nothing in another request open in the
   assert.equal(invalid().length, 0);
   assert.equal(marksInParams().length, 0);
 });
+
+test('a second run refusal on another parameter of the open request replaces the first: one message, one id', async () => {
+  runner.add(req(1));
+  const refuse = async (field, error) => {
+    fetchStub.respond('/api/runs', { status: 400, body: { error, field } }, { method: 'POST' });
+    byId('start-run').click();
+    await flush();
+  };
+  await refuse('sequence[0].params.page', 'page must be a number');
+  const row = byId('sequence-list').querySelectorAll('.seq-row')[0];
+  [...row.querySelectorAll('button')].find((b) => b.textContent === 'Edit').click();
+  assert.equal(valueOf('page').getAttribute('aria-invalid'), 'true', 'the first refusal is not marked; the case proves nothing');
+
+  await refuse('sequence[0].params.q', 'q is not allowed');
+  assert.equal(marksInParams().length, 1, 'two messages in the parameter table');
+  assert.equal(document.querySelectorAll('#param-error').length, 1, 'two elements carry the id param-error');
+  assert.equal(marksInParams()[0].textContent, 'q is not allowed');
+  assert.equal(valueOf('q').getAttribute('aria-invalid'), 'true');
+  assert.equal(valueOf('page').getAttribute('aria-invalid'), null);
+  assert.equal(valueOf('page').getAttribute('aria-describedby'), null);
+  assert.deepEqual(listenerErrors, []);
+});
