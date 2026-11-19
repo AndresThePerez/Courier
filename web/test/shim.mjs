@@ -39,6 +39,9 @@
 //   - EventSource: every instance recorded; tests open it, emit named events,
 //     fire errors, and read how many were opened and closed.
 //   - navigator.clipboard.writeText, recording what was written.
+//   - Printing: a node prints as a one-line tag, and its links to the rest of
+//     the page are not enumerable, so a failed assertion naming a node says
+//     which node rather than printing the page.
 //
 // Selectors: tag, *, #id, .class, [attr], [attr="v"] (also unquoted and
 // single-quoted), any compound of those, the descendant and child (>)
@@ -47,6 +50,47 @@
 import { readFileSync } from 'node:fs';
 
 const INDEX_HTML = new URL('../index.html', import.meta.url);
+
+// ------------------------------------------------------------------ printing
+//
+// A node reaches its parent, its document and every listener in the page, so
+// left to util.inspect a failed assertion that names one prints the whole page
+// (one such message grew a test process past 60 GB). Every fake that holds a
+// node prints as a short one-line tag instead.
+
+const INSPECT = Symbol.for('nodejs.util.inspect.custom');
+const cut = (text, max = 60) => {
+  const flat = String(text).replace(/\s+/g, ' ');
+  return flat.length > max ? `${flat.slice(0, max)}...` : flat;
+};
+
+function tagOf(node) {
+  if (node instanceof FakeDocument) return '#document';
+  if (node instanceof FakeText) return `#text ${JSON.stringify(cut(node.data))}`;
+  if (node instanceof FakeFragment) return `#document-fragment (${node.childList.length})`;
+  if (node instanceof FakeElement) {
+    const id = node.getAttribute('id');
+    const cls = node.getAttribute('class');
+    const key = node.getAttribute('data-focus-key');
+    return `<${node.localName}${id ? `#${cut(id, 40)}` : ''}${cls ? `.${cut(cls, 40).split(' ').join('.')}` : ''}`
+      + `${key !== null ? ` data-focus-key=${JSON.stringify(cut(key, 60))}` : ''}>`;
+  }
+  return '#node';
+}
+
+// node's assert builds its failure messages with custom inspection turned off
+// and getters on, so the tag above does not reach them. What does is that
+// util.inspect and deepStrictEqual walk only own enumerable properties: the
+// links from one fake to the rest of the page (parent, children, document,
+// the element behind a classList or a dataset) are kept but not enumerable.
+// A serial stays enumerable, so two distinct nodes are never deep-equal.
+function hideLinks(obj, keys) {
+  for (const key of keys) {
+    Object.defineProperty(obj, key, { value: obj[key], writable: true, configurable: true, enumerable: false });
+  }
+}
+
+let nodeSerial = 0;
 const BASE_URL = 'http://192.0.2.10/';
 
 // ------------------------------------------------------------------ events
@@ -257,6 +301,10 @@ function collection(Kind, items) {
 }
 
 export class NodeList {
+  [INSPECT]() {
+    return `NodeList(${this.length})`;
+  }
+
   get length() {
     return this[ITEMS]().length;
   }
@@ -289,6 +337,10 @@ export class NodeList {
 }
 
 export class HTMLCollection {
+  [INSPECT]() {
+    return `HTMLCollection(${this.length})`;
+  }
+
   get length() {
     return this[ITEMS]().length;
   }
@@ -319,11 +371,18 @@ function elementsOf(node) {
 // ------------------------------------------------------------------ nodes
 
 class FakeNode {
+  [INSPECT]() {
+    return tagOf(this);
+  }
+
   constructor(doc) {
     this.ownerDocument = doc;
     this.parentNode = null;
     // The backing array; childNodes is the live NodeList view over it.
     this.childList = [];
+    nodeSerial += 1;
+    this.shimSerial = nodeSerial;
+    hideLinks(this, ['ownerDocument', 'parentNode', 'childList']);
   }
 
   get childNodes() {
@@ -504,8 +563,13 @@ function dataToCamel(attr) {
 }
 
 class FakeClassList {
+  [INSPECT]() {
+    return `DOMTokenList ${JSON.stringify(cut(this.tokens().join(' ')))}`;
+  }
+
   constructor(element) {
     this.element = element;
+    hideLinks(this, ['element']);
   }
 
   tokens() {
@@ -615,6 +679,7 @@ class FakeElement extends FakeNode {
     this.style = makeStyle();
     this.classList = new FakeClassList(this);
     this.dataset = makeDataset(this);
+    hideLinks(this, ['style', 'classList', 'dataset']);
     this.dirtyValue = null;
     this.dirtyChecked = null;
     this.dirtySelected = null;
@@ -924,6 +989,7 @@ class FakeDocument extends FakeNode {
   constructor() {
     super(null);
     this.activeElement = null;
+    hideLinks(this, ['activeElement']);
     this.title = '';
   }
 
@@ -1482,6 +1548,10 @@ export class FakeEventSource {
   static CONNECTING = 0;
   static OPEN = 1;
   static CLOSED = 2;
+
+  [INSPECT]() {
+    return `EventSource ${JSON.stringify(cut(this.url, 120))} readyState=${this.readyState}`;
+  }
 
   constructor(url, init = {}) {
     this.url = new URL(String(url), globalThis.location.href).href;
