@@ -786,7 +786,7 @@ function markOf(state, draft) {
     if (where && where.assertion !== null) return { assertion: where.assertion, part: where.part || send.part || '', message: send.error };
   }
   if (saveRefusal && saveRefusal.id === draft.id && saveRefusal.assertion !== null) return saveRefusal;
-  return runner.refusedAssertion(draft, linkedKey(draft));
+  return runner.refusedAssertion(draft);
 }
 
 // markTarget is the control a refusal points at. A refusal that names only

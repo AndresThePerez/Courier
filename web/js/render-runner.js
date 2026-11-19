@@ -641,16 +641,15 @@ const refusalIn = (r) => (r.label ? `${capitalized(r.label)}: ${r.message}` : r.
 
 // refusedAssertion is the editor's half of a refusal: which assertion of the
 // request it has open is the refused one, or null. It is that request only
-// when it is the refused entry opened from the run (editingKey), or the same
-// request with the refused assertion as it was sent: an assertion edited since
-// is no longer the one the server refused.
-export function refusedAssertion(draft, editingKey) {
+// while it is the same request with the refused assertion as it was sent,
+// however it was opened: an assertion edited since is no longer the one the
+// server refused, and typed back to that, it is again.
+export function refusedAssertion(draft) {
   if (!refusal || refusal.assertion === null || !draft) return null;
   const entry = get().sequence.find((e) => e.key === refusal.key);
   if (!entry) return null;
   const j = refusal.assertion;
   const mark = { assertion: j, part: refusal.part, message: refusal.message };
-  if (editingKey && editingKey === refusal.key) return mark;
   if (!entry.request || entry.request.id !== draft.id) return null;
   try {
     const sent = requestPayload(entry.request).assertions;

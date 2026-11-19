@@ -93,6 +93,51 @@ test('with the refused request open in the editor, the offending control is mark
   assert.equal(path.getAttribute('aria-invalid'), 'true');
   assert.equal(byId('assertion-rows').querySelectorAll('.assert-row')[0].querySelector('.assert-value').getAttribute('aria-invalid'), null);
   assert.equal(describedBy(path)[0].textContent, 'the path must start with $');
+
+  // Typed into, the refused path is no longer the one refused.
+  typeInto(path, '$.total');
+  assert.equal(byId('assertion-rows').querySelectorAll('[aria-invalid="true"]').length, 0);
+  assert.equal(byId('assertion-rows').querySelectorAll('.field-error').length, 0);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('a refused queued request opened with Edit loses the editor mark once the fix is typed, and the row keeps its mark until Save', async () => {
+  queueSeven();
+  await refuse('sequence[4].assertions[0]', Msg);
+  editor.openQueued(get().sequence[5].key);
+  const value = () => byId('assertion-rows').querySelectorAll('.assert-row')[0].querySelector('.assert-value');
+  assert.equal(value().getAttribute('aria-invalid'), 'true', 'the opened entry carries the run\'s mark');
+
+  typeInto(value(), '201');
+  assert.equal(value().getAttribute('aria-invalid'), null, 'no stale mark after the fix is typed');
+  assert.equal(value().getAttribute('aria-describedby'), null);
+  assert.equal(byId('assertion-rows').querySelectorAll('.field-error').length, 0, 'no stale message');
+  assert.deepEqual(marked(), [6], 'the run still holds the refused copy');
+
+  // Typed back to what was refused, it is the refused assertion again.
+  typeInto(value(), '200');
+  assert.equal(value().getAttribute('aria-invalid'), 'true');
+  assert.equal(describedBy(value())[0].textContent, Msg);
+
+  typeInto(value(), '201');
+  byId('save-request').click();
+  assert.deepEqual(marked(), []);
+  typeInto(value(), '200');
+  assert.equal(value().getAttribute('aria-invalid'), null, 'a saved fix ends the refusal');
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('a refused request opened from the sidebar loses the run\'s editor mark as soon as its refused assertion is typed into', async () => {
+  for (let n = 1; n <= 3; n += 1) runner.add({ ...req(n), id: `ws-${n}` });
+  await refuse('sequence[1].assertions[1]', 'gt needs a numeric value, got a string');
+  sidebar.selectRequest(get().sequence[1].request);
+  const value = () => byId('assertion-rows').querySelectorAll('.assert-row')[1].querySelector('.assert-value');
+  assert.equal(value().getAttribute('aria-invalid'), 'true');
+  typeInto(value(), '5');
+  assert.equal(get().draft.id, 'ws-2', 'the same request, not a copy');
+  assert.equal(value().getAttribute('aria-invalid'), null);
+  assert.equal(byId('assertion-rows').querySelectorAll('.field-error').length, 0);
+  assert.deepEqual(marked(), [2]);
   assert.deepEqual(listenerErrors, []);
 });
 
