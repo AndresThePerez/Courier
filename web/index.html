@@ -55,7 +55,9 @@
       </section>
 
       <section class="rail-section">
-        <h2 class="rail-heading">History</h2>
+        <!-- Focusable from script only: a Retry that brings back an empty
+             list leaves no row for focus to go to, and this is where it goes. -->
+        <h2 id="history-heading" class="rail-heading" tabindex="-1">History</h2>
         <div id="history-notice" class="tree" hidden></div>
         <div id="history-list" class="tree"></div>
       </section>

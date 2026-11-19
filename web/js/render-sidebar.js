@@ -438,7 +438,9 @@ function restoreFocus(key) {
   // Retry leaves with the notice once the catalog is in: the collections it
   // brought are where the visitor was headed.
   if (!node && key === 'catalog-retry') node = byId('collections-tree').querySelector('summary');
-  if (!node && key === 'history-retry') node = byId('history-list').querySelector('button');
+  // With nothing in the list, the History heading takes it rather than the
+  // page: the visitor is left in the section they were in.
+  if (!node && key === 'history-retry') node = byId('history-list').querySelector('button') || byId('history-heading');
   if (node) node.focus();
 }
 

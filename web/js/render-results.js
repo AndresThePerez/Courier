@@ -277,8 +277,7 @@ function counts(results) {
 // ---------------------------------------------------------------- functional
 
 function renderFunctional(state, rep) {
-  const c = counts(state.results);
-  replace(byId('results-filter'), Filters.map((name) => filterButton(name, c, state)));
+  renderFilters(state);
 
   // Rebuilding on every notify would collapse a row the visitor just opened —
   // a live run notifies several times a second. The signature covers everything
@@ -358,22 +357,43 @@ function restoreRowFocus(box, key) {
   if (summary) summary.focus();
 }
 
-function filterButton(name, c, state) {
-  const n = name === 'all' ? c.total : c[name];
-  const btn = el('button', {
-    class: `btn btn-mini${filter === name ? ' is-on' : ''}`,
+// The filter buttons are drawn once per container and then updated in place:
+// a live run renders several times a second, and a replaced button takes the
+// keyboard focus of a visitor sitting on it down with it. A press filters the
+// state of the latest render, not the one the button was first drawn in.
+let filterNodes = null; // { box, buttons: Map name -> node }
+let filterState = null;
+
+function renderFilters(state) {
+  filterState = state;
+  const box = byId('results-filter');
+  if (!filterNodes || filterNodes.box !== box || !Filters.every((name) => box.contains(filterNodes.buttons.get(name)))) {
+    const buttons = new Map(Filters.map((name) => [name, filterButton(name)]));
+    replace(box, [...buttons.values()]);
+    filterNodes = { box, buttons };
+  }
+  const c = counts(state.results);
+  for (const [name, btn] of filterNodes.buttons) {
+    const text = `${name} ${name === 'all' ? c.total : c[name]}`;
+    if (btn.textContent !== text) btn.textContent = text;
+    const pressed = filter === name ? 'true' : 'false';
+    if (btn.getAttribute('aria-pressed') !== pressed) btn.setAttribute('aria-pressed', pressed);
+    btn.classList.toggle('is-on', filter === name);
+  }
+}
+
+function filterButton(name) {
+  return el('button', {
+    class: 'btn btn-mini',
     type: 'button',
-    text: `${name} ${n}`,
-    attrs: { 'aria-pressed': filter === name ? 'true' : 'false' },
     on: {
       click: () => {
         filter = name;
         lastRowSignature = null;
-        renderFunctional(state, state.report);
+        renderFunctional(filterState, filterState.report);
       },
     },
   });
-  return btn;
 }
 
 function matchesFilter(r) {
