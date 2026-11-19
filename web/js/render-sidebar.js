@@ -308,6 +308,7 @@ function historyRow(entry) {
 }
 
 let openCollections = new Set();
+let seededTree = null; // the tree node the first catalog was drawn into
 
 // catalogPlaceholder is what stands in for the curated collections while there
 // are none to list. Once a load has failed it says so and offers Retry, and it
@@ -433,7 +434,14 @@ function renderCollections(tree, state, counts) {
   // Fall back only when there was no tree to read (first render, loading
   // placeholder) — an all-closed tree is a state the visitor chose, and
   // restoring the previous set would pop the last-closed collection back open.
-  if (detailNodes.length === 0) openCollections = previouslyOpen;
+  // The first catalog drawn into this tree opens its first collection, so the
+  // first screen has a request to pick without hunting for one; the visitor
+  // cannot have toggled a tree that was not there yet.
+  if (detailNodes.length === 0) {
+    const first = seededTree !== tree && state.collections.length > 0 ? state.collections[0] : null;
+    openCollections = first ? new Set([first.id]) : previouslyOpen;
+  }
+  if (state.collections.length > 0) seededTree = tree;
 
   replace(tree, state.collections.map((c) => {
     const node = collectionNode(c, state.selectedId, counts, state.endpoints);

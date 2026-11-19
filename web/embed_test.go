@@ -33,6 +33,9 @@ var requiredIDs = []string{
 	"assertion-rows", "add-assertion", "assertion-note",
 	"send-request", "save-request", "send-status", "send-response",
 
+	// first screen: what Courier is and how it is used
+	"product-statement", "first-steps",
+
 	// "find the breaking point" knee demo
 	"knee-panel", "knee-curve", "knee-table", "knee-buttons", "knee-note",
 
