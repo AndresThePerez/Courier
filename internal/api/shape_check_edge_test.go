@@ -67,9 +67,9 @@ func validatorVerdict(t *testing.T, err error) verdict {
 func TestScalarAssertionValuesKeepTheAnswersTheValidatorGives(t *testing.T) {
 	scalars := []string{
 		`true`, `false`, `null`, `0`, `-0`, `1.5`, `200`, `2E2`, `1e999`, `-1e999`,
-		strings.Repeat("9", 300), strings.Repeat("9", 400), `""`, `"x"`, `"é"`,
-		`"` + strings.Repeat("é", 500) + `"`, `"` + strings.Repeat("é", 501) + `"`,
-		`"` + strings.Repeat(`é`, 501) + `"`,
+		strings.Repeat("9", 300), strings.Repeat("9", 400), `""`, `"x"`, "\"\u00e9\"",
+		`"` + strings.Repeat("\u00e9", 500) + `"`, `"` + strings.Repeat("\u00e9", 501) + `"`,
+		`"` + strings.Repeat("\\u00e9", 501) + `"`,
 	}
 	for _, form := range assertionForms {
 		for _, v := range scalars {
@@ -133,7 +133,7 @@ func TestStructuredAssertionValuesAreRefusedWhereverTheyNest(t *testing.T) {
 			`{"endpoint":"healthz","assertions":[{"type":"json","path":"$.a","op":"exists","VALUE":{}}]}`,
 			"assertions[0]", "unknown field"},
 		{"escaped value key", "/api/send",
-			`{"endpoint":"healthz","assertions":[{"type":"json","path":"$.a","op":"exists","value":[]}]}`,
+			"{\"endpoint\":\"healthz\",\"assertions\":[{\"type\":\"json\",\"path\":\"$.a\",\"op\":\"exists\",\"\\u0076alue\":[]}]}",
 			"assertions[0].value", "got an array"},
 		{"object in a param", "/api/send",
 			`{"endpoint":"search","params":{"q":{}}}`,
@@ -247,28 +247,28 @@ type keyForm struct {
 
 var requestKeys = []keyForm{
 	{`"endpoint"`, `"healthz"`, "endpoint"},
-	{`"endpoint"`, `"healthz"`, "endpoint"},
+	{"\"\\u0065ndpoint\"", `"healthz"`, "endpoint"},
 	{`"ENDPOINT"`, `"healthz"`, ""},
 	{`"Endpoint"`, `"healthz"`, ""},
-	{`"Endpoint"`, `"healthz"`, ""},
+	{"\"\\u0045ndpoint\"", `"healthz"`, ""},
 	{`"endpoint\u0000"`, `"healthz"`, ""},
 	{`"id"`, `"x"`, "id"},
 	{`"ID"`, `"x"`, ""},
 	{`"name"`, `"x"`, "name"},
-	{`"name"`, `"x"`, "name"},
+	{"\"n\\u0061me\"", `"x"`, "name"},
 	{`"params"`, `{}`, "params"},
 	{`"Params"`, `{}`, ""},
 	{`"assertions"`, `[]`, "assertions"},
 	{`"url"`, `"http://192.0.2.1/"`, ""},
 	{`"host"`, `"192.0.2.1"`, ""},
-	{`"endpoınt"`, `"healthz"`, ""},
-	{`"ſtatus"`, `1`, ""},
+	{"\"endpo\u0131nt\"", `"healthz"`, ""},
+	{"\"\u017ftatus\"", `1`, ""},
 }
 
 var runKeys = []keyForm{
 	{`"mode"`, `"functional"`, "mode"},
 	{`"MODE"`, `"functional"`, ""},
-	{`"mode"`, `"functional"`, "mode"},
+	{"\"m\\u006fde\"", `"functional"`, "mode"},
 	{`"options"`, `{}`, "options"},
 	{`"Options"`, `{}`, ""},
 	{`"options"`, `{"delay_ms":1,"Delay_ms":2}`, ""},

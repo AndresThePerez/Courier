@@ -73,7 +73,7 @@ test('a character outside the BMP straddling the cut is dropped whole, and the c
 });
 
 test('a combining mark at the cut leaves well-formed text within the cap', () => {
-  const base = `${'é'.repeat(60)}`;
+  const base = `${'e\u0301'.repeat(60)}`;
   assert.equal(base.length, MaxName);
   const ws = tab();
   const { request } = ws.fork(named(base));
