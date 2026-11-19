@@ -104,7 +104,7 @@ test('a 1 MB assertion value restores, renders and is sent by Start without thro
   const startMs = performance.now() - t1;
   const sent = fetchStub.calls.find((c) => c.url === '/api/runs').json();
   assert.equal(sent.sequence[0].assertions[0].value.length, huge.length, 'sent whole, for the server to refuse by field');
-  assert.match(byId('start-note').textContent, /^Refused - sequence\[0\]\.assertions\[0\]\.value/);
+  assert.equal(byId('start-note').textContent, 'Refused - Request 1, assertion 1: value too long');
   assert.equal(byId('start-run').textContent, 'Start run');
   console.log(`1 MB value: restore and render ${restoredMs.toFixed(1)}ms, Start ${startMs.toFixed(1)}ms`);
   assert.ok(restoredMs < 3000 && startMs < 3000, `restore ${restoredMs.toFixed(0)}ms, start ${startMs.toFixed(0)}ms`);

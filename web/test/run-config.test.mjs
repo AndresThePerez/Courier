@@ -317,5 +317,5 @@ test('a restored request is sent with the same payload keys as any other', async
   assert.equal(body.sequence[0].endpoint, 'gone');
   assert.equal(body.options.concurrency, 50);
   runner.render(get());
-  assert.equal(document.getElementById('start-note').textContent, 'Refused - sequence[0].endpoint: unknown endpoint "gone"');
+  assert.equal(document.getElementById('start-note').textContent, 'Refused - Request 1, endpoint: unknown endpoint "gone"');
 });

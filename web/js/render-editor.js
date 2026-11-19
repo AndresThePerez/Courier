@@ -13,7 +13,10 @@ import { el, replace, byId, fmtMs, fmtBytes } from './dom.js';
 import { jsonView } from './json-view.js';
 import * as api from './api.js';
 import * as workspace from './workspace.js';
-import { methodBadge } from './render-runner.js';
+import { methodBadge, refusedAssertion } from './render-runner.js';
+import {
+  valueKind, coerceValue, requestPayload, requestProblem, assertionProblem, whereIn, refusedText, capitalized,
+} from './request-model.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
 // way; matching it here means a visitor meets the cap as a disabled button and
@@ -112,7 +115,12 @@ function edit(mutate) {
   if (saved.deleted) return;
   if (!saved.ok) saveNote = workspace.WRITE_REFUSED;
   else if (saveNote === workspace.WRITE_REFUSED) saveNote = '';
-  set({ draft, selectedId: draft.id });
+  const patch = { draft, selectedId: draft.id };
+  // A refusal is about the request as it was sent; once it is edited, the
+  // refusal and its mark describe something that is no longer on screen.
+  const send = get().send;
+  if (send && !send.pending && send.kind === 'invalid') patch.send = null;
+  set(patch);
 }
 
 function saveDraft() {
@@ -193,33 +201,6 @@ function addAssertion() {
   });
 }
 
-// valueKind is ValidateAssertion's value rule read back out: which kind of
-// value each (type, op) pair accepts. "none" is `json exists`, whose value the
-// evaluator ignores entirely.
-function valueKind(a) {
-  if (a.type === 'status' || a.type === 'latency') return 'number';
-  if (a.type === 'body_contains') return 'string';
-  if (a.op === 'exists') return 'none';
-  if (a.op === 'gt' || a.op === 'lt' || a.op === 'count') return 'number';
-  return 'either';
-}
-
-// coerceValue turns what was typed into what the wire format needs. Where the
-// server accepts either a number or a string, anything that parses as a number
-// is sent as one — that is how the curated collections are written
-// (`"value": 107`, `"value": "Charizard"`), and it is what makes
-// `$.total eq 107` work without a type picker on every row. The cost is that
-// the *string* "107" cannot be expressed; the outcome then says so in plain
-// words ("cannot compare it to a number") rather than failing silently. Text
-// in a numeric slot is passed through untouched, so the 400 that comes back
-// names the row instead of the editor quietly inventing a zero.
-function coerceValue(a, text) {
-  if (valueKind(a) === 'none') return undefined;
-  if (valueKind(a) === 'string') return text;
-  const n = Number(text);
-  return text.trim() !== '' && Number.isFinite(n) ? n : text;
-}
-
 function valueText(a) {
   if (a.value === undefined || a.value === null) return '';
   return String(a.value);
@@ -231,6 +212,21 @@ async function sendDraft() {
   const state = get();
   if (!state.draft || (state.send && state.send.pending)) return;
 
+  // What the server would refuse is refused here, the same way and by the
+  // same field, and nothing is sent. A request that cannot even be built is
+  // left to the catch below, as one that could not be sent.
+  let problem = null;
+  try {
+    problem = requestProblem(requestPayload(state.draft));
+  } catch {
+    problem = null;
+  }
+  if (problem) {
+    outbound = null;
+    set({ send: { pending: false, kind: 'invalid', error: problem.message, field: problem.field, part: problem.part } });
+    return;
+  }
+
   const marker = { pending: true };
   const mine = { id: state.draft.id, marker };
   outbound = mine;
@@ -239,7 +235,7 @@ async function sendDraft() {
   // button left on "Sending..." can only be cleared by a reload.
   let outcome;
   try {
-    outcome = await api.send(payloadOf(state.draft));
+    outcome = await api.send(requestPayload(state.draft));
   } catch (error) {
     console.warn('request not sent', error);
     outcome = { ok: false, kind: 'error', error: 'this request could not be sent from this page.' };
@@ -257,24 +253,6 @@ async function sendDraft() {
   outbound = null;
   if (outcome.ok) set({ send: { pending: false, result: outcome.result } });
   else set({ send: { pending: false, kind: outcome.kind, error: outcome.error, field: outcome.field || '' } });
-}
-
-// payloadOf strips the editor's bookkeeping down to the sandbox.Request the
-// server validates. Note what is absent: there is no URL here and there never
-// will be — the client names an endpoint and the catalog owns the path.
-function payloadOf(draft) {
-  return {
-    id: draft.id,
-    name: draft.name || '',
-    endpoint: draft.endpoint,
-    params: { ...(draft.params || {}) },
-    assertions: (draft.assertions || []).map((a) => {
-      const row = { type: a.type, op: a.op };
-      if (a.type === 'json') row.path = a.path || '$';
-      if (valueKind(a) !== 'none') row.value = a.value === undefined ? '' : a.value;
-      return row;
-    }),
-  };
 }
 
 // ---------------------------------------------------------------- render
@@ -307,6 +285,7 @@ export function render(state) {
 
   renderNotes(draft);
   renderSend(state);
+  renderMark(state, draft);
 }
 
 // signature covers everything that changes the *shape* of the two tables — the
@@ -633,14 +612,9 @@ function renderSend(state) {
     // 429 is a rate limit; 400 is the sandbox refusing the request before it
     // could reach the target. Both are answers, not failures of the page, and
     // the 400 is where a visitor learns the allowlist is real.
-    status.textContent = send.kind === 'busy' ? `Busy - ${send.error}` : `Refused - ${send.error}`;
+    status.textContent = send.kind === 'busy' ? `Busy - ${send.error}` : sendRefusal(send);
     status.className = 'send-status fail';
-    replace(box, [el('p', {
-      class: 'note',
-      text: send.kind === 'invalid' && send.field
-        ? `Courier validated this request before dispatching it and rejected "${send.field}". Nothing reached the target.`
-        : 'Nothing reached the target.',
-    })]);
+    replace(box, [el('p', { class: 'note', text: 'Nothing reached the target.' })]);
     return;
   }
 
@@ -673,6 +647,76 @@ function renderSend(state) {
     el('h4', { class: 'block-heading', text: 'Response body' }),
     jsonView(r.body, { truncated: Boolean(r.body_truncated) }),
   ]);
+}
+
+// sendRefusal is Send's refusal as one sentence, the field named once as a
+// visitor would name it. A field the page does not know is shown as it came.
+function sendRefusal(send) {
+  const field = typeof send.field === 'string' && send.field !== 'body' ? send.field : '';
+  const where = whereIn(field);
+  return refusedText(where ? capitalized(where.label) : field, send.error);
+}
+
+// ---------------------------------------------------------------- field marks
+
+// markOf is the refusal the open request carries, if any: Send's own, or the
+// run's when the refused queued request is the one open.
+function markOf(state, draft) {
+  const send = state.send;
+  if (send && !send.pending && send.kind === 'invalid') {
+    const where = whereIn(typeof send.field === 'string' ? send.field : '');
+    if (where && where.assertion !== null) return { assertion: where.assertion, part: where.part || send.part || '', message: send.error };
+  }
+  return refusedAssertion(draft, null);
+}
+
+// markTarget is the control a refusal points at. A refusal that names only
+// the assertion is placed by the same checks the page runs before sending;
+// failing those, on the value, then the path.
+function markTarget(row, assertion, part) {
+  const path = row.querySelector('.assert-path');
+  const value = row.querySelector('input.assert-value');
+  if (part === 'path' && path) return path;
+  if (part === 'value' && value) return value;
+  let found = '';
+  try {
+    const problem = assertionProblem(requestPayload({ assertions: [assertion] }).assertions[0]);
+    found = problem ? problem.part : '';
+  } catch {
+    found = '';
+  }
+  if (found === 'path' && path) return path;
+  return value || path || row.querySelector('.assert-type');
+}
+
+// renderMark puts the open request's refusal on its control: aria-invalid, and
+// an error beside it that the control is described by. It runs on every render
+// and touches only what changed, so a poll neither moves nor re-announces it.
+function renderMark(state, draft) {
+  const mark = markOf(state, draft);
+  const list = Array.isArray(draft.assertions) ? draft.assertions : [];
+  const rows = [...byId('assertion-rows').querySelectorAll('.assert-row')];
+  const target = mark && rows[mark.assertion] && list[mark.assertion]
+    ? markTarget(rows[mark.assertion], list[mark.assertion], mark.part)
+    : null;
+  rows.forEach((row) => {
+    for (const control of row.querySelectorAll('[aria-invalid]')) {
+      if (control !== target) {
+        control.removeAttribute('aria-invalid');
+        control.removeAttribute('aria-describedby');
+      }
+    }
+    for (const old of row.querySelectorAll('.field-error')) {
+      if (!target || !row.contains(target) || old.textContent !== mark.message) old.remove();
+    }
+  });
+  if (!target) return;
+  if (target.getAttribute('aria-invalid') !== 'true') target.setAttribute('aria-invalid', 'true');
+  if (target.getAttribute('aria-describedby') !== 'assertion-error') target.setAttribute('aria-describedby', 'assertion-error');
+  const row = rows[mark.assertion];
+  if (!row.querySelector('.field-error')) {
+    row.appendChild(el('p', { class: 'field-error fail', text: mark.message, attrs: { id: 'assertion-error' } }));
+  }
 }
 
 function outcomeRow(o) {

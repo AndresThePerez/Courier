@@ -16,6 +16,7 @@ import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as api from './api.js';
 import { createRunConfig, createSavedCollections, clampOption as clampWithin, SETUP_REFUSED } from './run-config.js';
 import { WRITE_REFUSED } from './workspace.js';
+import { requestPayload, runPayload, runProblem, runField, refusedText, capitalized } from './request-model.js';
 
 // MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
 // enforces them either way; matching them here means a visitor meets a cap as a
@@ -115,6 +116,11 @@ let kneeNote = '';
 // true is not left on screen.
 let addNote = '';
 let addNoteCount = -1;
+// refusal is the queued request the server (or the same checks, run here
+// first) last refused, held by the entry's key so its mark follows that entry
+// through a reorder: { key, assertion, part, label, message }. The note's row
+// number is read from where the entry is now, never from where it was.
+let refusal = null;
 
 export function init(h) {
   hooks = { ...hooks, ...h };
@@ -423,19 +429,6 @@ function clampOption(key, raw) {
   return clampWithin(Limits, key, raw);
 }
 
-// requestPayload is the sandbox.Request shape POST /api/runs validates, and
-// nothing else: a run carries the fields a request has and no others, at
-// every level, whatever object the page is holding.
-function requestPayload(r) {
-  return {
-    id: r.id,
-    name: r.name || '',
-    endpoint: r.endpoint,
-    params: { ...(r.params || {}) },
-    assertions: (r.assertions || []).map(({ type, op, path, value }) => ({ type, op, path, value })),
-  };
-}
-
 // ---------------------------------------------------------------- run controls
 
 async function start() {
@@ -465,11 +458,7 @@ async function start() {
   try {
     let payload = null;
     try {
-      payload = {
-        mode: state.mode,
-        sequence: entries.map((e) => requestPayload(e.request)),
-        options: { ...state.options },
-      };
+      payload = runPayload(state.mode, entries.map((e) => e.request), state.options);
       // Encoded once here so a payload that cannot be encoded fails as one,
       // rather than inside the request.
       JSON.stringify(payload);
@@ -478,6 +467,13 @@ async function start() {
       payload = null;
       outcome = { ok: false, kind: 'error', error: 'a queued request could not be sent from this page.' };
     }
+    // What the server would refuse is refused here, the same way and by the
+    // same field, without a round trip.
+    const problem = payload && runProblem(payload);
+    if (problem) {
+      outcome = { ok: false, kind: 'invalid', error: problem.message, field: problem.field, part: problem.part };
+      payload = null;
+    }
     if (payload) outcome = await api.startRun(payload);
   } catch (error) {
     console.warn('run not started', error);
@@ -485,15 +481,18 @@ async function start() {
   } finally {
     starting = false;
   }
-  applyStartOutcome(outcome, state.mode);
-  render(get());
+  applyStartOutcome(outcome, state.mode, entries);
+  // Through the store rather than this module's render alone: a refusal
+  // marks the editor too, when the refused request is open there.
+  set({});
   await hooks.refresh();
   render(get());
 }
 
-function applyStartOutcome(outcome, mode) {
+function applyStartOutcome(outcome, mode, entries) {
   if (outcome.ok) {
     startNote = '';
+    refusal = null;
     startedRunId = outcome.runId;
     // A 202 read after this tab saw its run end says nothing about now.
     if (hooks.over(outcome.runId)) return;
@@ -521,14 +520,81 @@ function applyStartOutcome(outcome, mode) {
     return;
   }
   if (outcome.kind === 'invalid') {
-    // The sandbox refused the payload. Naming the field is the whole value of
-    // the 400: it is where a visitor learns the validation is real.
-    startNote = outcome.field
-      ? `Refused - ${outcome.field}: ${outcome.error}`
-      : `Refused - ${outcome.error}`;
+    refuse(outcome, entries);
     return;
   }
   startNote = `Could not start the run - ${outcome.error}`;
+}
+
+// refuse reads a refused field back to what the visitor sees. The server
+// numbers the payload, which holds only the checked requests, so its index is
+// read through the entries that were sent to the queued entry it names. A
+// field the page cannot place (past the end of what was sent, or a name it
+// does not know) is shown as it came and marks nothing: a raw index relabelled
+// as a row would point at the wrong one.
+function refuse(outcome, entries) {
+  refusal = null;
+  startNote = '';
+  const at = runField(outcome.field);
+  if (!at) {
+    startNote = refusedText(outcome.field, outcome.error);
+    return;
+  }
+  if (at.index === undefined) {
+    startNote = refusedText(capitalized(at.label), outcome.error);
+    return;
+  }
+  const entry = entries[at.index];
+  if (!entry) {
+    startNote = refusedText(outcome.field, outcome.error);
+    return;
+  }
+  if (!get().sequence.some((e) => e.key === entry.key)) {
+    startNote = refusedText('a request since removed from the run', outcome.error);
+    return;
+  }
+  refusal = {
+    key: entry.key,
+    assertion: at.where.assertion,
+    part: at.where.part || outcome.part || '',
+    label: at.where.label,
+    message: outcome.error,
+  };
+}
+
+// refusalText is the run's note for the refused entry, numbered from where
+// the entry is now.
+function refusalText(state) {
+  if (!refusal) return '';
+  const i = state.sequence.findIndex((e) => e.key === refusal.key);
+  if (i < 0) return '';
+  return refusedText(`Request ${i + 1}${refusal.label ? `, ${refusal.label}` : ''}`, refusal.message);
+}
+
+// refusalIn is the refusal's own sentence beside its row.
+const refusalIn = (r) => (r.label ? `${capitalized(r.label)}: ${r.message}` : r.message);
+
+// refusedAssertion is the editor's half of a refusal: which assertion of the
+// request it has open is the refused one, or null. It is that request only
+// when it is the refused entry opened from the run (editingKey), or the same
+// request with the refused assertion as it was sent: an assertion edited since
+// is no longer the one the server refused.
+export function refusedAssertion(draft, editingKey) {
+  if (!refusal || refusal.assertion === null || !draft) return null;
+  const entry = get().sequence.find((e) => e.key === refusal.key);
+  if (!entry) return null;
+  const j = refusal.assertion;
+  const mark = { assertion: j, part: refusal.part, message: refusal.message };
+  if (editingKey && editingKey === refusal.key) return mark;
+  if (!entry.request || entry.request.id !== draft.id) return null;
+  try {
+    const sent = requestPayload(entry.request).assertions;
+    const open = requestPayload(draft).assertions;
+    if (!Array.isArray(sent) || !Array.isArray(open) || j >= open.length) return null;
+    return JSON.stringify(sent[j]) === JSON.stringify(open[j]) ? mark : null;
+  } catch {
+    return null;
+  }
 }
 
 // adoptStatus folds a server-reported fact into state.status. A 409 body comes
@@ -674,7 +740,9 @@ function renderSequence(state) {
   // every render module; rebuilding this list on each one would take the focus
   // out from under a visitor reordering rows with the keyboard.
   // The catalog arriving is a change too: it is what the badges are read from.
-  const sig = list.map((e) => `${e.key}:${e.enabled ? 1 : 0}`).join('|');
+  if (refusal && !list.some((e) => e.key === refusal.key)) refusal = null;
+  const refusedSig = refusal ? `${refusal.key}\n${refusal.label}\n${refusal.message}` : '';
+  const sig = `${list.map((e) => `${e.key}:${e.enabled ? 1 : 0}`).join('|')}#${refusedSig}`;
   if (sig === lastSignature && state.endpoints === lastEndpoints) return;
   lastSignature = sig;
   lastEndpoints = state.endpoints;
@@ -735,7 +803,11 @@ function sequenceRow(entry, index, total, endpoints) {
   });
   check.checked = entry.enabled;
 
-  return el('div', { class: `row seq-row${entry.enabled ? '' : ' is-off'}` }, [
+  const refused = refusal && refusal.key === entry.key ? refusal : null;
+  const errorId = `seq-error-${entry.key}`;
+  if (refused) check.setAttribute('aria-describedby', errorId);
+
+  return el('div', { class: `row seq-row${entry.enabled ? '' : ' is-off'}${refused ? ' is-invalid' : ''}` }, [
     el('span', { class: 'seq-index mono', text: String(index + 1) }),
     check,
     methodBadge(endpoints, r.endpoint),
@@ -743,6 +815,7 @@ function sequenceRow(entry, index, total, endpoints) {
       el('span', { class: 'seq-name', text: r.name || r.id }),
       el('span', { class: 'seq-target mono', text: `${r.endpoint}${query ? `?${query}` : ''}` }),
       assertionChips(r.assertions),
+      refused && el('span', { class: 'seq-error fail', text: refusalIn(refused), attrs: { id: errorId } }),
     ]),
     arrow('↑', `Move ${r.name || r.id} up`, `seq-up:${entry.key}`, index === 0, () => move(index, -1)),
     arrow('↓', `Move ${r.name || r.id} down`, `seq-down:${entry.key}`, index === total - 1, () => move(index, 1)),
@@ -871,7 +944,7 @@ function renderControls(state) {
   }
   const note = byId('start-note');
   const said = [
-    starting ? 'Starting...' : startNote,
+    starting ? 'Starting...' : startNote || refusalText(state),
     cancelling ? 'Cancelling...' : cancelNote,
   ].filter(Boolean).join(' ');
   const noteText = said

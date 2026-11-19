@@ -233,6 +233,11 @@ option:disabled { color: var(--muted); }
 .assert-value { flex: 1 1 8rem; }
 .assert-row .assert-value.muted { flex: 1 1 8rem; font-size: 12px; }
 
+/* A control the server (or the same checks, run first) refused, and the
+   sentence beside it that says why. */
+input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--fail); }
+.field-error { flex: 1 0 100%; margin: 0; font-size: 11px; overflow-wrap: anywhere; }
+
 .editor-actions {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
   margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid var(--line);
@@ -313,6 +318,8 @@ option:disabled { color: var(--muted); }
   background: var(--panel);
 }
 .seq-row.is-off { opacity: 0.5; }
+.seq-row.is-invalid { border-color: var(--fail); }
+.seq-error { font-size: 11px; margin-top: 0.25rem; overflow-wrap: anywhere; }
 .seq-index { flex: 0 0 1.4rem; text-align: right; color: var(--muted); font-size: 11px; }
 .seq-check { flex: 0 0 auto; }
 .seq-body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
