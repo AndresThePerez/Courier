@@ -257,9 +257,9 @@ Open the [live demo](https://courier.andrestheperez.com), then:
 4. Expand **05 — Randomized Traffic**: those params are template variables —
    `{{randomWord}}` and `{{randomPokemon}}` resolve to a fresh random value for
    every dispatched request, so a performance run queries something different
-   each iteration. Note their loose assertions next to the exact totals the
-   curated searches pin: assertions are per-request choices, editable in the
-   Request tab.
+   each iteration. Note their loose assertions next to the bounds the curated
+   searches put on their totals: assertions are per-request choices, editable in
+   the Request tab.
 
 ---
 
