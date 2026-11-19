@@ -41,6 +41,9 @@ const initialState = () => ({
   transport: 'idle', // idle | sse | polling
 
   history: [],
+  historyLoaded: false, // whether a history read has answered with a list, so an empty one means no runs
+  historyNotice: '', // why the last history read failed, until one succeeds
+  historyLoading: false, // whether a Retry of the history read is out
   historyNote: '', // why the last history entry asked for could not be opened
   activeTab: 'runner',
   notice: null, // why the catalog is not shown, once a load of it has failed
