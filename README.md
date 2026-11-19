@@ -76,7 +76,7 @@ rather than badged on purpose: `cmd/server` carries no test file of its own and 
 end-to-end acceptance matrix runs under a build tag, in CI as a job of its own against a
 stub target, so one repository-wide number would hide which package sits lowest.
 
-CI runs those three commands on every push to every branch and on every pull request,
+CI runs those commands on every push to every branch and on every pull request,
 alongside a `go mod tidy` cleanliness gate, `gofmt`, `staticcheck`, `govulncheck`, a
 coverage floor, and separate jobs that build the Docker image, run the frontend tests, and
 run the acceptance matrix against a stub target. The load-budget proof and
