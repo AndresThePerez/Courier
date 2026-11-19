@@ -227,9 +227,14 @@ func TestTheBodyReadDeadlineDoesNotReachTheHandlersOwnWork(t *testing.T) {
 	waitFor(t, "every place to be given back", func() bool { return readsHeld(s) == 0 })
 }
 
-// A body that arrives slowly but within the deadline is read, and the next
-// request on the same connection, sent after the connection sat idle for
-// longer than the deadline, is not held to it.
+// A body that arrives slowly but within the deadline is read rather than cut,
+// a body that arrived in time does not close its connection, and the next
+// request on that connection, sent after it sat idle for longer than the
+// deadline, is answered. The reset of the read deadline between requests is
+// the standard library's own (net/http sets it afresh for every request and
+// clears it when a body reaches its end), so this does not depend on
+// readBody's explicit clear; it guards the first two against a deadline that
+// is too short or a connection closed after a good body.
 func TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadline(t *testing.T) {
 	const deadline = time.Second
 	s, srv := newBodyServer(t, newTarget(t, 0), deadline)

@@ -86,8 +86,11 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool 
 
 // readBody reads the body under the size cap and the read deadline. The
 // deadline is cleared once the body has arrived, so it does not reach what
-// the handler does next; after a read that failed it is left in place, since
-// the connection is closed after the answer and must not wait on the client.
+// the handler does next. net/http clears it too when a body reaches its end
+// and sets it afresh for the next request, so this clear is a statement of
+// intent the standard library already keeps, not the only thing that keeps
+// it. After a read that failed the deadline is left in place, since the
+// connection is closed after the answer and must not wait on the client.
 func (s *Server) readBody(w http.ResponseWriter, r *http.Request, rc *http.ResponseController) ([]byte, bool) {
 	// A request with no body has nothing to wait for, and the server is
 	// already watching its connection for the client going away.

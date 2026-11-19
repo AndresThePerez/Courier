@@ -41,12 +41,15 @@ const (
 	// all taken (TestLargeBurstsOfSmallPostsNeverSeeTheBodyGate).
 	MaxBodyReads = 128
 
-	// BodyReadDeadline is how long a POST body may take to arrive, counted
-	// from the start of its read, and is the server's only time limit besides
-	// ReadHeaderTimeout. It is set on the connection when the read begins and
-	// cleared when the read ends, so it never reaches the handler's own work,
-	// a stream or the connection's next request: a write or idle timeout on the
-	// server would cut live streams and long Sends, and this is neither
+	// BodyReadDeadline is how long a declared body may take to arrive, and is
+	// the server's only time limit besides ReadHeaderTimeout. It is set on the
+	// connection when a request that declares a body arrives
+	// (boundDeclaredBodies), set again when decodeJSON's read begins, and
+	// cleared when that read ends; net/http also clears it when a body
+	// reaches its end and sets it afresh for each request. So it never reaches
+	// the handler's own work after the body, a stream or the connection's next
+	// request: a write or idle timeout on the server would cut live streams
+	// and long Sends, and this is neither
 	// (TestTheBodyReadDeadlineDoesNotReachTheHandlersOwnWork,
 	// TestAStreamOutlivesTheBodyReadDeadline,
 	// TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadline). Ten
