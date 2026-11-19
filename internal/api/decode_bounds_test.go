@@ -72,8 +72,10 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 			var req sandbox.Request
 			ok = decodeJSON(httptest.NewRecorder(), r, &req)
 		})
-		if !ok {
-			t.Errorf("%s: a well-formed %d-byte body was refused", tc.name, len(tc.body))
+		// The value is refused for being a structure, but only once the walk
+		// has read all of it, so the walk's own cost is still what is measured.
+		if ok {
+			t.Errorf("%s: a %d-byte structure was accepted as an assertion value", tc.name, len(tc.body))
 		}
 		t.Logf("%s: %d-byte body allocated %d bytes", tc.name, len(tc.body), alloc)
 		if alloc > bound {
@@ -213,6 +215,46 @@ func TestFieldMapsAreSharedSafelyOnFirstUse(t *testing.T) {
 			if reflect.ValueOf(got[i][j]).UnsafePointer() != first {
 				t.Errorf("%s: reader %d was given a field map of its own, want the one shared map", typ, i)
 			}
+		}
+	}
+}
+
+// An object or array filling an assertion's value is refused before anything
+// is built from it, so refusing it costs about what holding the body costs,
+// however many values it packs: decoded, the same bytes are tens of times
+// their size.
+func TestARefusedAssertionValueCostsAboutItsSize(t *testing.T) {
+	fill := func(unit string) string {
+		const prefix, suffix = `{"endpoint":"healthz","assertions":[{"type":"json","path":"$.a","op":"exists","value":[`, `]}]}`
+		n := (MaxBodyBytes - len(prefix) - len(suffix) + 1) / (len(unit) + 1)
+		return prefix + strings.TrimSuffix(strings.Repeat(unit+",", n), ",") + suffix
+	}
+	cases := []struct{ name, body string }{
+		{"empty objects", fill(`{}`)},
+		{"one-key objects", fill(`{"":0}`)},
+		{"empty arrays", fill(`[]`)},
+		{"numbers", fill(`0`)},
+	}
+	// Reading and scanning any body at the cap allocates several times its
+	// size, whatever it holds: the numbers case is the baseline. Decoding the
+	// objects instead allocates over fifty times it.
+	const bound = 16 * MaxBodyBytes
+	for _, tc := range cases {
+		var rec *httptest.ResponseRecorder
+		alloc := minAlloc(t, func() {
+			r := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", "application/json")
+			rec = httptest.NewRecorder()
+			var req sandbox.Request
+			decodeJSON(rec, r, &req)
+		})
+		t.Logf("%s: %d-byte body allocated %d bytes", tc.name, len(tc.body), alloc)
+		if eb := checkBoundedEcho(t, tc.name, rec, http.StatusBadRequest); eb.Field != "assertions[0].value" {
+			t.Errorf("%s: field = %q, want assertions[0].value", tc.name, eb.Field)
+		}
+		if alloc > bound {
+			t.Errorf("%s: refusing a %d-byte body allocated %d bytes, want at most %d",
+				tc.name, len(tc.body), alloc, bound)
 		}
 	}
 }

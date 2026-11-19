@@ -614,21 +614,37 @@ func (w *shapeWalk) value(t reflect.Type, typed int) *shapeError {
 		}
 		return nil
 	}
+	untyped := false
 	if t != nil {
 		// An `any` field is itself a typed position; only what it holds is not.
 		typed = len(w.path.segs)
 		if t.Kind() == reflect.Interface {
-			t = nil
+			t, untyped = nil, true
 		}
 	}
 	mismatch := func(got string) *shapeError {
 		return w.path.fail(typed, fmt.Sprintf("expected %s, got %s", jsonKind(t), got))
 	}
 	switch c {
-	case '{':
-		return w.object(t, typed)
-	case '[':
-		return w.array(t, typed)
+	case '{', '[':
+		se := w.array
+		got := "an array"
+		if c == '{' {
+			se, got = w.object, "an object"
+		}
+		if err := se(t, typed); err != nil {
+			return err
+		}
+		// An `any` field holds one scalar. The only one in the payloads is an
+		// assertion's value, which `exists` ignores and every other operator
+		// compares with a number or a string; a structure there is kept, and
+		// stored in the run's report, replay log and frames, so a body could
+		// fill each of those with a quarter of a megabyte of it. It is walked
+		// first so that a fault inside it is still named where it is.
+		if untyped {
+			return w.path.fail(typed, "expected a number, a string, true, false or null, got "+got)
+		}
+		return nil
 	case '"':
 		if _, ok := w.skipString(); !ok {
 			return w.malformed()
