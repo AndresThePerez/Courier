@@ -40,6 +40,9 @@ let pickerPainted = null;
 let paramNote = '';
 let forkNote = '';
 let saveNote = '';
+// writeRefused is whether this browser refused the last write of the open
+// request, so no sentence claims the draft was kept when it was not.
+let writeRefused = false;
 // saveRefusal is the problem a refused Save named, for the request it was
 // refused for: { id, assertion, part, message }. An edit takes it away.
 let saveRefusal = null;
@@ -74,6 +77,7 @@ export function onSelect() {
   paramNote = '';
   forkNote = '';
   saveNote = '';
+  writeRefused = false;
   saveRefusal = null;
   linked = null;
   outbound = null;
@@ -113,6 +117,7 @@ export function openQueued(key) {
     request = deepCopy(forked.request);
     runner.repoint(key, request, { fixed: false });
     forkNote = copiedForRun(request.name);
+    writeRefused = !forked.ok;
     if (!forked.ok) saveNote = workspace.WRITE_REFUSED;
   } else {
     try {
@@ -192,6 +197,7 @@ function keepNewer(draft) {
   runner.repoint(key, { ...entry.request, id: copy.id, name: copy.name }, { fixed: false });
   linked = { key, id: copy.id };
   forkNote = copiedForRun(copy.name);
+  writeRefused = !forked.ok;
   saveNote = forked.ok ? '' : workspace.WRITE_REFUSED;
   if (outbound && outbound.id === draft.id) outbound.id = copy.id;
   return copy;
@@ -210,6 +216,7 @@ function edit(mutate) {
   // A request another tab deleted has just been closed; publishing the draft
   // again would reopen it.
   if (saved.deleted) return;
+  writeRefused = !saved.ok;
   if (!saved.ok) saveNote = workspace.WRITE_REFUSED;
   else if (saveNote === workspace.WRITE_REFUSED) saveNote = '';
   const patch = { draft, selectedId: draft.id };
@@ -217,7 +224,7 @@ function edit(mutate) {
   // refusal and its mark describe something that is no longer on screen.
   if (saveRefusal) {
     saveRefusal = null;
-    saveNote = '';
+    saveNote = writeRefused ? workspace.WRITE_REFUSED : '';
   }
   const send = get().send;
   if (send && !send.pending && send.kind === 'invalid') patch.send = null;
@@ -241,7 +248,12 @@ function saveDraft() {
   if (problem) {
     const where = whereIn(problem.field);
     saveRefusal = { id: current.id, assertion: problem.assertion, part: problem.part, message: problem.message };
-    saveNote = `Kept in this browser, but not ready to run - ${where && where.label ? `${capitalized(where.label)}: ` : ''}${problem.message}`;
+    const detail = `${where && where.label ? `${capitalized(where.label)}: ` : ''}${problem.message}`;
+    // Kept only if the browser took the last write; otherwise that refusal
+    // stays said, and why the draft cannot run is added to it.
+    saveNote = writeRefused
+      ? `${workspace.WRITE_REFUSED} Not ready to run either - ${detail}`
+      : `Kept in this browser, but not ready to run - ${detail}`;
     set({});
     return;
   }
@@ -250,6 +262,7 @@ function saveDraft() {
   if (!draft) return;
   const saved = workspace.save(draft);
   if (saved.deleted) return;
+  writeRefused = !saved.ok;
   // The queued entry is the run's own copy and is stored with the run setup,
   // so it is updated whether or not the browser took the workspace write.
   const position = key && runner.repoint(key, draft) ? runner.queuedPosition(key) : 0;
