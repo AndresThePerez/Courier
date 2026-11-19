@@ -14,9 +14,9 @@
 import { get, set, deepCopy } from './store.js';
 import { el, replace, byId, fmtMs, fmtTime } from './dom.js';
 import * as api from './api.js';
-import { createRunConfig, createSavedCollections, clampOption as clampWithin, SETUP_REFUSED } from './run-config.js';
+import { createRunConfig, createSavedCollections, SETUP_REFUSED } from './run-config.js';
 import { WRITE_REFUSED } from './workspace.js';
-import { requestPayload, runPayload, runProblem, runField, refusedText, capitalized } from './request-model.js';
+import { requestPayload, runPayload, runProblem, runField, refusedText, capitalized, clampSetting } from './request-model.js';
 
 // MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
 // enforces them either way; matching them here means a visitor meets a cap as a
@@ -121,6 +121,10 @@ let addNoteCount = -1;
 // through a reorder: { key, assertion, part, label, message }. The note's row
 // number is read from where the entry is now, never from where it was.
 let refusal = null;
+// settingNotes says, per run setting, what the run will use when that is not
+// what was typed. Each is written when the visitor types, never by a render,
+// so a poll cannot announce it again.
+const settingNotes = { delay_ms: '', concurrency: '', duration_secs: '' };
 
 export function init(h) {
   hooks = { ...hooks, ...h };
@@ -136,7 +140,11 @@ export function init(h) {
   byId('stop-on-failure').addEventListener('change', (e) => setOption('stop_on_failure', e.target.checked));
   for (const [id, key] of Object.entries(optionOf)) {
     const input = byId(id);
-    input.addEventListener('input', (e) => setOption(key, clampOption(key, e.target.value)));
+    input.addEventListener('input', (e) => {
+      const read = clampSetting(Limits[key], e.target.value, Boolean(e.target.validity && e.target.validity.badInput));
+      settingNotes[key] = read.note;
+      setOption(key, read.value);
+    });
     // Repaint on blur so a field the visitor cleared, or pushed past its cap,
     // comes back showing the number the run will actually use.
     input.addEventListener('blur', () => render(get()));
@@ -176,6 +184,7 @@ export function methodBadge(endpoints, endpointId) {
 // restore puts back the run setup this browser kept, at page load only.
 export function restore() {
   sayAdded('', -1);
+  for (const key of Object.keys(settingNotes)) settingNotes[key] = '';
   set(setup.load());
 }
 
@@ -332,6 +341,8 @@ function preloadKnee(workers) {
   }
   sequenceNote = '';
   startNote = '';
+  settingNotes.concurrency = '';
+  settingNotes.duration_secs = '';
   sayAdded('', -1);
   const at = `at ${workers} worker${workers === 1 ? '' : 's'} for ${KneeDuration}s`;
   const queued = state.sequence.length;
@@ -423,10 +434,6 @@ function setMode(mode) {
 
 function setOption(key, value) {
   setSetup({ options: { ...get().options, [key]: value } });
-}
-
-function clampOption(key, raw) {
-  return clampWithin(Limits, key, raw);
 }
 
 // ---------------------------------------------------------------- run controls
@@ -874,7 +881,12 @@ function renderConfig(state) {
   setText(byId('mode-note'), modeNotes[state.mode] || '');
 
   byId('stop-on-failure').checked = Boolean(state.options.stop_on_failure);
-  for (const [id, key] of Object.entries(optionOf)) setNumber(id, state.options[key]);
+  for (const [id, key] of Object.entries(optionOf)) {
+    setNumber(id, state.options[key]);
+    const note = byId(`${id}-note`);
+    note.hidden = !settingNotes[key];
+    setText(note, settingNotes[key]);
+  }
 }
 
 // setNumber never writes over the field the visitor is typing into: assigning a

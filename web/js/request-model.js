@@ -190,3 +190,38 @@ export const capitalized = (text) => (text ? text[0].toUpperCase() + text.slice(
 export function refusedText(where, message) {
   return where ? `Refused - ${where}: ${message}` : `Refused - ${message}`;
 }
+
+// ---------------------------------------------------------------- run settings
+
+// shownNumber is a parsed number as a sentence can print it, or '' for one too
+// large or small to read back as typed digits.
+const shownNumber = (n) => (Number.isFinite(n) && Math.abs(n) < 1e15 ? String(n) : '');
+
+const clip = (text) => (text.length > 40 ? `${text.slice(0, 40)}...` : text);
+
+// clampSetting reads what was typed into a run setting the way the run will
+// use it, and says so whenever that is not what was typed: { value, note }.
+// It parses with Number(), so 1e2 is 100 and "10 workers" is not a number,
+// takes the whole part of a fraction, and then applies the server's own
+// clamp (sandbox.clampOptions): under the floor falls back to the default,
+// over the cap is pulled down to the cap. value is always a whole number
+// within limits; note is '' when the value is the one typed. badInput is a
+// number field's own report that what is in it is not a number.
+export function clampSetting({ lo, hi, fallback }, typed, badInput = false) {
+  const text = String(typed).trim();
+  const fallbackNote = `the run will use the default, ${fallback}.`;
+  if (badInput) return { value: fallback, note: `That is not a number - ${fallbackNote}` };
+  if (text === '') return { value: fallback, note: `Empty - ${fallbackNote}` };
+  const n = Number(text);
+  if (Number.isNaN(n)) return { value: fallback, note: `${JSON.stringify(clip(text))} is not a number - ${fallbackNote}` };
+  const whole = Math.trunc(n) + 0;
+  const reads = shownNumber(n) && shownNumber(n) !== text ? `${clip(text)} is ${shownNumber(n)}` : clip(text);
+  if (whole < lo) return { value: fallback, note: `${clip(text)} is under the floor of ${lo} - ${fallbackNote}` };
+  if (whole > hi) {
+    const over = reads === clip(text) ? `${reads} is over` : `${reads}, over`;
+    return { value: hi, note: `${over} the cap of ${hi} - the run will use ${hi}.` };
+  }
+  if (whole !== n) return { value: whole, note: `${clip(text)} is not a whole number - the run will use ${whole}.` };
+  if (String(whole) !== text) return { value: whole, note: `${reads} - the run will use ${whole}.` };
+  return { value: whole, note: '' };
+}

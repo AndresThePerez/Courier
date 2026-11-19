@@ -44,6 +44,7 @@ var requiredIDs = []string{
 	"mode-functional", "mode-performance", "mode-note",
 	"functional-options", "performance-options",
 	"stop-on-failure", "delay-ms", "concurrency", "duration-secs",
+	"delay-ms-note", "concurrency-note", "duration-secs-note",
 	"start-run", "cancel-run", "watch-run", "start-note",
 	"run-status-banner", "cooldown-countdown",
 

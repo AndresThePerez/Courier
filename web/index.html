@@ -267,27 +267,31 @@
           <label class="field">
             <span class="field-label">Delay between requests</span>
             <span class="field-row">
-              <input id="delay-ms" type="number" min="0" max="1000" step="10" inputmode="numeric">
+              <input id="delay-ms" type="number" min="0" max="1000" step="10" inputmode="numeric" aria-describedby="delay-ms-note">
               <span class="hint">ms &mdash; 0 to 1000</span>
             </span>
           </label>
+          <!-- What the run will use when it is not what was typed. -->
+          <p id="delay-ms-note" class="note setting-note" role="status" aria-live="polite" hidden></p>
         </div>
 
         <div id="performance-options" class="options" hidden>
           <label class="field">
             <span class="field-label">Concurrency</span>
             <span class="field-row">
-              <input id="concurrency" type="number" min="1" max="50" step="1" inputmode="numeric">
+              <input id="concurrency" type="number" min="1" max="50" step="1" inputmode="numeric" aria-describedby="concurrency-note">
               <span class="hint">workers &mdash; 1 to 50</span>
             </span>
           </label>
+          <p id="concurrency-note" class="note setting-note" role="status" aria-live="polite" hidden></p>
           <label class="field">
             <span class="field-label">Duration</span>
             <span class="field-row">
-              <input id="duration-secs" type="number" min="1" max="30" step="1" inputmode="numeric">
+              <input id="duration-secs" type="number" min="1" max="30" step="1" inputmode="numeric" aria-describedby="duration-secs-note">
               <span class="hint">seconds &mdash; 1 to 30</span>
             </span>
           </label>
+          <p id="duration-secs-note" class="note setting-note" role="status" aria-live="polite" hidden></p>
         </div>
       </section>
 
