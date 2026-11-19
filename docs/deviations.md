@@ -1326,7 +1326,7 @@ non-text method, an endpoint id with quotes and brackets, and an endpoint not in
 catalog, in all three lists; every list picking the method up once the catalog arrives; no
 list writing a method of its own).
 
-## N43 — Request bodies are checked a few at a time; an assertion value is one scalar
+## N43 — The body check is bounded by body bytes; an assertion value is one scalar
 
 **What the server did:** `POST /api/send` and `POST /api/runs` read, checked and decoded a
 body before the one-send limit and the one-run lock, for any number of visitors at once.
@@ -1338,17 +1338,29 @@ kept, and stored in the run's report, its replay log and its result frames.
 
 **What it does now:**
 
-- At most `MaxBodyChecks` = 2 bodies are checked and decoded at once, across both routes.
-  A body is read in full, under the size cap as before, before it takes a slot, so an
-  upload still arriving holds none. Up to `MaxBodyWaiters` = 16 bodies already read wait
-  for a slot, and a waiter whose client goes away stops waiting. A body that arrives with
-  16 already waiting is answered at once, unchecked, with `503`, a `Retry-After: 1` header,
-  the security headers and the one error shape:
+- The body check is bounded by the bytes of the bodies in it, across both routes: at most
+  2 × 256 KiB of bodies at once, with up to 16 × 256 KiB more waiting (`MaxBodyChecks`,
+  `MaxBodyWaiters` and `MaxBodyBytes`). A body weighs its length and never less than 4 KiB
+  (`minBodyWeight`), so two bodies at the cap fill the check while up to 128 small ones
+  fit in it, and an ordinary burst of small posts is not refused. A body is read in full,
+  under the size cap as before, before it takes its place, so an upload still arriving
+  holds none. Bodies that do not fit wait in arrival order: a body at the cap that is
+  waiting goes in before any body that arrived after it, however small. A waiter whose
+  client goes away leaves the line. A body that would take the waiting bodies past their
+  bound is answered at once, unchecked, with `503`, a `Retry-After: 1` header, the
+  security headers and the one error shape:
   `{"error":"the server is busy checking other requests; try again in a moment"}`.
   Before, these routes never answered `503`. The page shows the sentence after
   `Refused - ` on Send and after `Could not start the run - ` on Start. The `400`, `413`
-  and `415` answers are unchanged, and `413` and `415` are given without a slot. The
-  constants and the memory they bound are stated beside them in `internal/api/server.go`.
+  and `415` answers are unchanged, and `413` and `415` are given without entering the gate.
+- What this bounds is what the checks in flight allocate: the widest bodies measured
+  allocate about 140 times their size to check and decode, and a test holds them to 192
+  times, so the checks in flight allocate at most 192 × 2 × 256 KiB, and the bodies
+  waiting weigh at most 16 × 256 KiB. It does not bound what scales with connections
+  (bodies read in full and then answered `503`, and bodies still arriving), the decoded
+  value a request keeps after its check through validation and the start or the send, or
+  garbage not yet collected. The statement beside the constants in
+  `internal/api/server.go` says the same.
 - An assertion `value` that is an object or an array is refused by the body check, for
   every assertion type and operator, with a `400` naming the value:
   `{"error":"expected a number, a string, true, false or null, got an object","field":"sequence[1].assertions[0].value"}`
@@ -1366,14 +1378,24 @@ kept, and stored in the run's report, its replay log and its result frames.
 (64 posts at the cap to both routes: never more than 2 inside, 16 waiting, the other 46
 answered `503`, nothing left behind), `TestABodyBeyondMaxBodyWaitersIsAnswered503WithoutBeingChecked`
 (the `503`, its header, body and security headers, a malformed body unchecked, `413` and
-`415` with the queue full), `TestAStalledUploadHoldsNoCheckSlot`,
-`TestAWaiterWhoseClientLeavesStopsWaiting`; `internal/api/assertion_value_test.go`:
+`415` with the line full), `TestAStalledUploadHoldsNoCheckSlot`,
+`TestAWaiterWhoseClientLeavesStopsWaiting`; `internal/api/body_gate_edge_test.go`:
+`TestAnOrdinaryBurstOfSmallPostsNeverSeesTheBodyGate`,
+`TestACheckSlotIsGivenBackBeforeASendGoesOut`, `TestUploadsStalledAnywhereHoldNoSlotOrPlace`,
+`TestAWaiterOnAClosedConnectionStopsWaiting`, `TestWaitersCancelledAllAtOnceGiveBackEveryPlace`,
+`TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete`,
+`TestAPanicInsideTheDecodeGivesBackItsSlot`, `TestA503ThatCannotBeWrittenTakesNoSlotOrPlace`,
+`TestAFullBodyGateLeavesEveryOtherRouteAnswered`; `internal/api/body_gate_weight_test.go`:
+`TestABodyAtTheCapIsAdmittedBeforeSmallerOnesBehindIt`, `TestAShortBodyWeighsTheFloor`,
+`TestTheBodyGateWeighsMixedSizesThroughCancelAndComplete`,
+`TestABodyTheShapeCheckRefusesGivesBackItsRoom`, `TestTheBodyGateConstantsMatchTheDocuments`;
+`internal/api/assertion_value_test.go`:
 `TestAnAssertionValueThatIsAnObjectOrArrayIsRefused`,
 `TestScalarAssertionValuesStillPassTheShapeCheck`,
 `TestBooleanAndNullAssertionValuesKeepTheirMeaning`,
 `TestEveryCuratedRequestPassesTheBodyCheck`; `internal/api/decode_bounds_test.go`:
-`TestDecodingAWideBodyStaysLinearInItsSize` (the per-check allocation the bound is reasoned
-from), `TestARefusedAssertionValueCostsAboutItsSize`,
+`TestDecodingAWideBodyStaysLinearInItsSize` (the 192 × bound the allocation figure rests
+on), `TestARefusedAssertionValueCostsAboutItsSize`,
 `TestTheShapeCheckBuildsEachTypesFieldMapOnce`, `TestFieldMapsAreSharedSafelyOnFirstUse`;
 `internal/api/bench_test.go`: `BenchmarkCheckBodyManyObjects`. The existing tests of
 parallel starts and sends pass unchanged.

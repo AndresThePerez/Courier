@@ -363,16 +363,20 @@ says what was clamped rather than echoing what was asked for. Both halves are
 [`internal/sandbox/validate.go`](../internal/sandbox/validate.go).
 
 A body is checked and decoded before the one-run lock and the one-send limit, so those
-cannot bound what decoding costs; a body at the size cap can allocate many times its
-size. Two bodies are checked at once and sixteen more may wait, which bounds that cost
-by constants rather than by how many visitors post together; past that the answer is a
-`503` with `Retry-After`, given before anything is decoded. A body takes its place only once
-it has arrived: with `ReadHeaderTimeout` as the only server timeout, a slot held during an
-upload would let two stalled connections stop every POST. An assertion's value is held to
-one scalar for the same reason the strings are capped: a structure there is decoded, kept
-and stored with the run, and `exists` would accept one of any size. The constants, the
-bound and the tests behind them are in [`internal/api/server.go`](../internal/api/server.go)
-and [`docs/deviations.md`](deviations.md) N43.
+cannot bound what decoding costs, and a body at the size cap can allocate many times its
+size. The check is therefore bounded by the bytes of the bodies in it rather than by how
+many visitors post together: two bodies at the cap fit at once, or up to 128 small ones,
+and eight times as many bytes may wait, in arrival order so that small posts cannot keep
+a large one waiting. Past that the answer is a `503` with `Retry-After`, given
+before anything is decoded. A body takes its place only once it has arrived: with
+`ReadHeaderTimeout` as the only server timeout, room held during an upload would let
+stalled connections stop every POST. This bounds what the checks in flight allocate; it
+leaves out bodies answered `503` or still arriving, which scale with connections, and the
+decoded value a request keeps after its check. An assertion's value is held to one scalar
+for the same reason the strings are capped: a structure there is decoded, kept and stored
+with the run, and `exists` would accept one of any size. The constants, the bound and the
+tests behind them are in [`internal/api/server.go`](../internal/api/server.go) and
+[`docs/deviations.md`](deviations.md) N43.
 
 The table of values stays in [the README](../README.md#caps).
 
