@@ -16,6 +16,8 @@ services:
     environment:
       - TARGET_URL=${TARGET_URL:-http://pokesearch:8080}
       - TARGET_DISPLAY=${TARGET_DISPLAY:-pokesearch.andrestheperez.com}
+      # Must stay under mem_limit, leaving a quarter to memory Go does not count.
+      - GOMEMLIMIT=192MiB
     restart: unless-stopped
     mem_limit: 256m
     # The README measures a maximum run at about 10% of one core. This is that
