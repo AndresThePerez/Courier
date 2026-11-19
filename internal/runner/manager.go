@@ -161,8 +161,11 @@ func (m *Manager) Start(ctx context.Context, rr sandbox.RunRequest) (string, err
 
 	m.mu.Lock()
 	if m.st.Running {
+		// Copied under the lock: the run can finish, and clear it, the moment
+		// the lock is released.
+		running := m.st.RunID
 		m.mu.Unlock()
-		m.log.Info("run refused", "event", EventRunRefused, "reason", "busy", "running_run_id", m.st.RunID)
+		m.log.Info("run refused", "event", EventRunRefused, "reason", "busy", "running_run_id", running)
 		return "", ErrBusy
 	}
 	// Admission and the transition to running happen in one critical section.
