@@ -25,8 +25,11 @@ func TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit(t *testing.T) {
 		t.Fatal("docker-compose.yml sets no mem_limit in k, m or g")
 	}
 	// Compose keeps the last of a variable set twice, so a second, larger
-	// setting below the first would win unseen: the variable is set once, in
-	// either the list or the mapping form, or the test fails.
+	// setting below the first would win unseen. The variable must be set
+	// exactly once, in the list form with a literal value
+	// (- GOMEMLIMIT=192MiB); any other spelling (the mapping form, a quoted
+	// value, a ${GOMEMLIMIT:-...} default) fails on purpose, so the limit
+	// stays readable from the file.
 	if n := len(regexp.MustCompile(`(?m)^[^#\n]*\bGOMEMLIMIT\b`).FindAllString(compose, -1)); n != 1 {
 		t.Fatalf("docker-compose.yml sets GOMEMLIMIT %d times, want once", n)
 	}
