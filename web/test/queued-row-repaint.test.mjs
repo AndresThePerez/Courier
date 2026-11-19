@@ -114,6 +114,43 @@ test('Save of an endpoint change paints the row\'s method badge and target from 
   assert.deepEqual(listenerErrors, []);
 });
 
+test('Save of an endpoint change alone, with no params to change, paints the row\'s method badge and target', () => {
+  const plain = req('ws-a', 1, { params: {} });
+  boot({ saved: [plain], setup: setupOf([plain]) });
+  assert.deepEqual(paintedAll(), [{ index: '1', method: 'GET', name: 'Req 1', target: 'search', edit: 'Edit Req 1' }]);
+  editOf(0).click();
+  const select = byId('endpoint-select');
+  select.value = 'lookup';
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  save();
+
+  assert.equal(get().sequence[0].request.endpoint, 'lookup', 'Save did not reach the entry; the case proves nothing');
+  assert.deepEqual(get().sequence[0].request.params, {}, 'the params changed too; the case is not the endpoint alone');
+  assert.deepEqual(paintedAll(), [{ index: '1', method: 'POST', name: 'Req 1', target: 'lookup', edit: 'Edit Req 1' }]);
+  assert.deepEqual(paintedAll(), fromState());
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('Deselect all, Select all and one checkbox each repaint every row\'s off marking to match what the entries hold', () => {
+  boot({ setup: setupOf([req('ws-a', 1), req('ws-b', 2), req('ws-c', 3)]) });
+  set({ activeTab: 'runner' });
+  const marks = () => rows().map((row) => ({ off: row.classList.contains('is-off'), checked: row.querySelector('.seq-check').checked }));
+  const held = () => get().sequence.map((e) => ({ off: !e.enabled, checked: e.enabled }));
+
+  byId('deselect-all').click();
+  assert.ok(get().sequence.every((e) => !e.enabled), 'Deselect all did not reach the entries');
+  assert.deepEqual(marks(), held());
+
+  byId('select-all').click();
+  assert.ok(get().sequence.every((e) => e.enabled), 'Select all did not reach the entries');
+  assert.deepEqual(marks(), held());
+
+  rows()[1].querySelector('.seq-check').click();
+  assert.deepEqual(get().sequence.map((e) => e.enabled), [true, false, true]);
+  assert.deepEqual(marks(), held());
+  assert.deepEqual(listenerErrors, []);
+});
+
 test('Edit on a row whose saved request changed since it was queued paints the copy the entry now holds', () => {
   const queued = req('ws-a', 1);
   boot({ saved: [{ ...queued, name: 'Changed since' }], setup: setupOf([queued, req('ws-b', 2)]) });
