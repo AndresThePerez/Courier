@@ -30,6 +30,7 @@ let sortDesc = true;
 let lastRunId = null;
 let lastRowSignature = null;
 let lastRowEndpoints = null;
+let lastRows = [];
 let lastReport = null;
 
 // Throttle state for the summary, which is the page's one live region. A
@@ -277,10 +278,14 @@ function renderFunctional(state, rep) {
   // that changes what a row says, the final report included: its rows carry the
   // body previews a mid-run partial report deliberately omits.
   // The catalog arriving is a change as well: the method badges are read from it.
+  // So is a row delivered again under the same index (the stream and the
+  // polling fallback can both deliver one): the count alone would not show it.
   const signature = `${filter}|${state.results.length}|${rep ? `${rep.id}:${rep.status}` : 'live'}`;
-  if (signature === lastRowSignature && state.endpoints === lastRowEndpoints) return;
+  const sameRows = state.results.length === lastRows.length && state.results.every((r, i) => r === lastRows[i]);
+  if (signature === lastRowSignature && state.endpoints === lastRowEndpoints && sameRows) return;
   lastRowSignature = signature;
   lastRowEndpoints = state.endpoints;
+  lastRows = state.results.slice();
 
   const rows = state.results.filter(matchesFilter);
   const box = byId('results-rows');
