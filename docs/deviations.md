@@ -1672,11 +1672,9 @@ the rule that mirrors the server still accepting an empty string);
 **What the server did:** N43 bounds the body check, which a body enters only once it has
 arrived. Reading it was not bounded: `POST /api/send` and `POST /api/runs` read their
 bodies in full, any number at once, with no time limit beyond `ReadHeaderTimeout`, which
-ends with the headers. Measured against the handler with the production server settings
-in a 256 MB, half-CPU scope, 650 connections that each sent all but the last byte of a
-256 KiB body held the process at its memory limit for as long as they stayed, about 400 KB
-each, and it was killed when they let go; 1,000 such connections got it killed in under a
-second.
+ends with the headers, so a body that stalled held about 380 KB for as long as its client
+kept the connection open. Measured as below, 650 and 1,000 connections that each sent all
+but the last byte of a 256 KiB body got the process killed.
 
 **What it does now:**
 
@@ -1729,17 +1727,32 @@ or the number of open connections. Nor does it bound what a client has sent that
 server has not read: those bytes sit in the kernel's buffer for the connection, charged to
 the container, until the server reads them or closes it, and they grow with the number of
 open connections, outside both bounds. Only a limit on connections in front of the server
-would bound them, and this repository sets none. Measured in the same scope, 2,000 connections that each send
-a whole 256 KiB body at once still get the process killed, before and after this change,
-by that buffer memory (about 200 MB of it at the last sample before the kill).
+would bound them, and this repository sets none. Measured as below, several thousand
+simultaneous connections bring the process to its memory limit through that kernel memory,
+after this change as before it.
 
 **Narrows N43**, which says its bound leaves out bodies still arriving: they are now bounded
 here.
 
-**Measured after:** in the same scope, the 650 and the 1,000 stalled connections are each
-answered at once with `503` but for 128, which are answered `408` after 10s; the process
-stays up, its peak at 131 MB and 181 MB, and every place is given back. 1,000 connections
-each posting a whole body at the cap peak at 164 MB, as before.
+**How it was measured, and what it showed.** On a development machine, not the deploy
+host: the handler built as `cmd/server` builds it (`ReadHeaderTimeout` 10s, no other
+server timeout) and served on a loopback port, inside a systemd scope of 256 MB of memory,
+no swap and half a CPU, with the load generator and a stand-in target outside it, at the
+commit before this change and at this change. Peaks are the scope's own `memory.peak`. Two
+independent runs of the same commits were made; this states only what both support, with
+ranges where they differ.
+
+- Before: 650 and 1,000 connections that each sent all but the last byte of a 256 KiB body
+  and then stalled got the process killed.
+- After: the same 650 and 1,000 stalled connections leave it running. All but 128 are
+  answered `503` at once and those 128 are answered `408` after 10s, every place is given
+  back, and the peaks were 89 to 131 MB for 650 and 124 to 181 MB for 1,000.
+- Both runs found the memory that keeps growing with the number of connections to be
+  kernel socket memory, which neither bound covers: as the stalled connections run into
+  the thousands, the peak climbs towards the 256 MB limit and reaches it at several
+  thousand simultaneous connections.
+
+None of these figures is in the README.
 
 **Proof:** `internal/api/body_reads_test.go`:
 `TestAPostBeyondMaxBodyReadsIsAnswered503WithoutBeingRead` (both routes, the body never
