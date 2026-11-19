@@ -458,10 +458,10 @@ function renderDashboard(rep) {
 
   const overall = perf.overall || {};
   renderVerdict(rep, perf);
-  renderLadder(overall.sla || {});
+  renderLadder(overall.sla || {}, perf.slo);
   renderApdex(overall.apdex || {}, perf.slo);
   renderLatency(overall.latency || {});
-  renderHistogram(overall.histogram || []);
+  renderHistogram(overall.histogram || [], gateOf(perf.slo));
   renderPerRequest(perf.per_request || []);
   renderErrors(overall, perf.overrun_ms);
 }
@@ -510,26 +510,58 @@ function verdictNote(slo) {
   return `Verdict SLOs are fixed server-side constants: p95 within ${slo.p95_ms}ms and an error rate under ${(100 * slo.max_error_rate).toFixed(0)}%, calibrated on ${slo.calibration_date} against this target, this hardware, and the ${slo.calibration_sequence} sequence.`;
 }
 
-function renderLadder(sla) {
+// The defaults are what a report without its own SLO block was judged by
+// (internal/report): the p95 gate, and the rungs its SLA shares are keyed by.
+const DefaultGateMs = 150;
+const RungGoalPct = 95;
+
+const positive = (n) => typeof n === 'number' && Number.isFinite(n) && n > 0;
+
+// gateOf is the verdict's p95 goal, read from the report.
+function gateOf(slo) {
+  return slo && typeof slo === 'object' && positive(slo.p95_ms) ? slo.p95_ms : DefaultGateMs;
+}
+
+// rungsOf is the ladder the report states, lowest rung first. A report that
+// states none, or one that is not a list of thresholds (an older report),
+// draws the rungs its shares are keyed by instead.
+function rungsOf(sla, slo) {
+  const stated = slo && typeof slo === 'object' ? slo.ladder_ms : null;
+  if (Array.isArray(stated) && stated.length > 0 && stated.every(positive)) {
+    return [...new Set(stated)].sort((x, y) => x - y);
+  }
+  const keyed = Object.keys(sla).map((k) => /^under_(\d+)$/.exec(k)).filter(Boolean).map((m) => Number(m[1]));
+  return keyed.length > 0 ? [...new Set(keyed)].sort((x, y) => x - y) : [50, 150, DefaultGateMs * 2];
+}
+
+// Each rung's goal is RungGoalPct of responses under it. A rung that met it
+// is a pass. One that missed it is a failure at the verdict's gate and above
+// it; below the gate it is tighter than anything the run is judged by, so it
+// keeps the plain fill, and says in words that it missed.
+function renderLadder(sla, slo) {
+  const gate = gateOf(slo);
   replace(byId('sla-ladder'), [
-    ladderBar('under 50ms', sla.under_50 || 0),
-    ladderBar('under 150ms', sla.under_150 || 0),
-    ladderBar('under 300ms', sla.under_300 || 0),
+    ...rungsOf(sla, slo).map((ms) => ladderBar(ms, sla[`under_${msText(ms)}`], gate)),
+    el('p', {
+      class: 'note',
+      text: `Each rung's goal is ${RungGoalPct}% of responses under it. ${msText(gate)}ms is the verdict's p95 gate: a rung there or above it that misses its goal is drawn as a failure, and one below it only describes the run.`,
+    }),
   ]);
 }
 
-// The middle rung is the verdict's own gate, so it carries the warn hue, and
-// the 300ms rung is past it. The 50ms rung is the satisfied band and stays on
-// the accent.
-const LadderTone = { 'under 50ms': '', 'under 150ms': ' is-warn', 'under 300ms': ' is-fail' };
-
-function ladderBar(label, pct) {
-  const fill = el('div', { class: `bar-fill${LadderTone[label] || ''}` });
-  fill.style.width = `${clampPct(pct)}%`;
-  return el('div', { class: 'bar-row' }, [
+function ladderBar(ms, pct, gate) {
+  const known = typeof pct === 'number' && Number.isFinite(pct);
+  const met = known && pct >= RungGoalPct;
+  const tone = !known ? '' : (met ? ' is-pass' : (ms >= gate ? ' is-fail' : ''));
+  const goal = !known ? 'no share recorded' : (met ? 'goal met' : 'goal missed');
+  const label = `under ${msText(ms)}ms`;
+  const fill = el('div', { class: `bar-fill${tone}` });
+  fill.style.width = `${known ? clampPct(pct) : 0}%`;
+  return el('div', { class: 'bar-row', attrs: { 'aria-label': `${label}: ${known ? `${pct.toFixed(1)}%` : 'no share'}, ${goal}` } }, [
     el('span', { class: 'bar-label', text: label }),
     el('div', { class: 'bar-track' }, [fill]),
-    el('span', { class: 'bar-value mono', text: `${pct.toFixed(1)}%` }),
+    el('span', { class: 'bar-value mono', text: known ? `${pct.toFixed(1)}%` : '-' }),
+    el('span', { class: 'bar-goal', text: goal }),
   ]);
 }
 
@@ -607,12 +639,11 @@ function renderLatency(latency) {
   ]);
 }
 
-function renderHistogram(buckets) {
+function renderHistogram(buckets, gate) {
   const max = buckets.reduce((m, b) => Math.max(m, b.count || 0), 0);
   replace(byId('histogram'), buckets.map((b) => {
     // A bucket that straddles the gate is a warning and one entirely past it
     // is a failure. to === 0 is the unbounded top bucket.
-    const gate = 150;
     const tone = (b.to === 0 || b.from >= gate) ? ' is-fail' : (b.to > gate ? ' is-warn' : '');
     const fill = el('div', { class: `bar-fill${tone}` });
     fill.style.width = `${max > 0 ? (100 * (b.count || 0)) / max : 0}%`;
