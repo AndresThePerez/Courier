@@ -252,6 +252,13 @@ function encode(payload) {
 
 const unencodable = () => ({ ok: false, kind: 'error', error: 'the request could not be encoded' });
 
+// A 503 from Send or Start is the server's body gate: too many request bodies
+// arrived at once. It is a moment, not a refusal of this request, so it is
+// told apart from both, and never retried from here: the visitor presses
+// again.
+const busyFallback = 'the server is busy; try again in a moment';
+const busySaid = (body) => (typeof body.error === 'string' && body.error) || busyFallback;
+
 // startRun answers with a tagged result rather than throwing, because every
 // one of its outcomes is a UI state and not an error: 409 with a run_id means
 // "offer spectator mode", 409 with a cooldown_until means "start the
@@ -283,6 +290,8 @@ export async function startRun(payload) {
     return { ok: false, kind: 'busy', runId: body.run_id || '' };
   }
   if (res.status === 400) return { ok: false, kind: 'invalid', error: body.error || 'invalid payload', field: body.field || '' };
+  // kind 'busy' is taken here by the 409 of a run already live.
+  if (res.status === 503) return { ok: false, kind: 'overloaded', error: busySaid(body) };
   return { ok: false, kind: 'error', error: said(res) };
 }
 
@@ -308,6 +317,7 @@ export async function send(request) {
   if (res.ok) return isSendResult(res.body) ? { ok: true, result: body } : unreachable();
   if (res.status === 429) return { ok: false, kind: 'busy', error: body.error || 'another send is in flight' };
   if (res.status === 400) return { ok: false, kind: 'invalid', error: body.error || 'invalid request', field: body.field || '' };
+  if (res.status === 503) return { ok: false, kind: 'busy', error: busySaid(body) };
   return { ok: false, kind: 'error', error: said(res) };
 }
 

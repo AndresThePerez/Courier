@@ -781,9 +781,10 @@ function renderSend(state) {
     return;
   }
   if (!send.result) {
-    // 429 is a rate limit; 400 is the sandbox refusing the request before it
-    // could reach the target. Both are answers, not failures of the page, and
-    // the 400 is where a visitor learns the allowlist is real.
+    // 429 (one send at a time) and 503 (too many request bodies at once) are
+    // the server busy for a moment; 400 is the sandbox refusing the request
+    // before it could reach the target. All are answers, not failures of the
+    // page, and the 400 is where a visitor learns the allowlist is real.
     status.textContent = send.kind === 'busy' ? `Busy - ${send.error}` : sendRefusal(send);
     status.className = 'send-status fail';
     replace(box, [el('p', { class: 'note', text: 'Nothing reached the target.' })]);

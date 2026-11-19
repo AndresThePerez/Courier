@@ -589,6 +589,11 @@ function applyStartOutcome(outcome, mode, entries) {
     refuse(outcome, entries);
     return;
   }
+  if (outcome.kind === 'overloaded') {
+    // The server was momentarily full: nothing about this run was refused.
+    startNote = `Busy - ${outcome.error}`;
+    return;
+  }
   startNote = `Could not start the run - ${outcome.error}`;
 }
 
