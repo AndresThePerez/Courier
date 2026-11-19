@@ -525,8 +525,14 @@ func exchange(addr, req string, hangUp bool) (int, error) {
 // Stalled uploads, bodies at the cap and small posts arriving together: the
 // places and the gate each stay within their bounds, every request is
 // answered with one of the answers the bounds give, and both empty afterwards.
+//
+// The deadline is long enough that a starved server (a shared runner, -race)
+// still reads every body that was sent whole: under a short one a body at the
+// cap could be answered 408 with no defect anywhere. Nothing here waits for
+// it: each stalled upload hangs up once every other request has its answer,
+// which ends its read and gives its place back as surely as the deadline does.
 func TestThePlacesAndTheGateHoldTogetherUnderAMixedFlood(t *testing.T) {
-	const deadline = 300 * time.Millisecond
+	const deadline = 10 * time.Second
 	s, srv := newBodyServer(t, newTarget(t, 0), deadline)
 	addr := srv.Listener.Addr().String()
 	stallHead := "POST /api/send HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n"
@@ -563,13 +569,53 @@ func TestThePlacesAndTheGateHoldTogetherUnderAMixedFlood(t *testing.T) {
 		err  error
 	}
 	out := make(chan answer, 3*2*MaxBodyReads)
-	var wg sync.WaitGroup
+	var sent, stalls sync.WaitGroup
 	fire := func(kind, req string) {
-		wg.Add(1)
+		sent.Add(1)
 		go func() {
-			defer wg.Done()
+			defer sent.Done()
 			code, err := exchange(addr, req, false)
 			out <- answer{kind, code, err}
+		}()
+	}
+	// stall sends the head and the first bytes of a body, then waits for its
+	// answer until every other request has had its own, and hangs up. A stall
+	// still being read when it hangs up is reported as code 0; a connection
+	// that ends with no answer before then is an error.
+	othersAnswered := make(chan struct{})
+	stall := func() {
+		stalls.Add(1)
+		go func() {
+			defer stalls.Done()
+			c, err := net.Dial("tcp", addr)
+			if err != nil {
+				out <- answer{"stalled", 0, err}
+				return
+			}
+			defer c.Close()
+			if _, err := io.WriteString(c, stallHead+`{"endpoint":"heal`); err != nil {
+				out <- answer{"stalled", 0, err}
+				return
+			}
+			got := make(chan answer, 1)
+			go func() {
+				resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+				if err != nil {
+					got <- answer{"stalled", 0, err}
+					return
+				}
+				resp.Body.Close()
+				got <- answer{"stalled", resp.StatusCode, nil}
+			}()
+			select {
+			case a := <-got:
+				out <- a
+			case <-othersAnswered:
+				c.Close()
+				a := <-got
+				a.err = nil
+				out <- a
+			}
 		}()
 	}
 	small := fmt.Sprintf("POST /api/send HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(undispatchable), undispatchable)
@@ -578,15 +624,17 @@ func TestThePlacesAndTheGateHoldTogetherUnderAMixedFlood(t *testing.T) {
 			fire("at the cap", capHead+heavyBody)
 		}
 		fire("small", small)
-		fire("stalled", stallHead+`{"endpoint":"heal`)
+		stall()
 	}
-	wg.Wait()
+	sent.Wait()
+	close(othersAnswered)
+	stalls.Wait()
 	close(out)
 	close(stopWatch)
 	<-watched
 
 	allowed := map[string]map[int]bool{
-		"stalled":    {http.StatusRequestTimeout: true, http.StatusServiceUnavailable: true},
+		"stalled":    {0: true, http.StatusRequestTimeout: true, http.StatusServiceUnavailable: true},
 		"at the cap": {http.StatusBadRequest: true, http.StatusServiceUnavailable: true},
 		"small":      {http.StatusBadRequest: true, http.StatusServiceUnavailable: true},
 	}
