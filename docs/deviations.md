@@ -1360,7 +1360,7 @@ kept, and stored in the run's report, its replay log and its result frames.
   (bodies read in full and then answered `503`, and bodies still arriving), the decoded
   value a request keeps after its check through validation and the start or the send, or
   garbage not yet collected. The statement beside the constants in
-  `internal/api/server.go` says the same. Nor does it share the line between clients:
+  `internal/api/body_gate.go` says the same. Nor does it share the line between clients:
   the line has no per-client fairness, so a client that keeps it full of bodies at the cap
   makes every other POST an immediate `503` with `Retry-After` until it stops. What limits
   one client is the tunnel in front of the server, not this bound.
