@@ -386,7 +386,7 @@ func TestFunctionalVerdictLabelsAreUnchanged(t *testing.T) {
 		rep.Functional.Results = rs
 		return rep
 	}
-	pass := report.RequestResult{Passed: true}
+	pass := report.RequestResult{Passed: true, Assertions: []assert.Outcome{{Passed: true}}}
 	fail := report.RequestResult{}
 	skip := report.RequestResult{Skipped: true}
 	for _, tc := range []struct {

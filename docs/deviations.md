@@ -1468,3 +1468,48 @@ order), `TestWhiteSpaceAtTheEdgesAndAValueOfOnlyWhiteSpace`,
 `internal/template/template_test.go`: `TestPoolsAreUsable`,
 `TestAnExpandedValueAtTheLimitsStaysWithinThem`; `web/limits_test.go`:
 `TestFrontendLimitsMatchTheServer`.
+
+## N45 — A functional run that asserted nothing is N/A, not PASS
+
+**Amends N38**, whose rule gave `PASS` to a completed functional run with at least one
+request passed. A request with no assertion passes as soon as it is answered, so a run made
+only of such requests was a `PASS` that checked nothing.
+
+**What the server does now:** such a run's verdict is `N/A`, in every place the server
+states one: `functional.verdict` on the finished report, `verdict` in `run_finished.data`
+(live, and when it is rebuilt from the stored report), the history row's `verdict`, and the
+PDF, whose band reads `N/A - nothing was asserted`, the band a run with nothing asserted
+already had. The history row's summary keeps its counts and adds `, nothing asserted` for
+such a run (`3 passed / 0 failed / 0 skipped, nothing asserted`), since its passed count is
+not a count of checks passed. A performance run's verdict is untouched. The whole rule, in
+`report.FunctionalVerdict`, where a request counts as asserted when it was dispatched and
+carries at least one assertion:
+
+| Run | Before | Now |
+|---|---|---|
+| Completed, at least one assertion, every one passed | PASS | PASS |
+| Completed, any assertion failed | FAIL | FAIL |
+| Completed, no assertion anywhere, every request answered | PASS | **N/A** |
+| Completed, no assertion anywhere, a request got no response or had its response cut off | FAIL | FAIL |
+| Completed, some requests asserted and passed, others with none, all answered | PASS | PASS |
+| Completed, some requests asserted, one failed, others with none | FAIL | FAIL |
+| Completed, nothing asserted among the requests sent, the rest skipped | PASS | **N/A** |
+| Completed, every entry skipped, or no entries | N/A | N/A |
+| Cancelled or expired, whatever it reached | N/A | N/A |
+
+A request that got no response fails whether or not it carried an assertion; that part of
+the rule is kept. A skipped row counts for nothing, whatever assertions it lists, since none
+was evaluated.
+
+**What the page shows:** the page takes the verdict the server sends. Its own fallback,
+which works the verdict out from the rows when a report carries none, still follows N38's
+rule, and is brought into line separately.
+
+**Proof:** `internal/report/verdict_rule_test.go`:
+`TestTheFunctionalVerdictRuleCaseByCase` (every row of the table);
+`internal/runner/verdict_rule_test.go`: `TestAFunctionalRunThatAssertedNothingIsNotAPass`
+(the stored report, the history and `run_finished`); `internal/api/verdict_rule_test.go`:
+`TestAFunctionalRunThatAssertedNothingIsNAEverywhere` (the report, the history row and its
+summary, the live and the rebuilt `run_finished`); `internal/pdf/verdict_rule_test.go`:
+`TestAPrintedRunThatAssertedNothingIsNA`. `TestFunctionalVerdict` and
+`TestFunctionalVerdictLabelsAreUnchanged` now give their passing row an assertion that passed.

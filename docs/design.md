@@ -186,7 +186,8 @@ falsifiable shape (PASS at 1 and 10 workers, FAIL at 25 and 50): verdict gate
 
 The principle: **an unfalsifiable green is worse than no verdict**. The same
 principle shows up at the edges — `Verdict` fails a run with zero dispatches
-rather than vacuously passing it (docs/deviations.md N7), and curated assertion values
+rather than vacuously passing it (docs/deviations.md N7), a functional run whose requests
+were all answered but which asserted nothing is N/A rather than PASS (N45), and curated assertion values
 come from a measured fixture corpus and are asserted as bounds that hold as the index grows, not estimates.
 
 ---
