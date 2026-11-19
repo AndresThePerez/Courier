@@ -342,8 +342,11 @@ func TestClientAssertionRulesMatchTheServer(t *testing.T) {
 	if err := json.Unmarshal(block[0][1], &cases); err != nil {
 		t.Fatalf("the case table is not JSON: %v", err)
 	}
-	if len(cases) < 40 {
-		t.Fatalf("the case table holds %d cases; it lost some", len(cases))
+	// The table's size today: a case that goes missing fails here, and a
+	// case added raises this number with it.
+	const tableSize = 48
+	if len(cases) < tableSize {
+		t.Fatalf("the case table holds %d cases, not %d; it lost some", len(cases), tableSize)
 	}
 	endpoints := sandbox.Endpoints()
 	if len(endpoints) == 0 {
