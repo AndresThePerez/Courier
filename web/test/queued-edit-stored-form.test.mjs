@@ -130,7 +130,7 @@ test('sameRequest ignores what is never shown or sent: key order, extra keys and
     { ...a, assertions: [{ type: 'json', path: '$.a', op: 'eq', value: -0 }] },
   ), true, 'zero and minus zero are one value on the wire');
   const long = { ...a, name: `${'N'.repeat(120)} (copy 2)`, params: { q: 'x'.repeat(501) } };
-  const cut = { ...a, name: 'N'.repeat(120), params: { q: 'x'.repeat(500) } };
+  const cut = { ...a, name: 'N'.repeat(120), params: { q: 'x'.repeat(256) } };
   assert.equal(sameRequest(long, cut), true, 'a request and its stored form');
   assert.equal(sameRequest(cut, long), true, 'its stored form and the request: the answer does not depend on the order');
 });

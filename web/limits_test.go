@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/budget"
@@ -301,6 +303,8 @@ func TestStoredRequestRulesMatchTheEditorAndTheServer(t *testing.T) {
 			number(t, "storage.js", store, `const MaxStoredAssertions = (\d+);`), sandbox.MaxAssertions},
 		{"storage.js MaxParamValue = sandbox.MaxParamValueLen",
 			number(t, "storage.js", store, `const MaxParamValue = (\d+);`), sandbox.MaxParamValueLen},
+		{"storage.js MaxParamWords = sandbox.MaxParamWords",
+			number(t, "storage.js", store, `const MaxParamWords = (\d+);`), sandbox.MaxParamWords},
 		{"storage.js MaxName = sandbox.MaxNameLen",
 			number(t, "storage.js", store, `const MaxName = (\d+);`), sandbox.MaxNameLen},
 	}
@@ -441,4 +445,116 @@ func TestClientAssertionRulesMatchTheServer(t *testing.T) {
 			t.Errorf("%s (%s): the page says refused=%v, the server says refused=%v (%v)", c.Rule, c.Mirrors, c.Refused, refused, err)
 		}
 	}
+}
+
+// TestPageParamCutMatchesTheServer runs the page's table of parameter cuts
+// (web/test/param-cut.test.mjs, where the node suite holds storage.js's
+// cutParamValue to it) through sandbox.CutParamValue: every case's expected
+// value must be the server's, so the page and the server cut alike.
+func TestPageParamCutMatchesTheServer(t *testing.T) {
+	src, err := os.ReadFile("test/param-cut.test.mjs")
+	if err != nil {
+		t.Fatalf("read the case table: %v", err)
+	}
+	block := regexp.MustCompile(`(?s)// cases:begin\nconst CASES = (\[.*?\]);\n// cases:end`).FindAllSubmatch(src, -1)
+	if len(block) != 1 {
+		t.Fatalf("param-cut.test.mjs: expected exactly one case table between the markers, found %d", len(block))
+	}
+	var cases []struct {
+		Rule  string               `json:"rule"`
+		Input [][2]json.RawMessage `json:"input"`
+		Want  [][2]json.RawMessage `json:"want"`
+		Cut   bool                 `json:"cut"`
+	}
+	if err := json.Unmarshal(block[0][1], &cases); err != nil {
+		t.Fatalf("the case table is not JSON: %v", err)
+	}
+	const tableSize = 40
+	if len(cases) < tableSize {
+		t.Fatalf("the case table holds %d cases, not %d; it lost some", len(cases), tableSize)
+	}
+	built := func(parts [][2]json.RawMessage) string {
+		var b strings.Builder
+		for _, p := range parts {
+			var text string
+			var count int
+			if err := json.Unmarshal(p[0], &text); err != nil {
+				t.Fatalf("a part's text is not a string: %v", err)
+			}
+			if err := json.Unmarshal(p[1], &count); err != nil {
+				t.Fatalf("a part's count is not a number: %v", err)
+			}
+			b.WriteString(strings.Repeat(text, count))
+		}
+		return b.String()
+	}
+	for _, c := range cases {
+		in, want := built(c.Input), built(c.Want)
+		got := sandbox.CutParamValue(in)
+		if got != want {
+			t.Errorf("%s: the server sends %q (%d characters), the table says %q", c.Rule, clip(got), utf8.RuneCountInString(got), clip(want))
+		}
+		if (got != in) != c.Cut {
+			t.Errorf("%s: the server cut=%v, the table says cut=%v", c.Rule, got != in, c.Cut)
+		}
+	}
+}
+
+func clip(s string) string {
+	if r := []rune(s); len(r) > 40 {
+		return string(r[:40]) + "..."
+	}
+	return s
+}
+
+// TestPageWhiteSpaceIsTheServers holds storage.js's white-space ranges, the
+// characters that separate words in the parameter cut, to unicode.IsSpace
+// over every code point.
+func TestPageWhiteSpaceIsTheServers(t *testing.T) {
+	ranges := spaceRanges(t, shipped(t, "js/storage.js"))
+	in := func(r rune) bool {
+		for _, rg := range ranges {
+			if r >= rg[0] && r <= rg[1] {
+				return true
+			}
+		}
+		return false
+	}
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if in(r) != unicode.IsSpace(r) {
+			t.Errorf("U+%04X: storage.js says white space %v, unicode.IsSpace says %v", r, in(r), unicode.IsSpace(r))
+		}
+	}
+}
+
+var (
+	spaceBlock = regexp.MustCompile(`(?s)const Spaces = \[(.*?)\];`)
+	spacePair  = regexp.MustCompile(`\[0x([0-9a-fA-F]+), 0x([0-9a-fA-F]+)\]`)
+)
+
+func spaceRanges(t reporter, src string) [][2]rune {
+	t.Helper()
+	blocks := spaceBlock.FindAllStringSubmatch(src, -1)
+	if len(blocks) != 1 {
+		t.Fatalf("storage.js: expected exactly one `const Spaces = [...];`, found %d", len(blocks))
+		return nil
+	}
+	var out [][2]rune
+	rest := blocks[0][1]
+	for _, m := range spacePair.FindAllStringSubmatch(rest, -1) {
+		lo, err1 := strconv.ParseInt(m[1], 16, 32)
+		hi, err2 := strconv.ParseInt(m[2], 16, 32)
+		if err1 != nil || err2 != nil || hi < lo {
+			t.Fatalf("storage.js Spaces: cannot read %q", m[0])
+			return nil
+		}
+		out = append(out, [2]rune{rune(lo), rune(hi)})
+	}
+	if strings.Trim(spacePair.ReplaceAllString(rest, ""), ", \n\t") != "" {
+		t.Fatalf("storage.js Spaces: something other than [0x.., 0x..] pairs is listed")
+	}
+	if len(out) == 0 {
+		t.Fatalf("storage.js Spaces: no ranges found")
+	}
+	return out
 }

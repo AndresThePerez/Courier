@@ -112,9 +112,9 @@ test('sameRequest tells a renamed request apart and ignores keys that are never 
 
 test('sameRequest treats a request and its stored form as the same request', () => {
   const long = { ...req('ws-a', 1), name: `${'N'.repeat(120)} (copy)`, params: { q: 'x'.repeat(600) } };
-  const cut = { ...long, name: 'N'.repeat(120), params: { q: 'x'.repeat(500) } };
+  const cut = { ...long, name: 'N'.repeat(120), params: { q: 'x'.repeat(256) } };
   assert.equal(sameRequest(long, cut), true);
-  assert.equal(sameRequest(long, { ...cut, params: { q: 'y'.repeat(500) } }), false);
+  assert.equal(sameRequest(long, { ...cut, params: { q: 'y'.repeat(256) } }), false);
 });
 
 test('Edit pressed again on the row already open keeps the draft as typed and makes no copy', () => {

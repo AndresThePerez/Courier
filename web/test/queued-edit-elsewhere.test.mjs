@@ -204,7 +204,7 @@ test('after a reload, Edit on a row whose saved request nothing changed opens it
 });
 
 test('after a reload, Edit on a row queued from a request saved with a long parameter value opens it without a copy', () => {
-  // An older build kept parameter values longer than today's 500 cap.
+  // An older build kept parameter values longer than today's 256 cap.
   const old = { ...req('ws-a', 1), params: { q: 'x'.repeat(600) } };
   boot({ saved: [old], setup: setupOf([old]) });
   reload();

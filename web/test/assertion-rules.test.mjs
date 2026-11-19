@@ -13,7 +13,7 @@
 //   json eq / neq / contains: number or text  internal/assert/assertion.go:145-149
 //   body_contains: text                       internal/assert/assertion.go:129-130
 //   json path: required, and well formed      internal/assert/assertion.go:103-106, jsonpath.go:28-60
-//   path and string value: at most 500 runes  internal/sandbox/validate.go:172, 176
+//   path and string value: at most 500 runes  internal/sandbox/validate.go:187, 191
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -63,15 +63,15 @@ const CASES = [
   {"rule": "an index past 64 bits is refused", "mirrors": "internal/assert/assertion.go:106, internal/assert/jsonpath.go:28-60", "assertion": {"type": "json", "path": "$[9223372036854775808]", "op": "exists"}, "refused": true, "part": "path"},
   {"rule": "an index at the 64-bit edge is accepted", "mirrors": "internal/assert/assertion.go:106, internal/assert/jsonpath.go:28-60", "assertion": {"type": "json", "path": "$[9223372036854775807]", "op": "exists"}, "refused": false},
   {"rule": "text after ] is refused", "mirrors": "internal/assert/assertion.go:106, internal/assert/jsonpath.go:28-60", "assertion": {"type": "json", "path": "$[1]x", "op": "exists"}, "refused": true, "part": "path"},
-  {"rule": "a 500-character path is accepted", "mirrors": "internal/sandbox/validate.go:172", "assertion": {"type": "json", "op": "exists"}, "refused": false, "fill": {"key": "path", "prefix": "$.", "unit": "p", "count": 498}},
-  {"rule": "a 501-character path is refused", "mirrors": "internal/sandbox/validate.go:172", "assertion": {"type": "json", "op": "exists"}, "refused": true, "part": "path", "fill": {"key": "path", "prefix": "$.", "unit": "p", "count": 499}},
-  {"rule": "a 500-character path of astral characters is accepted", "mirrors": "internal/sandbox/validate.go:172", "assertion": {"type": "json", "op": "exists"}, "refused": false, "fill": {"key": "path", "prefix": "$.", "unit": "\ud83d\ude00", "count": 498}},
-  {"rule": "a 501-character path of astral characters is refused", "mirrors": "internal/sandbox/validate.go:172", "assertion": {"type": "json", "op": "exists"}, "refused": true, "part": "path", "fill": {"key": "path", "prefix": "$.", "unit": "\ud83d\ude00", "count": 499}},
-  {"rule": "a 500-character value is accepted", "mirrors": "internal/sandbox/validate.go:176", "assertion": {"type": "json", "path": "$.a", "op": "eq"}, "refused": false, "fill": {"key": "value", "prefix": "", "unit": "v", "count": 500}},
-  {"rule": "a 501-character value is refused", "mirrors": "internal/sandbox/validate.go:176", "assertion": {"type": "json", "path": "$.a", "op": "eq"}, "refused": true, "part": "value", "fill": {"key": "value", "prefix": "", "unit": "v", "count": 501}},
-  {"rule": "500 astral characters are accepted", "mirrors": "internal/sandbox/validate.go:176", "assertion": {"type": "body_contains", "op": "contains"}, "refused": false, "fill": {"key": "value", "prefix": "", "unit": "\ud83d\ude00", "count": 500}},
-  {"rule": "501 astral characters are refused", "mirrors": "internal/sandbox/validate.go:176", "assertion": {"type": "body_contains", "op": "contains"}, "refused": true, "part": "value", "fill": {"key": "value", "prefix": "", "unit": "\ud83d\ude00", "count": 501}},
-  {"rule": "a 501-character status value is refused by its length", "mirrors": "internal/sandbox/validate.go:176", "assertion": {"type": "status", "op": "eq"}, "refused": true, "part": "value", "fill": {"key": "value", "prefix": "", "unit": "9", "count": 501}}
+  {"rule": "a 500-character path is accepted", "mirrors": "internal/sandbox/validate.go:187", "assertion": {"type": "json", "op": "exists"}, "refused": false, "fill": {"key": "path", "prefix": "$.", "unit": "p", "count": 498}},
+  {"rule": "a 501-character path is refused", "mirrors": "internal/sandbox/validate.go:187", "assertion": {"type": "json", "op": "exists"}, "refused": true, "part": "path", "fill": {"key": "path", "prefix": "$.", "unit": "p", "count": 499}},
+  {"rule": "a 500-character path of astral characters is accepted", "mirrors": "internal/sandbox/validate.go:187", "assertion": {"type": "json", "op": "exists"}, "refused": false, "fill": {"key": "path", "prefix": "$.", "unit": "\ud83d\ude00", "count": 498}},
+  {"rule": "a 501-character path of astral characters is refused", "mirrors": "internal/sandbox/validate.go:187", "assertion": {"type": "json", "op": "exists"}, "refused": true, "part": "path", "fill": {"key": "path", "prefix": "$.", "unit": "\ud83d\ude00", "count": 499}},
+  {"rule": "a 500-character value is accepted", "mirrors": "internal/sandbox/validate.go:191", "assertion": {"type": "json", "path": "$.a", "op": "eq"}, "refused": false, "fill": {"key": "value", "prefix": "", "unit": "v", "count": 500}},
+  {"rule": "a 501-character value is refused", "mirrors": "internal/sandbox/validate.go:191", "assertion": {"type": "json", "path": "$.a", "op": "eq"}, "refused": true, "part": "value", "fill": {"key": "value", "prefix": "", "unit": "v", "count": 501}},
+  {"rule": "500 astral characters are accepted", "mirrors": "internal/sandbox/validate.go:191", "assertion": {"type": "body_contains", "op": "contains"}, "refused": false, "fill": {"key": "value", "prefix": "", "unit": "\ud83d\ude00", "count": 500}},
+  {"rule": "501 astral characters are refused", "mirrors": "internal/sandbox/validate.go:191", "assertion": {"type": "body_contains", "op": "contains"}, "refused": true, "part": "value", "fill": {"key": "value", "prefix": "", "unit": "\ud83d\ude00", "count": 501}},
+  {"rule": "a 501-character status value is refused by its length", "mirrors": "internal/sandbox/validate.go:191", "assertion": {"type": "status", "op": "eq"}, "refused": true, "part": "value", "fill": {"key": "value", "prefix": "", "unit": "9", "count": 501}}
 ];
 // cases:end
 

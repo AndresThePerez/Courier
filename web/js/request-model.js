@@ -13,9 +13,9 @@
 
 import { requestOf } from './storage.js';
 
-// MaxAssertionText mirrors sandbox.MaxParamValueLen as the validator applies
-// it to an assertion's JSON path and string value: counted in characters
-// (runes), and refused over it rather than cut.
+// MaxAssertionText mirrors sandbox.MaxAssertionTextLen, the bound on an
+// assertion's JSON path and string value: counted in characters (runes), and
+// refused over it rather than cut.
 const MaxAssertionText = 500;
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

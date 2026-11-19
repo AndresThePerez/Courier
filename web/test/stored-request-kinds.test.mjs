@@ -53,7 +53,7 @@ function withAt(obj, path, value) {
 const deep = (n, open = '[', close = ']') => raw(`${open.repeat(n)}${close.repeat(n)}`);
 const deepObject = (n) => raw(`${'{"a":'.repeat(n)}1${'}'.repeat(n)}`);
 
-// 120 characters whose last pair straddles the cut, and 500 the same way.
+// 120 characters whose last pair straddles the cut, and 256 and 500 the same way.
 const straddle = (n) => `${'x'.repeat(n - 1)}\u{1F600}${'y'.repeat(5)}`;
 
 const VALUES = {
@@ -68,11 +68,15 @@ const VALUES = {
   len121: 'n'.repeat(121),
   len200: 'i'.repeat(200),
   len201: 'i'.repeat(201),
+  len256: 'v'.repeat(256),
+  len257: 'v'.repeat(257),
+  words33: Array.from({ length: 33 }, () => 'w').join(' '),
   len500: 'v'.repeat(500),
   len501: 'v'.repeat(501),
   multibyte501: '€'.repeat(501),
   pairs251: '\u{1F600}'.repeat(251),
   straddle120: straddle(120),
+  straddle256: straddle(256),
   straddle500: straddle(500),
   longText: 'z'.repeat(100000),
   zero: 0,
@@ -146,7 +150,7 @@ function checkRequest(r, where) {
   assert.ok(params.length <= 32, say('params count'));
   for (const [k, v] of params) {
     assert.ok(k.length >= 1 && k.length <= 64, say(`param key ${k.length}`));
-    assert.ok(typeof v === 'string' && v.length <= 500, say('param value'));
+    assert.ok(typeof v === 'string' && [...v].length <= 256 && v.split(/\s+/).filter(Boolean).length <= 32, say('param value'));
   }
   assert.ok(Array.isArray(r.assertions) && r.assertions.length <= 20, say('assertions'));
   for (const a of r.assertions) {

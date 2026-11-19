@@ -1,9 +1,9 @@
 // A queued row's Edit on a request that is still the same as its saved
 // original opens the saved request itself. The run's copy may have been cut
-// by the stored form (a name to 120 characters, a parameter value to 500)
-// while the saved request was not, and keystrokes are stored as they are
-// typed: opening the cut copy would write it over the saved request on the
-// first keystroke, without a word.
+// by the stored form (a name to 120 characters, a parameter value to 256
+// characters and 32 words) while the saved request was not, and keystrokes
+// are stored as they are typed: opening the cut copy would write it over the
+// saved request on the first keystroke, without a word.
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';

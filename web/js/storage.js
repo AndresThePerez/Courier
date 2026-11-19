@@ -133,19 +133,65 @@ const assertionOps = {
 };
 
 // What a restored request is cut to, and what it is not. A name is cut to 120
-// characters and a parameter value to 500, exactly as the server cuts them, so
-// the cut changes nothing a run would have sent; a request keeps its first 20
-// assertions, the editor's cap. An assertion's path and value are never cut:
-// the editor accepts them at any length, and a shortened one would check
-// something the visitor did not write, so an over-long one goes out whole and
-// is refused by field. Ids and parameter names are the page's or the catalog's
-// and are short; one past these bounds was not made by the page.
+// characters, and a parameter value by cutParamValue, exactly as the server
+// cuts them, so the cut changes nothing a run would have sent; a request
+// keeps its first 20 assertions, the editor's cap. An assertion's path and
+// value are never cut: the editor accepts them at any length, and a shortened
+// one would check something the visitor did not write, so an over-long one
+// goes out whole and is refused by field. Ids and parameter names are the
+// page's or the catalog's and are short; one past these bounds was not made
+// by the page.
 const MaxStoredAssertions = 20;
 const MaxParamValue = 256;
+const MaxParamWords = 32;
 export const MaxName = 120;
 const MaxId = 200;
 const MaxParams = 32;
 const MaxParamKey = 64;
+
+// Spaces is Go's unicode.IsSpace as code point ranges: the characters that
+// separate words in a parameter value. It is not JavaScript's \s, which
+// counts U+FEFF and not U+0085. web/limits_test.go holds it to unicode.IsSpace
+// over every code point.
+const Spaces = [
+  [0x09, 0x0d], [0x20, 0x20], [0x85, 0x85], [0xa0, 0xa0], [0x1680, 0x1680],
+  [0x2000, 0x200a], [0x2028, 0x2029], [0x202f, 0x202f], [0x205f, 0x205f], [0x3000, 0x3000],
+];
+
+const isSpace = (ch) => {
+  const cp = ch.codePointAt(0);
+  return Spaces.some(([lo, hi]) => cp >= lo && cp <= hi);
+};
+
+// cutParamValue is sandbox.CutParamValue: the value's first MaxParamWords
+// words, then its first MaxParamValue characters. A character is a code point,
+// as the server counts runes; a word is a run of characters that are not
+// white space. Past the last word kept the value ends at that word, the white
+// space after it dropped; white space before and between the words kept, and
+// all of it in a value within the word limit, stays as written. A value within
+// both limits comes back unchanged. web/test/param-cut.test.mjs holds the two
+// to one table of cases.
+export function cutParamValue(value) {
+  const chars = Array.from(value);
+  let end = chars.length;
+  let words = 0;
+  let inWord = false;
+  for (let i = 0; i < chars.length; i += 1) {
+    if (isSpace(chars[i])) {
+      inWord = false;
+    } else if (!inWord) {
+      if (words === MaxParamWords) {
+        end = i;
+        while (end > 0 && isSpace(chars[end - 1])) end -= 1;
+        break;
+      }
+      words += 1;
+      inWord = true;
+    }
+  }
+  end = Math.min(end, MaxParamValue);
+  return end === chars.length ? value : chars.slice(0, end).join('');
+}
 
 const isId = (v, max) => typeof v === 'string' && v !== '' && v.length <= max;
 
@@ -189,7 +235,7 @@ function paramsOf(value) {
   const entries = Object.entries(value);
   if (entries.length > MaxParams) return null;
   if (!entries.every(([k, v]) => isId(k, MaxParamKey) && typeof v === 'string')) return null;
-  return Object.fromEntries(entries.map(([k, v]) => [k, v.slice(0, MaxParamValue)]));
+  return Object.fromEntries(entries.map(([k, v]) => [k, cutParamValue(v)]));
 }
 
 // assertionOf drops an assertion whose type or operator the page does not
