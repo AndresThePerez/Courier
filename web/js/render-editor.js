@@ -429,6 +429,7 @@ export function render(state) {
   renderNotes(draft);
   renderSend(state);
   renderMark(state, draft);
+  renderParamMark(state, draft);
 }
 
 // signature covers everything that changes the *shape* of the two tables — the
@@ -861,6 +862,56 @@ function markTarget(row, assertion, part) {
   }
   if (found === 'path' && path) return path;
   return value || path || row.querySelector('.assert-type');
+}
+
+// paramMarkOf is the refused parameter the open request carries, if any:
+// Send's own, or the run's when the refused queued request is the one open.
+// param is the parameter's name, or '' for the parameters as a whole.
+function paramMarkOf(state, draft) {
+  const send = state.send;
+  if (send && !send.pending && send.kind === 'invalid') {
+    const where = whereIn(typeof send.field === 'string' ? send.field : '');
+    if (where && where.param !== undefined) return { param: where.param, message: send.error };
+  }
+  return runner.refusedParam(draft);
+}
+
+// renderParamMark is renderMark for a refused parameter. A named parameter
+// that has a row is marked on its value field; otherwise (no name, a name the
+// table does not hold, or an endpoint that takes none) the message sits at
+// the end of the table, and the table's controls are described by it, none
+// of them invalid, since none of them was named.
+function renderParamMark(state, draft) {
+  const mark = paramMarkOf(state, draft);
+  const box = byId('param-rows');
+  const add = byId('add-param');
+  const values = [...box.querySelectorAll('.param-value')];
+  let holder = null;
+  let target = null;
+  if (mark) {
+    const i = mark.param === '' ? -1 : Object.keys(paramsOf(draft)).indexOf(mark.param);
+    const row = i >= 0 ? box.querySelectorAll('.param-row')[i] : null;
+    target = row ? row.querySelector('.param-value') : null;
+    holder = target ? row : box;
+  }
+  const described = !mark ? [] : target ? [target] : [add, ...values];
+  for (const control of [add, ...values]) {
+    if (control !== target && control.hasAttribute('aria-invalid')) control.removeAttribute('aria-invalid');
+    if (!described.includes(control) && control.getAttribute('aria-describedby') === 'param-error') {
+      control.removeAttribute('aria-describedby');
+    }
+  }
+  for (const old of box.querySelectorAll('.field-error')) {
+    if (!holder || old.parentNode !== holder || old.textContent !== mark.message) old.remove();
+  }
+  if (!mark) return;
+  if (target && target.getAttribute('aria-invalid') !== 'true') target.setAttribute('aria-invalid', 'true');
+  for (const control of described) {
+    if (control.getAttribute('aria-describedby') !== 'param-error') control.setAttribute('aria-describedby', 'param-error');
+  }
+  if (![...holder.children].some((c) => c.classList.contains('field-error'))) {
+    holder.appendChild(el('p', { class: 'field-error fail', text: mark.message, attrs: { id: 'param-error' } }));
+  }
 }
 
 // renderMark puts the open request's refusal on its control: aria-invalid, and

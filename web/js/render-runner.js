@@ -121,7 +121,8 @@ let addNote = '';
 let addNoteCount = -1;
 // refusal is the queued request the server (or the same checks, run here
 // first) last refused, held by the entry's key so its mark follows that entry
-// through a reorder: { key, assertion, part, label, message }. The note's row
+// through a reorder: { key, assertion, part, param, label, message }, param
+// present only when a parameter was refused. The note's row
 // number is read from where the entry is now, never from where it was.
 let refusal = null;
 // settingNotes says, per run setting, what the run will use when that is not
@@ -622,6 +623,7 @@ function refuse(outcome, entries) {
     key: entry.key,
     assertion: at.where.assertion,
     part: at.where.part || outcome.part || '',
+    param: at.where.param,
     label: at.where.label,
     message: outcome.error,
   };
@@ -656,6 +658,26 @@ export function refusedAssertion(draft) {
     const open = requestPayload(draft).assertions;
     if (!Array.isArray(sent) || !Array.isArray(open) || j >= open.length) return null;
     return JSON.stringify(sent[j]) === JSON.stringify(open[j]) ? mark : null;
+  } catch {
+    return null;
+  }
+}
+
+// refusedParam is the same for a refused parameter: { param, message } while
+// the request open is the refused one and that parameter (or, with param '',
+// the whole table) is as it was sent, or null.
+export function refusedParam(draft) {
+  if (!refusal || refusal.param === undefined || !draft) return null;
+  const entry = get().sequence.find((e) => e.key === refusal.key);
+  if (!entry || !entry.request || entry.request.id !== draft.id) return null;
+  try {
+    const sent = requestPayload(entry.request).params;
+    const open = requestPayload(draft).params;
+    const key = refusal.param;
+    const same = key === ''
+      ? JSON.stringify(sent) === JSON.stringify(open)
+      : Object.hasOwn(open, key) && JSON.stringify(sent[key]) === JSON.stringify(open[key]);
+    return same ? { param: key, message: refusal.message } : null;
   } catch {
     return null;
   }

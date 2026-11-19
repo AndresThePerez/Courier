@@ -270,17 +270,18 @@ export function sameRequest(a, b) {
 
 // whereIn reads the part of a refused field below one request ("endpoint",
 // "params.q", "assertions[0].value", ...) as what a visitor calls it, with
-// the assertion it points at. Numbering is from 1. A part this does not know
-// answers null: its raw name is shown as it came, never relabelled.
+// the assertion it points at, or for a parameter, param: the parameter's name
+// ('' for the parameters as a whole). Numbering is from 1. A part this does
+// not know answers null: its raw name is shown as it came, never relabelled.
 export function whereIn(rest) {
   if (rest === '') return { label: '', assertion: null, part: '' };
   if (rest === 'endpoint') return { label: 'endpoint', assertion: null, part: '' };
-  if (rest === 'params') return { label: 'parameters', assertion: null, part: '' };
+  if (rest === 'params') return { label: 'parameters', assertion: null, part: '', param: '' };
   if (rest === 'assertions') return { label: 'assertions', assertion: null, part: '' };
   if (rest === 'name') return { label: 'name', assertion: null, part: '' };
   if (rest === 'id') return { label: 'id', assertion: null, part: '' };
   const param = /^params\.(.+)$/s.exec(rest);
-  if (param) return { label: `parameter ${JSON.stringify(param[1])}`, assertion: null, part: '' };
+  if (param) return { label: `parameter ${JSON.stringify(param[1])}`, assertion: null, part: '', param: param[1] };
   const assertion = /^assertions\[(\d+)\](?:\.(path|value|type|op)(?:[.[].*)?)?$/s.exec(rest);
   if (assertion) {
     const j = Number(assertion[1]);
