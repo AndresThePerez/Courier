@@ -43,24 +43,28 @@ const RowSets = {
   noResponse: [base(0, { status: 0, passed: false, error: 'connection refused', error_kind: 'transport', assertions: [{ ...ok, passed: false, actual: 'no response' }] })],
   passedMissing: [base(0), (() => { const r = base(1); delete r.passed; return r; })()],
   skippedThenFailed: [base(0, { skipped: true, passed: false, assertions: [] }), base(1, { passed: false, assertions: [bad] })],
+  someAsserted: [base(0), base(1, { assertions: [] })],
+  unassertedThenSkipped: [base(0, { assertions: [] }), base(1, { skipped: true, passed: false, status: 0, assertions: [] })],
+  noResponseUnasserted: [base(0, { assertions: [] }), base(1, { status: 0, passed: false, error: 'connection refused', error_kind: 'transport', assertions: [] })],
 };
 
 // pdfVerdict is internal/pdf/report.go verdictOf for a functional report,
 // with internal/report.FunctionalVerdict inlined: a cancelled or expired run
 // is "N/A - partial data"; a report with no functional block is N/A; else any
-// row neither skipped nor passed is FAIL, at least one passed is PASS, and
-// anything else is "N/A - nothing was asserted". A missing JSON bool decodes
+// row neither skipped nor passed is FAIL, at least one passed row carrying an
+// assertion is PASS, and anything else (rows that only answered, skipped
+// rows, no rows) is "N/A - nothing was asserted". A missing JSON bool decodes
 // as false. The PDF ignores functional.verdict and judges the rows itself.
 function pdfVerdict(status, functional) {
   if (status === 'cancelled' || status === 'expired') return { text: 'N/A - partial data', tone: null };
   if (!functional) return { text: 'N/A', tone: null };
-  let passed = false;
+  let asserted = false;
   for (const r of functional.results || []) {
     if (r.skipped === true) continue;
     if (r.passed !== true) return { text: 'FAIL', tone: 'is-fail' };
-    passed = true;
+    if (Array.isArray(r.assertions) && r.assertions.length > 0) asserted = true;
   }
-  return passed ? { text: 'PASS', tone: 'is-pass' } : { text: 'N/A - nothing was asserted', tone: null };
+  return asserted ? { text: 'PASS', tone: 'is-pass' } : { text: 'N/A - nothing was asserted', tone: null };
 }
 
 // serverVerdict is what the server writes into functional.verdict at the
@@ -105,6 +109,7 @@ test('for every status, verdict field the server can write and row set, the page
         if (node.textContent === 'PASS') {
           assert.ok(rows.some((r) => !r.skipped && r.passed === true), `${where}: PASS needs a passed row`);
           assert.ok(!rows.some((r) => !r.skipped && r.passed !== true), `${where}: PASS with a failed row`);
+          assert.ok(rows.some((r) => !r.skipped && Array.isArray(r.assertions) && r.assertions.length > 0), `${where}: PASS with nothing asserted`);
         }
         checked += 1;
       }
@@ -140,7 +145,7 @@ test('no verdict while running or for a lost run, whatever rows or terminal verd
   set({ outcome: { run_id: id, status: 'finished', duration_ms: 5, verdict: '' }, results: RowSets.oneFailed });
   assert.equal(verdictNode().textContent, 'FAIL', 'an ended run with no verdict word is judged from its rows');
   set({ outcome: { run_id: id, status: 'finished', duration_ms: 5, verdict: '' }, results: RowSets.noAssertions });
-  assert.equal(verdictNode().textContent, 'PASS', 'passed rows are a PASS even with no assertions, as the PDF rule has it');
+  assert.equal(verdictNode().textContent, 'N/A - nothing was asserted', 'rows that only answered asserted nothing, as the PDF rule has it');
   assert.deepEqual(listenerErrors, []);
 });
 

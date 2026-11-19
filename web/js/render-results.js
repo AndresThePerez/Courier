@@ -252,14 +252,19 @@ function functionalVerdict(state, rep, outcome, status) {
   return { text: 'N/A - nothing was asserted', tone: '' };
 }
 
+// verdictOfRows is internal/report.FunctionalVerdict's table for a completed
+// run: any dispatched request not passed (an assertion failed, or no
+// response or a response cut off) is FAIL; otherwise PASS needs at least one
+// dispatched request that carried an assertion; a run whose requests only
+// answered, or were all skipped, or had none, asserted nothing and is N/A.
 function verdictOfRows(rows) {
-  let passed = false;
+  let asserted = false;
   for (const r of rows) {
     if (r.skipped) continue;
     if (!r.passed) return 'FAIL';
-    passed = true;
+    if (Array.isArray(r.assertions) && r.assertions.length > 0) asserted = true;
   }
-  return passed ? 'PASS' : 'N/A';
+  return asserted ? 'PASS' : 'N/A';
 }
 
 function counts(results) {
