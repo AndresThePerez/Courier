@@ -27,7 +27,9 @@ import (
 // scales with connections rather than with any constant: bodies a client has
 // sent that the kernel holds unread. It also leaves out the decoded value a
 // request keeps after its check, through validation and the start or the
-// send, and garbage not yet collected.
+// send, and garbage not yet collected. Nor does the line share its room
+// between clients: nothing in this server limits one client or the number of
+// open connections.
 const (
 	// MaxBodyChecks is how many bodies at the cap are checked and decoded at
 	// once; smaller bodies share the same MaxBodyChecks x MaxBodyBytes

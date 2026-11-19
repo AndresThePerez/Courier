@@ -1362,8 +1362,8 @@ kept, and stored in the run's report, its replay log and its result frames.
   garbage not yet collected. The statement beside the constants in
   `internal/api/body_gate.go` says the same. Nor does it share the line between clients:
   the line has no per-client fairness, so a client that keeps it full of bodies at the cap
-  makes every other POST an immediate `503` with `Retry-After` until it stops. What limits
-  one client is the tunnel in front of the server, not this bound.
+  makes every other POST an immediate `503` with `Retry-After` until it stops, and
+  nothing in this server limits one client or the number of open connections.
 - An assertion `value` that is an object or an array is refused by the body check, for
   every assertion type and operator, with a `400` naming the value:
   `{"error":"expected a number, a string, true, false or null, got an object","field":"sequence[1].assertions[0].value"}`
@@ -1714,14 +1714,15 @@ second.
 
 **What it does not do.** Like N43's line, the places are not shared between clients: a
 client that keeps all 128 filled with uploads that stall, each for up to 10s, makes every
-other visitor's POST a `503` until it stops, instead of getting the process killed. Nothing here gives each client a fair share;
-what limits one client is the tunnel in front of the server. Nor does it bound what a
-client has sent that the server has not read: those bytes sit in the kernel's buffer for
-the connection, charged to the container, until the server reads them or closes it, and
-they scale with connections. Measured in the same scope, 2,000 connections that each send
+other visitor's POST a `503` until it stops, instead of getting the process killed.
+Nothing here gives each client a fair share, and nothing in this server limits one client
+or the number of open connections. Nor does it bound what a client has sent that the
+server has not read: those bytes sit in the kernel's buffer for the connection, charged to
+the container, until the server reads them or closes it, and they grow with the number of
+open connections, outside both bounds. Only a limit on connections in front of the server
+would bound them, and this repository sets none. Measured in the same scope, 2,000 connections that each send
 a whole 256 KiB body at once still get the process killed, before and after this change,
-by that buffer memory (about 200 MB of it at the last sample before the kill); only a
-limit on connections, such as the tunnel's, bounds it.
+by that buffer memory (about 200 MB of it at the last sample before the kill).
 
 **Narrows N43**, which says its bound leaves out bodies still arriving: they are now bounded
 here.

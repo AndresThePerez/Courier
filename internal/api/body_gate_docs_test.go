@@ -9,7 +9,8 @@ import (
 
 // The documents state the gate's constants; this fails when the code and the
 // README's Caps row, docs/deviations.md N43 or docs/design.md stop agreeing,
-// and when either document stops saying what the bound leaves to the tunnel.
+// and when either document stops saying that the line has no per-client
+// fairness.
 func TestTheBodyGateConstantsMatchTheDocuments(t *testing.T) {
 	want := fmt.Sprintf("%d × 256 KiB of bodies at once, with up to %d × 256 KiB more waiting", MaxBodyChecks, MaxBodyWaiters)
 	if MaxBodyBytes != 256<<10 {

@@ -27,8 +27,12 @@ import (
 // at once, its body unread, and its connection closed. Places are not shared
 // between clients: a client that keeps every place filled with uploads that
 // stall, each for up to the deadline, makes every other visitor's POST a 503
-// until it stops, instead of getting the process killed. What limits one
-// client is the tunnel in front of the server.
+// until it stops, instead of getting the process killed. Nothing in this
+// server limits one client or the number of open connections, and the memory
+// the kernel holds for open connections (what a client has sent and the
+// server has not read) grows with their number, outside both bounds. Only a
+// limit on connections in front of the server would bound it, and this
+// repository sets none.
 const (
 	// MaxBodyReads is how many POST bodies may be read at once
 	// (TestAPostBeyondMaxBodyReadsIsAnswered503WithoutBeingRead,

@@ -380,7 +380,7 @@ and eight times as many bytes may wait, in arrival order so that small posts can
 a large one waiting. Past that the answer is a `503` with `Retry-After`, given
 before anything is decoded. The line has no per-client fairness: a client that keeps it
 full of bodies at the cap makes every other POST an immediate `503` until it stops, and
-what limits one client is the tunnel in front of the server. A body takes its place in the
+nothing in this server limits one client or the number of open connections. A body takes its place in the
 check only once it has arrived: room held during an upload would let stalled connections
 stop every POST. The upload is bounded apart from the check: bodies are read
 128 at once, each within 10s of its read starting. A POST that finds 128 being read is
