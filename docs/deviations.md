@@ -1665,3 +1665,84 @@ the rule that mirrors the server still accepting an empty string);
 `web/test/cut-note.test.mjs` (the sentence after Send and after Start);
 `web/test/server-busy.test.mjs` and `web/test/param-marks-busy-edges.test.mjs` (the
 `503` read as busy on both, never retried).
+
+## N47 — A request body is read under a bound and a deadline
+
+**What the server did:** N43 bounds the body check, which a body enters only once it has
+arrived. Reading it was not bounded: `POST /api/send` and `POST /api/runs` read their
+bodies in full, any number at once, with no time limit beyond `ReadHeaderTimeout`, which
+ends with the headers. Measured against the handler with the production server settings
+in a 256 MB, half-CPU scope, 650 connections that each sent all but the last byte of a
+256 KiB body held the process at its memory limit for as long as they stayed, about 400 KB
+each, and it was killed when they let go; 1,000 such connections got it killed in under a
+second.
+
+**What it does now:**
+
+- Bodies are read 128 at once, each within 10s of its read starting, across both routes
+  (`MaxBodyReads`, 128, and `BodyReadDeadline`, 10s, in `internal/api/body_reads.go`). A
+  body holds a place from the moment its read begins until the read ends, however it ends:
+  read in full, over the cap, broken off by the client, cut by the deadline. A body waiting
+  for room in the check holds none: N43's line is already bounded by its bytes, and a
+  place held there too would shrink the line's room for small bodies to the places left
+  over, so an ordinary burst of small posts would meet a `503` whenever the check was full
+  for a moment.
+- A POST that finds 128 bodies being read is answered at once, before any of its body is
+  read, with `503`, `Retry-After: 1`, `Connection: close`, the security headers and the
+  same body as N43's: `{"error":"the server is busy checking other requests; try again in a moment"}`.
+  The page reads it as busy, as it reads N43's (N46). A `415` is still given first, without
+  a place.
+- A body that has not arrived 10s after its read began is answered `408`, with
+  `Connection: close` and the security headers:
+  `{"error":"the body did not arrive within 10s","field":"body"}`. `408` because it says
+  exactly this: the client did not finish sending its request in time. The connection is
+  closed because the rest of the body may still arrive and must not be read as the next
+  request. Before, neither route answered `408`, and neither set `Connection: close`
+  except with a `413`.
+- The server now has two time limits: `ReadHeaderTimeout` (10s) on the server, and this
+  deadline per request, set on the connection with `http.NewResponseController` when the
+  read of a body begins and cleared when it ends. The rule against a server-wide write or
+  idle timeout still stands: either would cut a live stream, or a Send waiting up to 10s on
+  a slow target, at the deadline. This one covers the read of the body alone and never
+  reaches the handler's own work, a stream, or the next request on the connection.
+- What the bounds add up to: a body read to the cap holds about 380 KB while it is read,
+  so the reads hold at most about 128 × 380 KB, 49 MB; N43's line holds at most 4 MiB and
+  its checks allocate at most 96 MiB. That is about 150 MB, within the Go memory limit of
+  192 MiB that `docker-compose.yml` now gives the service (`GOMEMLIMIT`, three quarters of
+  its 256 MB `mem_limit`, held there by a test).
+
+**What it does not do.** Like N43's line, the places are not shared between clients: a
+client that keeps all 128 filled with uploads that stall, each for up to 10s, makes every
+other visitor's POST a `503` until it stops, instead of getting the process killed. Nothing here gives each client a fair share;
+what limits one client is the tunnel in front of the server. Nor does it bound what a
+client has sent that the server has not read: those bytes sit in the kernel's buffer for
+the connection, charged to the container, until the server reads them or closes it, and
+they scale with connections. Measured in the same scope, 2,000 connections that each send
+a whole 256 KiB body at once still get the process killed, before and after this change,
+by that buffer memory (about 200 MB of it at the last sample before the kill); only a
+limit on connections, such as the tunnel's, bounds it.
+
+**Narrows N43**, which says its bound leaves out bodies still arriving: they are now bounded
+here.
+
+**Measured after:** in the same scope, the 650 and the 1,000 stalled connections are each
+answered at once with `503` but for 128, which are answered `408` after 10s; the process
+stays up, its peak at 131 MB and 181 MB, and every place is given back. 1,000 connections
+each posting a whole body at the cap peak at 164 MB, as before.
+
+**Proof:** `internal/api/body_reads_test.go`:
+`TestAPostBeyondMaxBodyReadsIsAnswered503WithoutBeingRead` (both routes, the body never
+read, the header, the shape, the security headers, `415` still first),
+`TestAPostBeyondMaxBodyReadsIsAnsweredAtOnceOverTheWire` (a POST that sends no body is
+answered at once and its connection closed), `TestAStalledUploadIsEndedByTheBodyReadDeadline`
+(the `408`, its shape, its headers, the place given back),
+`TestTheBodyReadDeadlineDoesNotReachTheHandlersOwnWork` (a Send five times slower than the
+deadline answers), `TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadline`,
+`TestAStreamOutlivesTheBodyReadDeadline`, `TestEveryRouteWithoutABodyIsAnsweredWhileEveryPlaceIsTaken`,
+`TestAPanicWhileReadingGivesBackItsPlace`, `TestABodyWaitingInTheGatesLineHoldsNoPlace`,
+`TestEveryWayABodyReadEndsGivesBackItsPlace` (2,400 reads ending every way, never more than
+128 places, none left), `TestThePlacesAndTheGateHoldTogetherUnderAMixedFlood`;
+`internal/api/body_reads_docs_test.go`: `TestTheBodyReadBoundsMatchTheDocuments`;
+`internal/api/compose_limits_test.go`: `TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit`.
+The existing tests of the gate and of bursts of 200 and 1,000 small posts pass unchanged,
+run 30 times each with the race detector at `GOMAXPROCS` 1, 4 and 16.

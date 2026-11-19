@@ -196,6 +196,7 @@ Server-enforced regardless of client input; structural violations are **rejected
 | Param/request name length | ≤ 120 chars (truncated) |
 | API request payload | ≤ 256 KiB (rejected) |
 | Request bodies being checked | 2 × 256 KiB of bodies at once, with up to 16 × 256 KiB more waiting, weighed by size; beyond that `503` with `Retry-After` |
+| Request bodies being read | 128 at once, each within 10s of its read starting; beyond 128 a `503` with `Retry-After`, the body unread; past the deadline a `408` |
 | Response body read for assertions | ≤ 1 MiB (truncated) |
 | Response body stored on a run result | ≤ 16 KiB preview |
 | Response body kept by the editor's **Send** | ≤ 256 KiB — the one response a visitor is actively reading is not cut to the preview size |

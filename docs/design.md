@@ -380,15 +380,24 @@ and eight times as many bytes may wait, in arrival order so that small posts can
 a large one waiting. Past that the answer is a `503` with `Retry-After`, given
 before anything is decoded. The line has no per-client fairness: a client that keeps it
 full of bodies at the cap makes every other POST an immediate `503` until it stops, and
-what limits one client is the tunnel in front of the server. A body takes its place only once it has arrived: with
-`ReadHeaderTimeout` as the only server timeout, room held during an upload would let
-stalled connections stop every POST. This bounds what the checks in flight allocate; it
-leaves out bodies answered `503` or still arriving, which scale with connections, and the
-decoded value a request keeps after its check. An assertion's value is held to one scalar
+what limits one client is the tunnel in front of the server. A body takes its place in the
+check only once it has arrived: room held during an upload would let stalled connections
+stop every POST. The upload is bounded apart from the check: bodies are read
+128 at once, each within 10s of its read starting. A POST that finds 128 being read is
+answered `503` at once, its body unread, and a body that does not arrive in time is
+answered `408`. Here too the places are not shared between clients, so a client that
+keeps all 128 filled with stalled uploads turns every other POST away for as long as it
+keeps them, instead of getting the process killed. The deadline covers the read of the
+body alone, set when the read begins and cleared when it ends, so `ReadHeaderTimeout` is
+still the only server-wide timeout and a stream or a long Send never meets either. This
+bounds what the checks in flight and the reads allocate; it leaves out bodies a client
+has sent that the kernel holds unread, which scale with connections, and the decoded
+value a request keeps after its check. An assertion's value is held to one scalar
 for the same reason the strings are capped: a structure there is decoded, kept and stored
 with the run, and `exists` would accept one of any size. The constants, the bound and the
-tests behind them are in [`internal/api/body_gate.go`](../internal/api/body_gate.go) and
-[`docs/deviations.md`](deviations.md) N43.
+tests behind them are in [`internal/api/body_gate.go`](../internal/api/body_gate.go),
+[`internal/api/body_reads.go`](../internal/api/body_reads.go) and
+[`docs/deviations.md`](deviations.md) N43 and N47.
 
 The table of values stays in [the README](../README.md#caps).
 

@@ -22,11 +22,12 @@ import (
 // in the same proportion, which is measured at the ends only. The bodies
 // waiting weigh at most MaxBodyWaiters x MaxBodyBytes, 16 x 256 KiB.
 //
-// The bound leaves out what scales with connections rather than with these
-// constants: bodies read in full and then answered 503, and bodies still
-// arriving. It also leaves out the decoded value a request keeps after its
-// check, through validation and the start or the send, and garbage not yet
-// collected.
+// The bound leaves out bodies read in full and then answered 503, and bodies
+// still arriving, which body_reads.go bounds instead (MaxBodyReads), and what
+// scales with connections rather than with any constant: bodies a client has
+// sent that the kernel holds unread. It also leaves out the decoded value a
+// request keeps after its check, through validation and the start or the
+// send, and garbage not yet collected.
 const (
 	// MaxBodyChecks is how many bodies at the cap are checked and decoded at
 	// once; smaller bodies share the same MaxBodyChecks x MaxBodyBytes
