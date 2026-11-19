@@ -830,7 +830,7 @@ function renderSend(state) {
   const ep = endpointById(r.endpoint);
   const method = runner.methodBadge(state.endpoints, r.endpoint).textContent;
   replace(box, [
-    el('p', { class: 'note mono', text: `${method} ${ep && typeof ep.path === 'string' ? ep.path : r.endpoint}${r.query || ''}` }),
+    el('p', { class: 'note mono sent-line', text: `${method} ${ep && typeof ep.path === 'string' ? ep.path : r.endpoint}${r.query || ''}` }),
     r.error && el('p', {
       class: 'note fail',
       text: `${r.error_kind ? `${r.error_kind}: ` : ''}${r.error}`,

@@ -173,6 +173,10 @@ html, body {
    comes back. */
 .note.add-note { margin: 0 0 0.6rem; color: var(--text); overflow-wrap: anywhere; }
 .note.add-note:empty { margin: 0; }
+/* A query or a field name can be one unbroken run of characters (256 with no
+   space, or 32 words joined by +): it wraps inside its line rather than
+   widen the pane the line sits in. */
+.note.sent-line, #send-cut, #start-cut { overflow-wrap: anywhere; }
 
 /* ---------- buttons ---------- */
 
