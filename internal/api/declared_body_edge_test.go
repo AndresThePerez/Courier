@@ -361,5 +361,6 @@ func TestWireBurstsOfSmallPostsMeetNeitherBound(t *testing.T) {
 		}
 		waitIdle(t, s)
 		waitFor(t, "every place and the gate to empty", func() bool { return readsHeld(s) == 0 && gateIdle(s) })
+		wantRefusals(t, fmt.Sprintf("a burst of %d small posts", n), s, [3]int{0, 0, 0})
 	}
 }

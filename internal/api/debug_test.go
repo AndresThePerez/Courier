@@ -100,7 +100,7 @@ func TestMetricsCountsTheRunLifecycle(t *testing.T) {
 	s := newServer(t, newTarget(t, 300*time.Millisecond), nil)
 
 	before := readMetrics(t, s)
-	for _, key := range []string{"runs_started", "runs_cancelled", "runs_aborted", "sends_completed", "sends_refused"} {
+	for _, key := range []string{"runs_started", "runs_cancelled", "runs_aborted", "sends_completed", "sends_refused", "body_reads_refused", "body_line_refused", "body_reads_timed_out"} {
 		if got := num(t, before, key); got != 0 {
 			t.Errorf("a fresh server reports %s = %v, want 0", key, got)
 		}
@@ -204,6 +204,7 @@ func TestMetricsExposesCountersOnly(t *testing.T) {
 	body := decode[map[string]any](t, rec)
 	want := []string{
 		"runs_started", "runs_cancelled", "runs_aborted",
+		"body_reads_refused", "body_line_refused", "body_reads_timed_out",
 		"budget_balance", "sse_subscribers", "goroutines", "uptime_secs",
 	}
 	for _, key := range want {

@@ -336,7 +336,9 @@ that started is structured JSON carrying an `event` name and a `run_id`, so one
 `jq` filter returns a single run's complete story including the admission
 decision and the budget arithmetic behind its cooldown. Requests that arrive
 through the edge log its request id, so a visitor's report can be joined to a
-server log line.
+server log line. The bodies the body bounds turn away are counted rather than
+logged one by one: `body_reads_refused` and `body_line_refused` for the two
+`503`s, `body_reads_timed_out` for the `408` (docs/deviations.md N47).
 
 What is deliberately absent, since the honest version of an observability story
 includes its limits: no metrics history (every counter resets on redeploy and the

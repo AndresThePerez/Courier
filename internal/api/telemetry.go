@@ -13,7 +13,7 @@ import (
 	"github.com/AndresThePerez/courier/internal/sse"
 )
 
-// metrics is Courier watching itself: ten numbers, JSON, no dependency.
+// metrics is Courier watching itself: thirteen numbers, JSON, no dependency.
 //
 // It is an expvar.Map that is deliberately NOT published to expvar's package
 // global. Two reasons, and the second is the important one: a process can build
@@ -36,6 +36,19 @@ type metrics struct {
 	runsAborted   *expvar.Int
 	sends         *expvar.Int
 	sendsRefused  *expvar.Int
+
+	// The bodies the bounds on POST bodies turn away (body_reads.go,
+	// body_gate.go), one counter per cause, so a flood that makes other
+	// visitors' POSTs fail leaves a trace without a log line per refusal:
+	// body_reads_refused counts the 503s given because every read place was
+	// taken, body_line_refused the 503s given because the gate's line had no
+	// room, and body_reads_timed_out the 408s given because a body the
+	// handler read did not arrive by the deadline. A request whose unread
+	// body net/http drains past the deadline on a route that reads none is
+	// not among them: no handler answers it as a refusal.
+	bodyReadsRefused  *expvar.Int
+	bodyLineRefused   *expvar.Int
+	bodyReadsTimedOut *expvar.Int
 }
 
 func newMetrics() *metrics {
@@ -46,6 +59,10 @@ func newMetrics() *metrics {
 		runsAborted:   new(expvar.Int),
 		sends:         new(expvar.Int),
 		sendsRefused:  new(expvar.Int),
+
+		bodyReadsRefused:  new(expvar.Int),
+		bodyLineRefused:   new(expvar.Int),
+		bodyReadsTimedOut: new(expvar.Int),
 	}
 
 	// Counters: what has happened.
@@ -54,6 +71,9 @@ func newMetrics() *metrics {
 	mt.m.Set("runs_aborted", mt.runsAborted)
 	mt.m.Set("sends_completed", mt.sends)
 	mt.m.Set("sends_refused", mt.sendsRefused)
+	mt.m.Set("body_reads_refused", mt.bodyReadsRefused)
+	mt.m.Set("body_line_refused", mt.bodyLineRefused)
+	mt.m.Set("body_reads_timed_out", mt.bodyReadsTimedOut)
 
 	return mt
 }
@@ -74,6 +94,10 @@ func (m *metrics) runStarted()    { m.runsStarted.Add(1) }
 func (m *metrics) runCancelled()  { m.runsCancelled.Add(1) }
 func (m *metrics) sendCompleted() { m.sends.Add(1) }
 func (m *metrics) sendRefused()   { m.sendsRefused.Add(1) }
+
+func (m *metrics) readRefused()  { m.bodyReadsRefused.Add(1) }
+func (m *metrics) lineRefused()  { m.bodyLineRefused.Add(1) }
+func (m *metrics) readTimedOut() { m.bodyReadsTimedOut.Add(1) }
 
 // observe taps the event stream on its way to the broadcaster.
 //

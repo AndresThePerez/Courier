@@ -50,6 +50,7 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool 
 		// boundDeclaredBodies set when the request arrived.
 		w.Header().Set("Connection", "close")
 		answerBusy(w)
+		s.metrics.readRefused()
 		return false
 	}
 	held := true
@@ -67,6 +68,11 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool 
 	}
 	n := bodyWeight(len(body))
 	if !s.bodies.enter(r.Context(), n) {
+		// enter also gives up when the client has gone while its body waited;
+		// that answer reaches no one and is not a refusal.
+		if r.Context().Err() == nil {
+			s.metrics.lineRefused()
+		}
 		answerBusy(w)
 		return false
 	}
@@ -98,6 +104,7 @@ func (s *Server) readBody(w http.ResponseWriter, r *http.Request, rc *http.Respo
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		w.Header().Set("Connection", "close")
 		writeError(w, http.StatusRequestTimeout, "body", "the body did not arrive within %s", s.readDeadline)
+		s.metrics.readTimedOut()
 		return nil, false
 	}
 	answerReadError(w, err)

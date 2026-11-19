@@ -1742,6 +1742,13 @@ would bound them, and this repository sets none. Measured as below, several thou
 simultaneous connections bring the process to its memory limit through that kernel memory,
 after this change as before it.
 
+**What an operator sees.** Each refusal is counted on `/metrics`, never logged one by one,
+so a flood cannot become a log flood: `body_reads_refused` (the `503`s for want of a read
+place), `body_line_refused` (N43's `503`s for want of room in the line) and
+`body_reads_timed_out` (the `408`s), each once per answer on both routes and for nothing
+else (`internal/api/body_refusal_metrics_test.go`). A declared body that never arrives on a
+route that reads none is answered at the deadline but not counted.
+
 **Narrows N43**, which says its bound leaves out bodies still arriving: they are now bounded
 here.
 
@@ -1809,3 +1816,6 @@ Corrections to entries this record keeps as written:
   It asks the page's copy of the server's cut (`cutParamValue` in `web/js/storage.js`),
   and `web/limits_test.go` holds the editor to having no other limit
   (`web/test/param-cut-editor-note.test.mjs`).
+- **N25** lists the counters `/metrics` exposes. Three more count the bodies the bounds of
+  N43 and N47 turn away: `body_reads_refused`, `body_line_refused` and
+  `body_reads_timed_out` (N47).
