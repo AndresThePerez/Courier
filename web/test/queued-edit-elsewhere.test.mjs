@@ -98,7 +98,7 @@ test('a change from another tab between two keystrokes of a linked draft forks o
   const copy = stored().find((r) => r.id !== 'ws-a');
   assert.equal(copy.name, 'Req 1!abcdefghijklmnopqrs');
   assert.ok(get().draft.id === copy.id, 'the editor writes the copy');
-  assert.match(note(), /Copied to My Workspace as ".*" - the run now uses this copy\./);
+  assert.match(note(), /Copied to My Workspace as ".*"\. Save puts your changes into the run\./);
 
   // The entry: same key, same position, enabled flag kept, the queued content.
   assert.deepEqual(get().sequence.map((e) => e.key), keys);

@@ -241,7 +241,7 @@ test('Edit as the page wires it shows the editor and moves focus to the request\
 });
 
 const storedRequest = (id) => JSON.parse(localStorage.peek(WORKSPACE)).requests.find((r) => r.id === id) || null;
-const CopiedNote = /^Copied to My Workspace as "Good 1 \(copy\)" - the run now uses this copy\.$/;
+const CopiedNote = /^Copied to My Workspace as "Good 1 \(copy\)"\. Save puts your changes into the run\.$/;
 
 test('Edit on a queued row whose saved request differs only in what is never sent opens the saved request itself', () => {
   boot({ saved: [{ ...good('ws-b'), note: 'kept by an older build' }], setup: setupOf([good('ws-b')]) });

@@ -112,7 +112,7 @@ export function openQueued(key) {
     const forked = workspace.fork(request);
     request = deepCopy(forked.request);
     runner.repoint(key, request, { fixed: false });
-    forkNote = `Copied to My Workspace as "${request.name}" - the run now uses this copy.`;
+    forkNote = copiedForRun(request.name);
     if (!forked.ok) saveNote = workspace.WRITE_REFUSED;
   } else {
     try {
@@ -125,6 +125,11 @@ export function openQueued(key) {
   linked = { key, id: request.id };
   set({ selectedId: request.id, draft: request, editorNotice: '' });
 }
+
+// copiedForRun is the note for a queued request copied into My Workspace. The
+// entry already points at the copy, but holds it as it was queued: what is
+// typed from here reaches the run only on Save.
+const copiedForRun = (name) => `Copied to My Workspace as "${name}". Save puts your changes into the run.`;
 
 // editQueued is a queued row's Edit as the page wires it: the entry opens,
 // the editor is shown, and focus moves to the request's name. Left on the
@@ -186,7 +191,7 @@ function keepNewer(draft) {
   const entry = runner.queuedEntry(key);
   runner.repoint(key, { ...entry.request, id: copy.id, name: copy.name }, { fixed: false });
   linked = { key, id: copy.id };
-  forkNote = `Copied to My Workspace as "${copy.name}" - the run now uses this copy.`;
+  forkNote = copiedForRun(copy.name);
   saveNote = forked.ok ? '' : workspace.WRITE_REFUSED;
   if (outbound && outbound.id === draft.id) outbound.id = copy.id;
   return copy;
