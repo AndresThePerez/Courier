@@ -11,6 +11,8 @@
 // the page invented would be a request the visitor cannot send for no reason
 // the server would give.
 
+import { requestOf } from './storage.js';
+
 // MaxAssertionText mirrors sandbox.MaxParamValueLen as the validator applies
 // it to an assertion's JSON path and string value: counted in characters
 // (runes), and refused over it rather than cut.
@@ -242,10 +244,17 @@ export function isQueueable(request) {
 // field that is sent. Keys nothing reads or shows do not make them differ. Two
 // requests that cannot be built or encoded are never the same: answering
 // "different" costs at most a copy, answering "same" can cost a version.
+//
+// Both sides are compared as this browser stores them: a queued copy read
+// back after a reload has been through storage.requestOf, which cuts a name
+// and a parameter value as the server does, while a saved request may still
+// hold the uncut text. Cut on one side only, one request would read as two.
+// A value requestOf cannot rebuild is compared as it is.
 export function sameRequest(a, b) {
   if (!isPlain(a) || !isPlain(b)) return false;
   try {
-    return JSON.stringify(requestPayload(a)) === JSON.stringify(requestPayload(b));
+    const stored = (r) => requestOf(r) ?? r;
+    return JSON.stringify(requestPayload(stored(a))) === JSON.stringify(requestPayload(stored(b)));
   } catch {
     return false;
   }

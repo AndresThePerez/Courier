@@ -86,9 +86,14 @@ export function onSelect() {
 // to write to (a built-in one, one deleted since, or one changed since) is
 // first copied into My Workspace, and the entry is pointed at the copy, so the
 // run and the editor hold the same request from then on.
+//
+// The entry already open through Edit is left as it is: its saved request now
+// holds the visitor's unsaved keystrokes, so opening it again would copy it
+// and drop what they typed.
 export function openQueued(key) {
   const entry = runner.queuedEntry(key);
   if (!entry || !isPlainRequest(entry.request)) return;
+  if (linkedKey(get().draft) === key) return;
   onSelect();
   let request;
   try {
