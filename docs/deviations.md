@@ -1360,7 +1360,10 @@ kept, and stored in the run's report, its replay log and its result frames.
   (bodies read in full and then answered `503`, and bodies still arriving), the decoded
   value a request keeps after its check through validation and the start or the send, or
   garbage not yet collected. The statement beside the constants in
-  `internal/api/server.go` says the same.
+  `internal/api/server.go` says the same. Nor does it share the line between clients:
+  the line has no per-client fairness, so a client that keeps it full of bodies at the cap
+  makes every other POST an immediate `503` with `Retry-After` until it stops. What limits
+  one client is the tunnel in front of the server, not this bound.
 - An assertion `value` that is an object or an array is refused by the body check, for
   every assertion type and operator, with a `400` naming the value:
   `{"error":"expected a number, a string, true, false or null, got an object","field":"sequence[1].assertions[0].value"}`
@@ -1388,7 +1391,8 @@ answered `503`, nothing left behind), `TestABodyBeyondMaxBodyWaitersIsAnswered50
 `TestAFullBodyGateLeavesEveryOtherRouteAnswered`; `internal/api/body_gate_weight_test.go`:
 `TestABodyAtTheCapIsAdmittedBeforeSmallerOnesBehindIt`, `TestAShortBodyWeighsTheFloor`,
 `TestTheBodyGateWeighsMixedSizesThroughCancelAndComplete`,
-`TestABodyTheShapeCheckRefusesGivesBackItsRoom`, `TestTheBodyGateConstantsMatchTheDocuments`;
+`TestABodyTheShapeCheckRefusesGivesBackItsRoom`; `internal/api/body_gate_docs_test.go`:
+`TestTheBodyGateConstantsMatchTheDocuments`;
 `internal/api/assertion_value_test.go`:
 `TestAnAssertionValueThatIsAnObjectOrArrayIsRefused`,
 `TestScalarAssertionValuesStillPassTheShapeCheck`,

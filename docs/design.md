@@ -368,7 +368,9 @@ size. The check is therefore bounded by the bytes of the bodies in it rather tha
 many visitors post together: two bodies at the cap fit at once, or up to 128 small ones,
 and eight times as many bytes may wait, in arrival order so that small posts cannot keep
 a large one waiting. Past that the answer is a `503` with `Retry-After`, given
-before anything is decoded. A body takes its place only once it has arrived: with
+before anything is decoded. The line has no per-client fairness: a client that keeps it
+full of bodies at the cap makes every other POST an immediate `503` until it stops, and
+what limits one client is the tunnel in front of the server. A body takes its place only once it has arrived: with
 `ReadHeaderTimeout` as the only server timeout, room held during an upload would let
 stalled connections stop every POST. This bounds what the checks in flight allocate; it
 leaves out bodies answered `503` or still arriving, which scale with connections, and the
