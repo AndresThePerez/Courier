@@ -56,7 +56,7 @@ type sendResult struct {
 // a busy run is a state conflict, and the UI says different things about them.
 func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	var req sandbox.Request
-	if !decodeJSON(w, r, &req) {
+	if !s.decodeJSON(w, r, &req) {
 		return
 	}
 	// The same validator a run payload passes through. A curated request, a

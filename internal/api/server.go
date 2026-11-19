@@ -96,6 +96,10 @@ type Server struct {
 	metrics *metrics
 	started time.Time
 
+	// bodies bounds how many request bodies are checked and decoded at once,
+	// on both POST routes together (MaxBodyChecks).
+	bodies *bodyGate
+
 	// runCtx is the parent of every run context. It outlives the HTTP request
 	// that started the run — a visitor closing the tab must not cancel the run
 	// everyone else is watching — and is cancelled by Close, which is what
@@ -135,6 +139,7 @@ func New(static fs.FS, opts Options) *Server {
 		runCtx:   ctx,
 		stopRuns: stop,
 		done:     make(chan struct{}),
+		bodies:   newBodyGate(MaxBodyChecks, MaxBodyWaiters),
 	}
 	// Three-step rather than one literal, because the wiring is genuinely
 	// circular: the run manager publishes through the metrics tap, and the tap
@@ -302,10 +307,36 @@ func writeError(w http.ResponseWriter, status int, field, format string, args ..
 // exactly like a "url" that is honoured. The same goes for a second "endpoint"
 // that quietly wins over the first, and for a key that only matches a field
 // because encoding/json folds case.
+//
+// This is the check alone. Handlers go through Server.decodeJSON, which also
+// bounds how many bodies are checked at once.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	body, ok := readJSONBody(w, r)
+	return ok && decodeBody(w, body, v)
+}
+
+// decodeJSON is the package's decodeJSON with the body check held to
+// MaxBodyChecks at a time. The body is read in full before a slot is taken.
+func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return false
+	}
+	if !s.bodies.enter(r.Context()) {
+		w.Header().Set("Retry-After", bodyGateRetryAfter)
+		writeError(w, http.StatusServiceUnavailable, "", bodyGateBusy)
+		return false
+	}
+	defer s.bodies.leave()
+	return decodeBody(w, body, v)
+}
+
+// readJSONBody answers 415 for a body that is not JSON and 413 for one over
+// the cap, and otherwise returns the body whole.
+func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
 		writeError(w, http.StatusUnsupportedMediaType, "body", "Content-Type must be application/json")
-		return false
+		return nil, false
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
@@ -313,12 +344,17 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
 			writeError(w, http.StatusRequestEntityTooLarge, "body", "payload exceeds the %d byte limit", MaxBodyBytes)
-			return false
+			return nil, false
 		}
 		writeError(w, http.StatusBadRequest, "body", "the body could not be read")
-		return false
+		return nil, false
 	}
+	return body, true
+}
 
+// decodeBody holds body to v's shape and decodes it into v, answering 400
+// when it does not fit.
+func decodeBody(w http.ResponseWriter, body []byte, v any) bool {
 	if field, msg, ok := checkBody(body, reflect.TypeOf(v)); !ok {
 		writeError(w, http.StatusBadRequest, field, "%s", msg)
 		return false
@@ -333,6 +369,81 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
+
+// Bounds on the body check, which runs before the one-run lock and the
+// one-send limit and so is open to every visitor at once. Decoding a body at
+// the cap can allocate over a hundred times its size, and the process has
+// 256 MB.
+//
+// What they can cost at once follows from the constants:
+//
+//	MaxBodyChecks x (one check of a body at MaxBodyBytes)
+//	  + MaxBodyWaiters x MaxBodyBytes
+//
+// One check of a body at the cap allocates at most 192 x MaxBodyBytes, 48 MiB
+// (TestDecodingAWideBodyStaysLinearInItsSize), so the checks in flight
+// allocate at most 2 x 48 MiB and the waiting bodies hold 16 x 256 KiB. A body
+// still arriving is not counted: it holds no slot (see Server.decodeJSON).
+const (
+	// MaxBodyChecks is how many bodies are checked and decoded at once
+	// (TestNoMoreThanMaxBodyChecksBodiesAreCheckedAtOnce). Two rather than
+	// one, so a body at the cap being checked does not hold up a small one.
+	MaxBodyChecks = 2
+
+	// MaxBodyWaiters is how many bodies, already read, may wait for a slot;
+	// one more is answered 503 at once, unchecked
+	// (TestABodyBeyondMaxBodyWaitersIsAnswered503WithoutBeingChecked).
+	MaxBodyWaiters = 16
+)
+
+// bodyGateBusy is the 503's message. The page shows it after "Refused - " on
+// Send and after "Could not start the run - " on Start.
+const bodyGateBusy = "the server is busy checking other requests; try again in a moment"
+
+// bodyGateRetryAfter is the 503's Retry-After, in seconds: a slot frees as
+// soon as one check ends.
+const bodyGateRetryAfter = "1"
+
+// bodyGate is a counting semaphore with a bounded queue.
+type bodyGate struct {
+	slots   chan struct{}
+	waiting atomic.Int64
+	maxWait int64
+
+	// checking, when set, runs while a slot is held. Tests park bodies in it
+	// to count how many are inside at once; production leaves it nil.
+	checking func()
+}
+
+func newBodyGate(slots, waiters int) *bodyGate {
+	return &bodyGate{slots: make(chan struct{}, slots), maxWait: int64(waiters)}
+}
+
+// enter takes a slot, waiting for one while fewer than maxWait others do. It
+// reports false when the queue is full or ctx ends first: a waiter whose
+// client has gone stops waiting.
+func (g *bodyGate) enter(ctx context.Context) bool {
+	select {
+	case g.slots <- struct{}{}:
+	default:
+		if g.waiting.Add(1) > g.maxWait {
+			g.waiting.Add(-1)
+			return false
+		}
+		defer g.waiting.Add(-1)
+		select {
+		case g.slots <- struct{}{}:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	if g.checking != nil {
+		g.checking()
+	}
+	return true
+}
+
+func (g *bodyGate) leave() { <-g.slots }
 
 // decodeChecked is the decode that follows checkBody. The walk has already
 // refused every key v lacks; the decoder refuses them again so that a payload

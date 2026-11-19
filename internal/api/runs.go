@@ -68,7 +68,7 @@ type historyEntry struct {
 // survives this request — and every subscriber — going away.
 func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	var rr sandbox.RunRequest
-	if !decodeJSON(w, r, &rr) {
+	if !s.decodeJSON(w, r, &rr) {
 		return
 	}
 

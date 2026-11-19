@@ -85,6 +85,49 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 	}
 }
 
+// wideDecodeBound is the most one check of a body at the cap may allocate.
+// The widest bodies allocate about 140 times their size; the rest is room
+// across toolchains.
+const wideDecodeBound = 192 * MaxBodyBytes
+
+// wide fills prefix unit,unit,... suffix up to the size cap.
+func wide(prefix, unit, suffix string) string {
+	n := (MaxBodyBytes - len(prefix) - len(suffix) + 1) / (len(unit) + 1)
+	return prefix + strings.TrimSuffix(strings.Repeat(unit+",", n), ",") + suffix
+}
+
+// A body at the size cap made of as many small values as it can hold is the
+// most the decode can be made to build from it: tens of thousands of payload
+// structs, grown into place. This is the per-check figure the bound on
+// concurrent checks (MaxBodyChecks) is reasoned from.
+func TestDecodingAWideBodyStaysLinearInItsSize(t *testing.T) {
+	cases := []struct {
+		name, path, body string
+		into             func() any
+	}{
+		{"empty requests", "/api/runs", manyObjects(), func() any { return new(sandbox.RunRequest) }},
+		{"requests with empty params", "/api/runs", wide(`{"mode":"functional","sequence":[`, `{"params":{}}`, `]}`), func() any { return new(sandbox.RunRequest) }},
+		{"requests with empty assertions", "/api/runs", wide(`{"mode":"functional","sequence":[`, `{"assertions":[]}`, `]}`), func() any { return new(sandbox.RunRequest) }},
+		{"empty assertions", "/api/send", wide(`{"endpoint":"healthz","assertions":[`, `{}`, `]}`), func() any { return new(sandbox.Request) }},
+		{"numeric assertions", "/api/send", wide(`{"endpoint":"healthz","assertions":[`, `{"value":0}`, `]}`), func() any { return new(sandbox.Request) }},
+		{"parameters", "/api/send", wide(`{"endpoint":"search","params":{`, `"":""`, `}}`), func() any { return new(sandbox.Request) }},
+	}
+	const bound = wideDecodeBound
+	for _, tc := range cases {
+		var ok bool
+		alloc := minAlloc(t, func() {
+			r := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", "application/json")
+			ok = decodeJSON(httptest.NewRecorder(), r, tc.into())
+		})
+		t.Logf("%s: %d-byte body allocated %d bytes (decoded: %v)", tc.name, len(tc.body), alloc, ok)
+		if alloc > bound {
+			t.Errorf("%s: decoding a %d-byte body allocated %d bytes, want at most %d",
+				tc.name, len(tc.body), alloc, bound)
+		}
+	}
+}
+
 // checkBoundedEcho holds an error body to a size a client can show whole: the
 // echoed text is clipped, and clipped on a character boundary.
 func checkBoundedEcho(t *testing.T, name string, rec *httptest.ResponseRecorder, status int) errorBody {
