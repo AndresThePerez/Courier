@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -53,10 +54,13 @@ func minAlloc(t *testing.T, f func()) uint64 {
 // it is nested: /api/send decodes before its one-in-flight check, so anyone
 // can make the server do this several times at once.
 func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
+	// The deepest level holds a duplicate key, which only a walk that reached
+	// it can report: a body refused before its nesting was read fails here.
+	const bottom = `{"a":1,"a":2}`
 	cases := []struct{ name, body string }{
-		{"object", valueBody(deepObject("1"))},
-		{"array", valueBody(strings.Repeat("[", deepDepth) + "1" + strings.Repeat("]", deepDepth))},
-		{"two keys a level", valueBody(strings.Repeat(`{"a":1,`+deepKey+`:`, 8000) + "1" + strings.Repeat(`}`, 8000))},
+		{"object", valueBody(deepObject(bottom))},
+		{"array", valueBody(strings.Repeat("[", deepDepth) + bottom + strings.Repeat("]", deepDepth))},
+		{"two keys a level", valueBody(strings.Repeat(`{"a":1,`+deepKey+`:`, 8000) + bottom + strings.Repeat(`}`, 8000))},
 	}
 	// Linear with room to spare under -race and across toolchains; a cost that
 	// grows with the square of the depth allocates about a gigabyte here.
@@ -66,16 +70,19 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 			t.Fatalf("%s: body is %d bytes, over the cap", tc.name, len(tc.body))
 		}
 		var ok bool
+		var rec *httptest.ResponseRecorder
 		alloc := minAlloc(t, func() {
 			r := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(tc.body))
 			r.Header.Set("Content-Type", "application/json")
+			rec = httptest.NewRecorder()
 			var req sandbox.Request
-			ok = decodeJSON(httptest.NewRecorder(), r, &req)
+			ok = decodeJSON(rec, r, &req)
 		})
-		// The value is refused for being a structure, but only once the walk
-		// has read all of it, so the walk's own cost is still what is measured.
 		if ok {
 			t.Errorf("%s: a %d-byte structure was accepted as an assertion value", tc.name, len(tc.body))
+		}
+		if eb := decode[errorBody](t, rec); eb.Error != `duplicate key "a"` || eb.Field != "assertions[0].value" {
+			t.Errorf("%s: %q at %q, want the duplicate key at the bottom named, at assertions[0].value", tc.name, eb.Error, eb.Field)
 		}
 		t.Logf("%s: %d-byte body allocated %d bytes", tc.name, len(tc.body), alloc)
 		if alloc > bound {
@@ -89,6 +96,26 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 // The widest bodies allocate about 140 times their size; the rest is room
 // across toolchains.
 const wideDecodeBound = 192 * MaxBodyBytes
+
+// distinctKeys fills prefix "k0":"","k1":"",... suffix up to the size cap,
+// every key different, so the walk accepts every one and the decode builds
+// the whole map.
+func distinctKeys(prefix, suffix string) string {
+	var b strings.Builder
+	b.WriteString(prefix)
+	for i := 0; ; i++ {
+		kv := `"k` + strconv.Itoa(i) + `":""`
+		if b.Len()+1+len(kv)+len(suffix) > MaxBodyBytes {
+			break
+		}
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(kv)
+	}
+	b.WriteString(suffix)
+	return b.String()
+}
 
 // wide fills prefix unit,unit,... suffix up to the size cap.
 func wide(prefix, unit, suffix string) string {
@@ -110,7 +137,7 @@ func TestDecodingAWideBodyStaysLinearInItsSize(t *testing.T) {
 		{"requests with empty assertions", "/api/runs", wide(`{"mode":"functional","sequence":[`, `{"assertions":[]}`, `]}`), func() any { return new(sandbox.RunRequest) }},
 		{"empty assertions", "/api/send", wide(`{"endpoint":"healthz","assertions":[`, `{}`, `]}`), func() any { return new(sandbox.Request) }},
 		{"numeric assertions", "/api/send", wide(`{"endpoint":"healthz","assertions":[`, `{"value":0}`, `]}`), func() any { return new(sandbox.Request) }},
-		{"parameters", "/api/send", wide(`{"endpoint":"search","params":{`, `"":""`, `}}`), func() any { return new(sandbox.Request) }},
+		{"parameters", "/api/send", distinctKeys(`{"endpoint":"search","params":{`, `}}`), func() any { return new(sandbox.Request) }},
 	}
 	const bound = wideDecodeBound
 	for _, tc := range cases {
