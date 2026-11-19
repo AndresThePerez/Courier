@@ -506,10 +506,14 @@ func tally(f *report.Functional) counts {
 	return c
 }
 
+// resultTone is a row's result column, in the page's words: an answered row
+// with nothing asserted passed no check, so it is not a PASS.
 func resultTone(r report.RequestResult) (string, rgb) {
 	switch {
 	case r.Skipped:
 		return "SKIP", muted
+	case r.Passed && len(r.Assertions) == 0:
+		return "no checks", muted
 	case r.Passed:
 		return "PASS", pass
 	default:
