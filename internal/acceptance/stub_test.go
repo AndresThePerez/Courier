@@ -15,7 +15,6 @@ package acceptance
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -218,25 +217,16 @@ func stubSuggest(q string) []string {
 
 // ------------------------------------------------------ the Courier processes
 
-// reservedPorts are held by other services on a developer machine. They sit
-// below the usual ephemeral range, but nothing here relies on that.
-var reservedPorts = map[int]bool{8080: true, 8081: true, 8084: true, 8090: true, 9200: true, 9201: true}
-
 // freePort asks the OS for a free loopback port. The listener is closed before
 // the port is used, so a caller that loses the race for it retries.
 func freePort() (int, error) {
-	for range 10 {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return 0, err
-		}
-		port := l.Addr().(*net.TCPAddr).Port
-		l.Close()
-		if !reservedPorts[port] {
-			return port, nil
-		}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
 	}
-	return 0, errors.New("the OS kept handing out reserved ports")
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port, nil
 }
 
 // courierProc is one Courier process started by the self-contained mode.

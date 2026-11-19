@@ -201,22 +201,13 @@ func TestHarnessStalledRequestDoesNotHoldTheStubOpenAfterTheClientLeaves(t *test
 	}
 }
 
-// freePort hands back a port the OS just had free (so one a listener can bind)
-// and never one of the ports other services on a developer machine hold.
-func TestHarnessFreePortIsBindableAndNeverReserved(t *testing.T) {
-	for _, want := range []int{8080, 8081, 8084, 8090, 9200, 9201} {
-		if !reservedPorts[want] {
-			t.Errorf("port %d is not in the reserved set", want)
-		}
-	}
+// freePort hands back a port the OS just had free, so one a listener can bind.
+func TestHarnessFreePortIsBindable(t *testing.T) {
 	seen := map[int]bool{}
 	for range 200 {
 		port, err := freePort()
 		if err != nil {
 			t.Fatalf("freePort: %v", err)
-		}
-		if reservedPorts[port] {
-			t.Fatalf("freePort returned the reserved port %d", port)
 		}
 		if port < 1 || port > 65535 {
 			t.Fatalf("freePort returned %d", port)
