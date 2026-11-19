@@ -133,7 +133,7 @@ test('a queued row\'s Edit opens that queued request in the editor', () => {
   assert.ok(get().draft.id !== 'ws-b' && get().draft.id.startsWith('ws-'));
   assert.deepEqual(workspace.find('ws-b'), good('ws-b'));
   assert.deepEqual(get().draft.assertions, bad('ws-b').assertions, 'the queued copy is what opens, not the saved one');
-  assert.equal(editOf(1).getAttribute('aria-label'), 'Edit Bad');
+  assert.equal(editOf(1).getAttribute('aria-label'), 'Edit Bad (copy)', 'the row names the copy the entry now holds');
 });
 
 test('saving the fix updates the saved request and that queued entry in place, and the next Start sends it', async () => {

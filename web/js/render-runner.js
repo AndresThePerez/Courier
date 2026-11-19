@@ -800,13 +800,17 @@ function renderSequence(state) {
   byId('deselect-all').disabled = list.length === 0;
   byId('save-sequence').disabled = list.length === 0;
 
-  // Rebuild only when the sequence itself changed. The 3s status poll notifies
-  // every render module; rebuilding this list on each one would take the focus
-  // out from under a visitor reordering rows with the keyboard.
+  // Rebuild only when something a row paints changed. The 3s status poll
+  // notifies every render module; rebuilding this list on each one would take
+  // the focus out from under a visitor reordering rows with the keyboard. The
+  // signature holds each entry's whole request, not only its key: a request is
+  // replaced under the same key (Save through a row's Edit, the copy Edit
+  // makes), and a key-only signature would leave the row showing a request
+  // the run no longer holds.
   // The catalog arriving is a change too: it is what the badges are read from.
   if (refusal && !list.some((e) => e.key === refusal.key)) refusal = null;
   const refusedSig = refusal ? `${refusal.key}\n${refusal.label}\n${refusal.message}` : '';
-  const sig = `${list.map((e) => `${e.key}:${e.enabled ? 1 : 0}`).join('|')}#${refusedSig}`;
+  const sig = `${list.map(entrySignature).join('\u0001')}#${refusedSig}`;
   if (sig === lastSignature && state.endpoints === lastEndpoints) return;
   lastSignature = sig;
   lastEndpoints = state.endpoints;
@@ -822,6 +826,25 @@ function renderSequence(state) {
     replace(rows, list.map((entry, i) => shownRow(entry, i, list.length, state.endpoints)));
   }
   restoreFocus(focus);
+}
+
+// entrySignature is everything one row is drawn from. A request JSON cannot
+// encode (a BigInt, nesting too deep) is still a row that must be shown and
+// removable, so it is told apart by its identity instead: replacing it still
+// repaints its row.
+const unencodable = new WeakMap();
+let unencodableCount = 0;
+
+function entrySignature(entry) {
+  try {
+    return JSON.stringify([entry.key, Boolean(entry.enabled), entry.request]);
+  } catch {
+    if (!unencodable.has(entry.request)) {
+      unencodableCount += 1;
+      unencodable.set(entry.request, unencodableCount);
+    }
+    return `${entry.key}:${entry.enabled ? 1 : 0}:#${unencodable.get(entry.request)}`;
+  }
 }
 
 // Assertion chips teach that assertions exist without opening the editor: each
