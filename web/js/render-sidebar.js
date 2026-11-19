@@ -299,12 +299,15 @@ function renderSaved(list, counts, endpoints) {
 }
 
 // A verdict is coloured by what it says; one this page does not know is muted.
+// Only the table's own keys count: a verdict named like an inherited property
+// would otherwise put that property's text into the class.
 const verdictTone = { PASS: 'pass', FAIL: 'fail', 'N/A': 'muted' };
+const toneOf = (verdict) => (Object.hasOwn(verdictTone, verdict) ? verdictTone[verdict] : 'muted');
 
 function historyRow(entry) {
   const status = entry.status === 'completed' ? '' : ` (${entry.status})`;
   const verdict = entry.verdict
-    ? el('span', { class: `history-verdict mono ${verdictTone[entry.verdict] || 'muted'}`, text: entry.verdict })
+    ? el('span', { class: `history-verdict mono ${toneOf(entry.verdict)}`, text: entry.verdict })
     : null;
   return el('div', { class: 'req-row' }, [
     el('button', {
