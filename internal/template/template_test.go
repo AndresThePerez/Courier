@@ -3,6 +3,8 @@ package template
 import (
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/AndresThePerez/courier/internal/sandbox"
 )
@@ -107,12 +109,46 @@ func TestPoolsAreUsable(t *testing.T) {
 			if w == "" || strings.ContainsAny(w, "{}&=?") {
 				t.Errorf("bad %s entry %q", p.name, w)
 			}
+			// A token is one word and must expand to one word: white space in
+			// an entry would add words past sandbox.MaxParamWords.
+			if strings.IndexFunc(w, unicode.IsSpace) >= 0 {
+				t.Errorf("%s entry %q holds white space: expansion could add words past sandbox.MaxParamWords", p.name, w)
+			}
 			// Expansion runs after sandbox validation, and the cap is not
 			// re-checked on the way out: only a strictly shrinking substitution
 			// keeps an expanded value inside sandbox.MaxParamValueLen.
 			if len(w) >= len(p.token) {
 				t.Errorf("%s entry %q is %d bytes, not shorter than %s (%d bytes): expansion could grow a value past sandbox.MaxParamValueLen",
 					p.name, w, len(w), p.token, len(p.token))
+			}
+		}
+	}
+}
+
+// A value the validator let through at either limit, holding placeholders,
+// is still within both limits once every placeholder is drawn, whatever is
+// drawn: the value dispatched is never longer or wordier than the one checked.
+func TestAnExpandedValueAtTheLimitsStaysWithinThem(t *testing.T) {
+	join := func(n int, w string) string { return strings.TrimSuffix(strings.Repeat(w+" ", n), " ") }
+	values := map[string]string{
+		"256 characters of pokemon placeholders": sandbox.CutParamValue(join(40, PokemonToken)),
+		"256 characters of word placeholders":    sandbox.CutParamValue(join(40, WordToken)),
+		"32 words, the last one a placeholder":   join(31, "a") + " " + PokemonToken,
+		"32 words, each holding a placeholder":   sandbox.CutParamValue(join(32, "x"+WordToken)),
+		"placeholders with no space between":     sandbox.CutParamValue(strings.Repeat(WordToken+PokemonToken, 20)),
+	}
+	longest := max(len(words), len(pokemon))
+	for name, v := range values {
+		if sandbox.CutParamValue(v) != v {
+			t.Fatalf("%s: the value is not within the limits before expansion", name)
+		}
+		for i := range longest {
+			stubPick(t, i)
+			r := Expand(sandbox.Request{Endpoint: "search", Params: map[string]string{"q": v}})
+			got := r.Params["q"]
+			if sandbox.CutParamValue(got) != got {
+				t.Fatalf("%s, draw %d: the expanded value is %d characters and %d words, past the limits",
+					name, i, utf8.RuneCountInString(got), len(strings.FieldsFunc(got, unicode.IsSpace)))
 			}
 		}
 	}

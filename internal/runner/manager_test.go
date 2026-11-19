@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -602,5 +604,68 @@ func TestPublishedEventsCarryNoRawError(t *testing.T) {
 			t.Fatal(err)
 		}
 		checkNoLeak(t, "a published "+e.Type, b, base)
+	}
+}
+
+// parkingHandler holds the goroutine that writes a refused start's log line
+// until the test releases it.
+type parkingHandler struct{ release chan struct{} }
+
+func (h parkingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h parkingHandler) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h parkingHandler) WithGroup(string) slog.Handler            { return h }
+func (h parkingHandler) Handle(_ context.Context, r slog.Record) error {
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "event" && a.Value.String() == EventRunRefused {
+			<-h.release
+			return false
+		}
+		return true
+	})
+	return nil
+}
+
+// A refused start reads the live run's id under the lock. Its log line names
+// the id, and a read after the lock is released races the run finishing,
+// which clears it. The refused start is parked inside that log call and is
+// found there by reading goroutine stacks, which gives the race detector no
+// ordering between it and the finish: under -race, a read outside the lock is
+// reported however the two are scheduled.
+func TestARefusedStartReadsTheRunIDUnderTheLock(t *testing.T) {
+	h := parkingHandler{release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(h.release) }) }
+	t.Cleanup(release)
+
+	m, _, _ := newTestManager(t, "http://target.invalid")
+	m.log = slog.New(h)
+	finish := make(chan struct{})
+	m.run = func(ctx context.Context, _ *Executor, _ sandbox.RunRequest, _ Emitter) Result {
+		<-finish
+		return Result{Status: report.StatusCompleted}
+	}
+	if _, err := m.Start(context.Background(), functionalRun()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	refused := make(chan error, 1)
+	go func() {
+		_, err := m.Start(context.Background(), functionalRun())
+		refused <- err
+	}()
+	deadline := time.Now().Add(20 * time.Second)
+	buf := make([]byte, 1<<20)
+	for !strings.Contains(string(buf[:runtime.Stack(buf, true)]), "parkingHandler.Handle") {
+		if time.Now().After(deadline) {
+			t.Fatal("the refused start never logged its refusal")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	close(finish)
+	m.Wait()
+	release()
+	if err := <-refused; !errors.Is(err, ErrBusy) {
+		t.Errorf("second Start = %v, want ErrBusy", err)
 	}
 }

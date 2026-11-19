@@ -55,13 +55,13 @@ test('a JSON path and a string value of 600 and 5,000 characters round-trip whol
   }
 });
 
-test('every other bound stays: a name cut to 120, a parameter to 500, 20 assertions, and only checked primitives kept', () => {
+test('every other bound stays: a name cut to 120, a parameter to 256, 20 assertions, and only checked primitives kept', () => {
   const many = Array.from({ length: 25 }, (_, i) => ({ type: 'status', op: 'eq', value: 200 + i }));
   const area = new FakeStorage();
   area.setItem(SETUP, setupText(request(many, { name: 'n'.repeat(130), params: { q: 'q'.repeat(700) } })));
   const r = runner.createRunSetup(area).load().sequence[0].request;
   assert.equal(r.name.length, 120);
-  assert.equal(r.params.q.length, 500);
+  assert.equal(r.params.q.length, 256);
   assert.equal(r.assertions.length, 20);
   assert.deepEqual(r.assertions.map((a) => a.value), many.slice(0, 20).map((a) => a.value));
 

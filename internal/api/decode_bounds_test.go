@@ -3,11 +3,15 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/sandbox"
 )
 
@@ -50,10 +54,13 @@ func minAlloc(t *testing.T, f func()) uint64 {
 // it is nested: /api/send decodes before its one-in-flight check, so anyone
 // can make the server do this several times at once.
 func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
+	// The deepest level holds a duplicate key, which only a walk that reached
+	// it can report: a body refused before its nesting was read fails here.
+	const bottom = `{"a":1,"a":2}`
 	cases := []struct{ name, body string }{
-		{"object", valueBody(deepObject("1"))},
-		{"array", valueBody(strings.Repeat("[", deepDepth) + "1" + strings.Repeat("]", deepDepth))},
-		{"two keys a level", valueBody(strings.Repeat(`{"a":1,`+deepKey+`:`, 8000) + "1" + strings.Repeat(`}`, 8000))},
+		{"object", valueBody(deepObject(bottom))},
+		{"array", valueBody(strings.Repeat("[", deepDepth) + bottom + strings.Repeat("]", deepDepth))},
+		{"two keys a level", valueBody(strings.Repeat(`{"a":1,`+deepKey+`:`, 8000) + bottom + strings.Repeat(`}`, 8000))},
 	}
 	// Linear with room to spare under -race and across toolchains; a cost that
 	// grows with the square of the depth allocates about a gigabyte here.
@@ -63,16 +70,84 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 			t.Fatalf("%s: body is %d bytes, over the cap", tc.name, len(tc.body))
 		}
 		var ok bool
+		var rec *httptest.ResponseRecorder
 		alloc := minAlloc(t, func() {
 			r := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(tc.body))
 			r.Header.Set("Content-Type", "application/json")
+			rec = httptest.NewRecorder()
 			var req sandbox.Request
-			ok = decodeJSON(httptest.NewRecorder(), r, &req)
+			ok = decodeJSON(rec, r, &req)
 		})
-		if !ok {
-			t.Errorf("%s: a well-formed %d-byte body was refused", tc.name, len(tc.body))
+		if ok {
+			t.Errorf("%s: a %d-byte structure was accepted as an assertion value", tc.name, len(tc.body))
+		}
+		if eb := decode[errorBody](t, rec); eb.Error != `duplicate key "a"` || eb.Field != "assertions[0].value" {
+			t.Errorf("%s: %q at %q, want the duplicate key at the bottom named, at assertions[0].value", tc.name, eb.Error, eb.Field)
 		}
 		t.Logf("%s: %d-byte body allocated %d bytes", tc.name, len(tc.body), alloc)
+		if alloc > bound {
+			t.Errorf("%s: decoding a %d-byte body allocated %d bytes, want at most %d",
+				tc.name, len(tc.body), alloc, bound)
+		}
+	}
+}
+
+// wideDecodeBound is the most one check of a body at the cap may allocate.
+// The widest bodies allocate about 140 times their size; the rest is room
+// across toolchains.
+const wideDecodeBound = 192 * MaxBodyBytes
+
+// distinctKeys fills prefix "k0":"","k1":"",... suffix up to the size cap,
+// every key different, so the walk accepts every one and the decode builds
+// the whole map.
+func distinctKeys(prefix, suffix string) string {
+	var b strings.Builder
+	b.WriteString(prefix)
+	for i := 0; ; i++ {
+		kv := `"k` + strconv.Itoa(i) + `":""`
+		if b.Len()+1+len(kv)+len(suffix) > MaxBodyBytes {
+			break
+		}
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(kv)
+	}
+	b.WriteString(suffix)
+	return b.String()
+}
+
+// wide fills prefix unit,unit,... suffix up to the size cap.
+func wide(prefix, unit, suffix string) string {
+	n := (MaxBodyBytes - len(prefix) - len(suffix) + 1) / (len(unit) + 1)
+	return prefix + strings.TrimSuffix(strings.Repeat(unit+",", n), ",") + suffix
+}
+
+// A body at the size cap made of as many small values as it can hold is the
+// most the decode can be made to build from it: tens of thousands of payload
+// structs, grown into place. This is the per-check figure the bound on
+// concurrent checks (MaxBodyChecks) is reasoned from.
+func TestDecodingAWideBodyStaysLinearInItsSize(t *testing.T) {
+	cases := []struct {
+		name, path, body string
+		into             func() any
+	}{
+		{"empty requests", "/api/runs", manyObjects(), func() any { return new(sandbox.RunRequest) }},
+		{"requests with empty params", "/api/runs", wide(`{"mode":"functional","sequence":[`, `{"params":{}}`, `]}`), func() any { return new(sandbox.RunRequest) }},
+		{"requests with empty assertions", "/api/runs", wide(`{"mode":"functional","sequence":[`, `{"assertions":[]}`, `]}`), func() any { return new(sandbox.RunRequest) }},
+		{"empty assertions", "/api/send", wide(`{"endpoint":"healthz","assertions":[`, `{}`, `]}`), func() any { return new(sandbox.Request) }},
+		{"numeric assertions", "/api/send", wide(`{"endpoint":"healthz","assertions":[`, `{"value":0}`, `]}`), func() any { return new(sandbox.Request) }},
+		{"parameters", "/api/send", distinctKeys(`{"endpoint":"search","params":{`, `}}`), func() any { return new(sandbox.Request) }},
+	}
+	const bound = wideDecodeBound
+	for _, tc := range cases {
+		var ok bool
+		alloc := minAlloc(t, func() {
+			r := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", "application/json")
+			ok = decodeJSON(httptest.NewRecorder(), r, tc.into())
+		})
+		t.Logf("%s: %d-byte body allocated %d bytes (decoded: %v)", tc.name, len(tc.body), alloc, ok)
 		if alloc > bound {
 			t.Errorf("%s: decoding a %d-byte body allocated %d bytes, want at most %d",
 				tc.name, len(tc.body), alloc, bound)
@@ -151,5 +226,105 @@ func TestErrorBodiesBoundWhatTheyEcho(t *testing.T) {
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
 		checkBoundedEcho(t, tc.name, rec, tc.status)
+	}
+}
+
+// The shape check looks up a payload type's fields once per type, not once per
+// JSON object: a body of empty objects at the size cap is tens of thousands of
+// objects, and a field map built for each is several allocations apiece.
+func TestTheShapeCheckBuildsEachTypesFieldMapOnce(t *testing.T) {
+	body := []byte(manyObjects())
+	objects := strings.Count(manyObjects(), "{}")
+	typ := reflect.TypeOf(&sandbox.RunRequest{})
+	allocs := testing.AllocsPerRun(3, func() {
+		if _, _, ok := checkBody(body, typ); !ok {
+			t.Fatal("a well-formed body was refused")
+		}
+	})
+	t.Logf("%d objects: %.0f allocations", objects, allocs)
+	// The check's own allocations do not grow with the number of objects; a
+	// map per object is at least one allocation each.
+	if limit := float64(objects) / 100; allocs > limit {
+		t.Errorf("checking %d objects made %.0f allocations, want at most %.0f", objects, allocs, limit)
+	}
+}
+
+// Two requests that meet a payload type for the first time at the same moment
+// share one field map, and both read it whole.
+func TestFieldMapsAreSharedSafelyOnFirstUse(t *testing.T) {
+	types := []reflect.Type{
+		reflect.TypeOf(sandbox.RunRequest{}),
+		reflect.TypeOf(sandbox.Request{}),
+		reflect.TypeOf(sandbox.Options{}),
+		reflect.TypeOf(assert.Assertion{}),
+	}
+	var cache fieldCache
+	const readers = 16
+	got := make([][]map[string]reflect.Type, readers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for _, typ := range types {
+				got[i] = append(got[i], cache.of(typ))
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	for j, typ := range types {
+		want := jsonFields(typ)
+		first := reflect.ValueOf(got[0][j]).UnsafePointer()
+		for i := range readers {
+			if !reflect.DeepEqual(got[i][j], want) {
+				t.Errorf("%s: reader %d saw %v, want %v", typ, i, got[i][j], want)
+			}
+			if reflect.ValueOf(got[i][j]).UnsafePointer() != first {
+				t.Errorf("%s: reader %d was given a field map of its own, want the one shared map", typ, i)
+			}
+		}
+	}
+}
+
+// An object or array filling an assertion's value is refused before anything
+// is built from it, so refusing it costs about what holding the body costs,
+// however many values it packs: decoded, the same bytes are tens of times
+// their size.
+func TestARefusedAssertionValueCostsAboutItsSize(t *testing.T) {
+	fill := func(unit string) string {
+		const prefix, suffix = `{"endpoint":"healthz","assertions":[{"type":"json","path":"$.a","op":"exists","value":[`, `]}]}`
+		n := (MaxBodyBytes - len(prefix) - len(suffix) + 1) / (len(unit) + 1)
+		return prefix + strings.TrimSuffix(strings.Repeat(unit+",", n), ",") + suffix
+	}
+	cases := []struct{ name, body string }{
+		{"empty objects", fill(`{}`)},
+		{"one-key objects", fill(`{"":0}`)},
+		{"empty arrays", fill(`[]`)},
+		{"numbers", fill(`0`)},
+	}
+	// Reading and scanning any body at the cap allocates several times its
+	// size, whatever it holds: the numbers case is the baseline. Decoding the
+	// objects instead allocates over fifty times it.
+	const bound = 16 * MaxBodyBytes
+	for _, tc := range cases {
+		var rec *httptest.ResponseRecorder
+		alloc := minAlloc(t, func() {
+			r := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", "application/json")
+			rec = httptest.NewRecorder()
+			var req sandbox.Request
+			decodeJSON(rec, r, &req)
+		})
+		t.Logf("%s: %d-byte body allocated %d bytes", tc.name, len(tc.body), alloc)
+		if eb := checkBoundedEcho(t, tc.name, rec, http.StatusBadRequest); eb.Field != "assertions[0].value" {
+			t.Errorf("%s: field = %q, want assertions[0].value", tc.name, eb.Field)
+		}
+		if alloc > bound {
+			t.Errorf("%s: refusing a %d-byte body allocated %d bytes, want at most %d",
+				tc.name, len(tc.body), alloc, bound)
+		}
 	}
 }

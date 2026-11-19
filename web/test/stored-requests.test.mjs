@@ -57,7 +57,7 @@ const editorMade = [
   request(Array.from({ length: 20 }, (_, i) => ({ type: 'status', op: 'eq', value: 200 + i }))),
   { id: 'ws-2', name: '', endpoint: 'search', params: {}, assertions: [] },
   { id: 'health-check', name: 'Health (copy)', endpoint: 'healthz', params: {}, assertions: [{ type: 'status', op: 'eq', value: 200 }] },
-  request([], { name: 'n'.repeat(120), params: { q: 'v'.repeat(500), page: '2', types: 'Fire' } }),
+  request([], { name: 'n'.repeat(120), params: { q: 'v'.repeat(256), page: '2', types: 'Fire' } }),
 ];
 
 test('a request the editor built, of every assertion type, reads back byte for byte from the run setup and a saved collection', () => {
@@ -119,7 +119,7 @@ test('a stored request has its name and parameter values cut as the server cuts 
   assert.equal(big.assertions.length, 20, 'the editor\'s cap of 20 assertions');
   assert.deepEqual(big.assertions.at(-1), { type: 'status', op: 'eq', value: 19 });
   assert.equal(big.name.length, 120);
-  assert.equal(big.params.q.length, 500);
+  assert.equal(big.params.q.length, 256);
 
   // An id, endpoint or parameter the page could not have made drops the request.
   for (const extra of [

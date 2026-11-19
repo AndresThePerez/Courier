@@ -1325,3 +1325,191 @@ green until a `POST` endpoint exists. No colour is new: both hues are existing t
 non-text method, an endpoint id with quotes and brackets, and an endpoint not in the
 catalog, in all three lists; every list picking the method up once the catalog arrives; no
 list writing a method of its own).
+
+## N43 — The body check is bounded by body bytes; an assertion value is one scalar
+
+**What the server did:** `POST /api/send` and `POST /api/runs` read, checked and decoded a
+body before the one-send limit and the one-run lock, for any number of visitors at once.
+Decoding a body at the 256 KiB cap builds tens of thousands of values from it, so enough
+such posts arriving together could take the process past its container's memory, and every
+visitor with it. Separately, an assertion's `value` was bounded only when it was a string:
+an object or an array on a `json exists` assertion, which ignores its value, was accepted,
+kept, and stored in the run's report, its replay log and its result frames.
+
+**What it does now:**
+
+- The body check is bounded by the bytes of the bodies in it, across both routes: at most
+  2 × 256 KiB of bodies at once, with up to 16 × 256 KiB more waiting (`MaxBodyChecks`,
+  `MaxBodyWaiters` and `MaxBodyBytes`). A body weighs its length and never less than 4 KiB
+  (`minBodyWeight`), so two bodies at the cap fill the check while up to 128 small ones
+  fit in it, and an ordinary burst of small posts is not refused. A body is read in full,
+  under the size cap as before, before it takes its place, so an upload still arriving
+  holds none. Bodies that do not fit wait in arrival order: a body at the cap that is
+  waiting goes in before any body that arrived after it, however small. A waiter whose
+  client goes away leaves the line. A body that would take the waiting bodies past their
+  bound is answered at once, unchecked, with `503`, a `Retry-After: 1` header, the
+  security headers and the one error shape:
+  `{"error":"the server is busy checking other requests; try again in a moment"}`.
+  Before, these routes never answered `503`. The page shows the sentence after
+  `Refused - ` on Send and after `Could not start the run - ` on Start. The `400`, `413`
+  and `415` answers are unchanged, and `413` and `415` are given without entering the gate.
+- What this bounds is what the checks in flight allocate: the widest bodies measured
+  allocate about 140 times their size to check and decode, and a test holds them to 192
+  times, so the checks in flight allocate at most 192 × 2 × 256 KiB, and the bodies
+  waiting weigh at most 16 × 256 KiB. It does not bound what scales with connections
+  (bodies read in full and then answered `503`, and bodies still arriving), the decoded
+  value a request keeps after its check through validation and the start or the send, or
+  garbage not yet collected. The statement beside the constants in
+  `internal/api/body_gate.go` says the same. Nor does it share the line between clients:
+  the line has no per-client fairness, so a client that keeps it full of bodies at the cap
+  makes every other POST an immediate `503` with `Retry-After` until it stops. What limits
+  one client is the tunnel in front of the server, not this bound.
+- An assertion `value` that is an object or an array is refused by the body check, for
+  every assertion type and operator, with a `400` naming the value:
+  `{"error":"expected a number, a string, true, false or null, got an object","field":"sequence[1].assertions[0].value"}`
+  (`assertions[j].value` on Send; `an array` for an array). The value is walked before it
+  is refused, so a fault inside it, such as a duplicate key, is still named where it is.
+  Before, `json exists` accepted it with `200` or `202`, and every other type and operator
+  refused it later with a `400` at `assertions[j]` (for example "a status assertion needs a
+  numeric value, got an object"). A number, a string, `true`, `false` and `null` pass the
+  check exactly as before, and mean what they meant: only `json exists` accepts a boolean
+  or `null`.
+- The body check builds each payload type's field map once and shares it, rather than once
+  for every JSON object in the body.
+
+**Proof:** `internal/api/body_gate_test.go`: `TestNoMoreThanMaxBodyChecksBodiesAreCheckedAtOnce`
+(64 posts at the cap to both routes: never more than 2 inside, 16 waiting, the other 46
+answered `503`, nothing left behind), `TestABodyBeyondMaxBodyWaitersIsAnswered503WithoutBeingChecked`
+(the `503`, its header, body and security headers, a malformed body unchecked, `413` and
+`415` with the line full), `TestAStalledUploadHoldsNoCheckSlot`,
+`TestAWaiterWhoseClientLeavesStopsWaiting`; `internal/api/body_gate_edge_test.go`:
+`TestAnOrdinaryBurstOfSmallPostsNeverSeesTheBodyGate`,
+`TestACheckSlotIsGivenBackBeforeASendGoesOut`, `TestUploadsStalledAnywhereHoldNoSlotOrPlace`,
+`TestAWaiterOnAClosedConnectionStopsWaiting`, `TestWaitersCancelledAllAtOnceGiveBackEveryPlace`,
+`TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete`,
+`TestAPanicInsideTheDecodeGivesBackItsSlot`, `TestA503ThatCannotBeWrittenTakesNoSlotOrPlace`,
+`TestAFullBodyGateLeavesEveryOtherRouteAnswered`; `internal/api/body_gate_weight_test.go`:
+`TestABodyAtTheCapIsAdmittedBeforeSmallerOnesBehindIt`, `TestAShortBodyWeighsTheFloor`,
+`TestTheBodyGateWeighsMixedSizesThroughCancelAndComplete`,
+`TestABodyTheShapeCheckRefusesGivesBackItsRoom`; `internal/api/body_gate_docs_test.go`:
+`TestTheBodyGateConstantsMatchTheDocuments`;
+`internal/api/assertion_value_test.go`:
+`TestAnAssertionValueThatIsAnObjectOrArrayIsRefused`,
+`TestScalarAssertionValuesStillPassTheShapeCheck`,
+`TestBooleanAndNullAssertionValuesKeepTheirMeaning`,
+`TestEveryCuratedRequestPassesTheBodyCheck`; `internal/api/decode_bounds_test.go`:
+`TestDecodingAWideBodyStaysLinearInItsSize` (the 192 × bound the allocation figure rests
+on), `TestARefusedAssertionValueCostsAboutItsSize`,
+`TestTheShapeCheckBuildsEachTypesFieldMapOnce`, `TestFieldMapsAreSharedSafelyOnFirstUse`;
+`internal/api/bench_test.go`: `BenchmarkCheckBodyManyObjects`. The existing tests of
+parallel starts and sends pass unchanged.
+
+## N44 — A parameter value is cut to 256 characters and 32 words
+
+**What the server did:** every parameter value was cut to 500 characters and sent. The
+target is about to refuse a search text (`q`) over 256 characters or 32 terms with a `400`,
+so a value between those limits and 500 characters would have come back as the target's
+refusal rather than as an answer.
+
+**What it does now:** every parameter value, on every endpoint, is cut to its first 32 words and then to its first 256 characters (`MaxParamWords`, `MaxParamValueLen` and
+`CutParamValue` in `internal/sandbox/validate.go`). It is still cut, never refused, and the
+cut is reported exactly as before: `"truncated":["params.q"]` on Send's `200` and
+`"truncated":["sequence[1].params.q"]` on the run's `202`. The rule, exactly:
+
+- A character is a rune, as in every other cap. A word is a maximal run of characters that
+  are not Unicode white space (Go's `unicode.IsSpace`: the space, tab, newline, carriage
+  return, the non-breaking space, the ideographic space and the other `Zs` spaces; a
+  zero-width space is not white space and joins the words either side of it).
+- The word cut comes first. A value with more than 32 words ends at the end of its 32nd
+  word: the white space after that word goes with the words cut, and the white space before
+  and between the words kept stays as written. A value with 32 words or fewer keeps all its
+  white space, at either end too.
+- The character cut comes second and keeps the first 256 characters, which may end inside
+  a word or in white space. A value of only white space has no words and is cut by
+  characters alone.
+- So what is sent is a prefix of the value, within both limits, never ends inside a
+  character, and is the value itself exactly when the value was within both limits, which
+  is when `truncated` leaves it out. The order matters in one case: 33 words of seven
+  letters put the 256th character on the space after the 32nd word, and that space is not
+  sent.
+
+How the target counts "terms" is not stated in anything this repository can read. Courier
+counts white-space-separated words as above and characters as runes, so whoever checks the
+target's rule can compare the two.
+
+**What does not move:** an assertion's JSON path and string value keep their own cap of
+500 characters (`MaxAssertionTextLen`, which they used to share with parameter values) and
+are still refused over it; between 257 and 500 characters they are accepted whole. The
+name and id cap stays at 120 characters. Every curated request, and so every knee preset,
+goes out unchanged.
+
+**Template variables.** `{{randomWord}}` and `{{randomPokemon}}` are expanded after
+validation, and the limits are not checked again on the way out. Every pool entry is
+shorter than its token and holds no white space, so an expansion never adds a character or
+a word: a value within both limits stays within them, whatever is drawn.
+
+**Amends N40**, which says the page cuts a stored parameter value to 500 characters "as
+the server itself cuts them": the server now cuts to 256 characters and 32 words. The
+editor's parameter input now takes at most 256 characters (its `maxlength`, which the limit
+test holds to `MaxParamValueLen`); the page's cut of a stored value is unchanged.
+
+**Proof:** `internal/sandbox/param_cut_test.go`: `TestAParameterValueIsCutTo256Characters`
+(255, 256, 257 characters, two- and four-byte characters at the boundary),
+`TestAParameterValueIsCutTo32Words` (31, 32, 33 words, white space kept and dropped),
+`TestEveryUnicodeWhiteSpaceSeparatesWords` (tab, newline, non-breaking, ideographic and em
+spaces; a zero-width space joins), `TestBothLimitsAtOnce` (either limit first, both, and the
+order), `TestWhiteSpaceAtTheEdgesAndAValueOfOnlyWhiteSpace`,
+`TestTheCutNeverExceedsEitherLimit` (3,000 seeded values), `TestARunReportsWordCutsAtTheirRequest`,
+`TestAssertionTextBetweenTheParameterLimitAndItsOwnIsAccepted`,
+`TestTheParameterLimitsAreTheTargetsSearchLimits`, `TestTheParameterLimitsMatchTheDocuments`;
+`internal/api/param_cut_test.go`: `TestSendCutsAParameterToItsFirst32Words`,
+`TestARunCutsAParameterToItsFirst32Words` (what the target receives, and `truncated`);
+`internal/collections/param_cut_test.go`: `TestTheParameterLimitsCutNothingCurated`;
+`internal/template/template_test.go`: `TestPoolsAreUsable`,
+`TestAnExpandedValueAtTheLimitsStaysWithinThem`; `web/limits_test.go`:
+`TestFrontendLimitsMatchTheServer`.
+
+## N45 — A functional run that asserted nothing is N/A, not PASS
+
+**Amends N38**, whose rule gave `PASS` to a completed functional run with at least one
+request passed. A request with no assertion passes as soon as it is answered, so a run made
+only of such requests was a `PASS` that checked nothing.
+
+**What the server does now:** such a run's verdict is `N/A`, in every place the server
+states one: `functional.verdict` on the finished report, `verdict` in `run_finished.data`
+(live, and when it is rebuilt from the stored report), the history row's `verdict`, and the
+PDF, whose band reads `N/A - nothing was asserted`, the band a run with nothing asserted
+already had. The history row's summary keeps its counts and adds `, nothing asserted` for
+such a run (`3 passed / 0 failed / 0 skipped, nothing asserted`), since its passed count is
+not a count of checks passed. A performance run's verdict is untouched. The whole rule, in
+`report.FunctionalVerdict`, where a request counts as asserted when it was dispatched and
+carries at least one assertion:
+
+| Run | Before | Now |
+|---|---|---|
+| Completed, at least one assertion, every one passed | PASS | PASS |
+| Completed, any assertion failed | FAIL | FAIL |
+| Completed, no assertion anywhere, every request answered | PASS | **N/A** |
+| Completed, no assertion anywhere, a request got no response or had its response cut off | FAIL | FAIL |
+| Completed, some requests asserted and passed, others with none, all answered | PASS | PASS |
+| Completed, some requests asserted, one failed, others with none | FAIL | FAIL |
+| Completed, nothing asserted among the requests sent, the rest skipped | PASS | **N/A** |
+| Completed, every entry skipped, or no entries | N/A | N/A |
+| Cancelled or expired, whatever it reached | N/A | N/A |
+
+A request that got no response fails whether or not it carried an assertion; that part of
+the rule is kept. A skipped row counts for nothing, whatever assertions it lists, since none
+was evaluated.
+
+**What the page shows:** the page takes the verdict the server sends. Its own fallback,
+which works the verdict out from the rows when a report carries none, still follows N38's
+rule, and is brought into line separately.
+
+**Proof:** `internal/report/verdict_rule_test.go`:
+`TestTheFunctionalVerdictRuleCaseByCase` (every row of the table);
+`internal/runner/verdict_rule_test.go`: `TestAFunctionalRunThatAssertedNothingIsNotAPass`
+(the stored report, the history and `run_finished`); `internal/api/verdict_rule_test.go`:
+`TestAFunctionalRunThatAssertedNothingIsNAEverywhere` (the report, the history row and its
+summary, the live and the rebuilt `run_finished`); `internal/pdf/verdict_rule_test.go`:
+`TestAPrintedRunThatAssertedNothingIsNA`. `TestFunctionalVerdict` and
+`TestFunctionalVerdictLabelsAreUnchanged` now give their passing row an assertion that passed.

@@ -25,10 +25,13 @@ const (
 // mode expands from up to 50 worker goroutines at once.
 var intN = rand.IntN
 
-// Every entry in both pools must be shorter than the token it replaces, which
-// TestPoolsAreUsable enforces. Expansion happens after sandbox validation and
-// MaxParamValueLen is not re-checked on the way out, so a strictly shrinking
-// substitution is what keeps an expanded value inside the cap.
+// Every entry in both pools must be shorter than the token it replaces and
+// hold no white space, which TestPoolsAreUsable enforces. Expansion happens
+// after sandbox validation and the parameter limits are not re-checked on the
+// way out, so a substitution that shrinks the value and keeps each token one
+// word is what keeps an expanded value within sandbox.MaxParamValueLen
+// characters and sandbox.MaxParamWords words
+// (TestAnExpandedValueAtTheLimitsStaysWithinThem).
 
 // words is deliberately generic English: against the card corpus many of
 // these miss or fuzzy-match, which is what real messy traffic looks like.

@@ -68,7 +68,7 @@ type historyEntry struct {
 // survives this request — and every subscriber — going away.
 func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	var rr sandbox.RunRequest
-	if !decodeJSON(w, r, &rr) {
+	if !s.decodeJSON(w, r, &rr) {
 		return
 	}
 
@@ -448,12 +448,18 @@ func verdictOf(rep *report.Report) string {
 }
 
 // summarize is the one-line history label. Functional runs are counted, not
-// judged; performance runs carry the number the verdict was made on.
+// judged; performance runs carry the number the verdict was made on. A
+// completed run whose requests were answered with nothing asserted says so,
+// since its count of passed requests is not a count of checks passed.
 func summarize(rep *report.Report) string {
 	switch {
 	case rep.Functional != nil:
 		f := rep.Functional
-		return fmt.Sprintf("%d passed / %d failed / %d skipped", f.Passed, f.Failed, f.Skipped)
+		counts := fmt.Sprintf("%d passed / %d failed / %d skipped", f.Passed, f.Failed, f.Skipped)
+		if rep.Status == report.StatusCompleted && f.Verdict == report.VerdictNA && f.Passed > 0 {
+			counts += ", nothing asserted"
+		}
+		return counts
 	case rep.Performance != nil:
 		o := rep.Performance.Overall
 		return fmt.Sprintf("%d requests, p95 %.1fms, %s", o.Requests, o.Latency.P95, rep.Performance.Verdict)

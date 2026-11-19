@@ -88,7 +88,7 @@ test('sameRequest still tells apart every difference a visitor sees or the serve
     'the 120th character of a long name': [{ ...a, name: `${'N'.repeat(119)}A` }, { ...a, name: `${'N'.repeat(119)}B` }],
     'the endpoint': { ...a, endpoint: 'pokemon' },
     'a parameter value': { ...a, params: { q: 'q1', page: '3' } },
-    'the 500th character of a parameter value': [{ ...a, params: { q: `${'x'.repeat(499)}a` } }, { ...a, params: { q: `${'x'.repeat(499)}b` } }],
+    'the 256th character of a parameter value': [{ ...a, params: { q: `${'x'.repeat(255)}a` } }, { ...a, params: { q: `${'x'.repeat(255)}b` } }],
     'a parameter key': { ...a, params: { q: 'q1', size: '2' } },
     'a parameter added': { ...a, params: { q: 'q1', page: '2', size: '5' } },
     'a parameter removed': { ...a, params: { q: 'q1' } },

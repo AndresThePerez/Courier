@@ -186,7 +186,8 @@ falsifiable shape (PASS at 1 and 10 workers, FAIL at 25 and 50): verdict gate
 
 The principle: **an unfalsifiable green is worse than no verdict**. The same
 principle shows up at the edges — `Verdict` fails a run with zero dispatches
-rather than vacuously passing it (docs/deviations.md N7), and curated assertion values
+rather than vacuously passing it (docs/deviations.md N7), a functional run whose requests
+were all answered but which asserted nothing is N/A rather than PASS (N45), and curated assertion values
 come from a measured fixture corpus and are asserted as bounds that hold as the index grows, not estimates.
 
 ---
@@ -361,6 +362,33 @@ value means exactly that, so the knob is clamped and the run proceeds. The clamp
 not silent: a report's `config` is the knobs as actually honoured, so the response
 says what was clamped rather than echoing what was asked for. Both halves are
 [`internal/sandbox/validate.go`](../internal/sandbox/validate.go).
+
+A parameter value sits between the two, and is cut rather than refused: a value is sent
+as its first 32 words and then its first 256 characters, because the target itself
+refuses a search text over 256 characters or 32 terms with a `400`, and a value sent
+whole past that would come back as the target's refusal rather than as an answer. A
+shorter query is still one the target answers, and the `truncated` list on Send's `200`
+and the run's `202` names every value cut, so the cut is never silent. An assertion's
+path and value keep their own 500-character cap and are still refused over it, since an
+expected value cut short is a different assertion.
+
+A body is checked and decoded before the one-run lock and the one-send limit, so those
+cannot bound what decoding costs, and a body at the size cap can allocate many times its
+size. The check is therefore bounded by the bytes of the bodies in it rather than by how
+many visitors post together: two bodies at the cap fit at once, or up to 128 small ones,
+and eight times as many bytes may wait, in arrival order so that small posts cannot keep
+a large one waiting. Past that the answer is a `503` with `Retry-After`, given
+before anything is decoded. The line has no per-client fairness: a client that keeps it
+full of bodies at the cap makes every other POST an immediate `503` until it stops, and
+what limits one client is the tunnel in front of the server. A body takes its place only once it has arrived: with
+`ReadHeaderTimeout` as the only server timeout, room held during an upload would let
+stalled connections stop every POST. This bounds what the checks in flight allocate; it
+leaves out bodies answered `503` or still arriving, which scale with connections, and the
+decoded value a request keeps after its check. An assertion's value is held to one scalar
+for the same reason the strings are capped: a structure there is decoded, kept and stored
+with the run, and `exists` would accept one of any size. The constants, the bound and the
+tests behind them are in [`internal/api/body_gate.go`](../internal/api/body_gate.go) and
+[`docs/deviations.md`](deviations.md) N43.
 
 The table of values stays in [the README](../README.md#caps).
 

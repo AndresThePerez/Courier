@@ -450,10 +450,23 @@ func Verdict(s Stats, calibrated bool) (string, []string) {
 	}
 }
 
-// FunctionalVerdict judges a functional run: VerdictNA when it was cancelled
-// or expired (a truncated walk is not judged, whatever it reached), VerdictFail
-// when any request failed, VerdictPass when at least one passed, and VerdictNA
-// when nothing was asserted at all (every entry skipped, or no entries).
+// FunctionalVerdict judges a functional run. A request counts as asserted when
+// it was dispatched (not skipped) and carries at least one assertion outcome;
+// a request with no assertion that got its answer checks nothing.
+//
+//	status               results                                          verdict
+//	cancelled, expired   anything                                         N/A
+//	completed            any dispatched request not passed: an assertion  FAIL
+//	                     failed, or no response or a response cut off
+//	                     (with or without assertions)
+//	completed            none failed, at least one asserted               PASS
+//	completed            none failed, none asserted (every request        N/A
+//	                     answered with no assertion, or every entry
+//	                     skipped, or no entries)
+//
+// Skipped rows count for nothing: their assertions were never evaluated.
+// A run that only checked that its requests were answered is N/A rather than
+// PASS: it asserted nothing, and a PASS would claim it had.
 //
 // It is the one implementation of the rule. The PDF band, the history row,
 // the stored report and run_finished all read it, so no two of them can
@@ -462,17 +475,17 @@ func FunctionalVerdict(status string, f *Functional) string {
 	if status == StatusCancelled || status == StatusExpired || f == nil {
 		return VerdictNA
 	}
-	passed := false
+	asserted := false
 	for _, r := range f.Results {
 		switch {
 		case r.Skipped:
-		case r.Passed:
-			passed = true
-		default:
+		case !r.Passed:
 			return VerdictFail
+		case len(r.Assertions) > 0:
+			asserted = true
 		}
 	}
-	if passed {
+	if asserted {
 		return VerdictPass
 	}
 	return VerdictNA

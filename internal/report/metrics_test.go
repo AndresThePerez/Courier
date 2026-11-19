@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/AndresThePerez/courier/internal/assert"
 )
 
 func newTally() Tally {
@@ -510,7 +512,7 @@ func TestIsCalibratedRecognisesTheSequenceAndRejectsASubset(t *testing.T) {
 // The functional verdict is the PDF's rule, in one place: a stopped run is not
 // judged, any failure fails, any pass passes, and nothing asserted is N/A.
 func TestFunctionalVerdict(t *testing.T) {
-	pass := RequestResult{Passed: true}
+	pass := RequestResult{Passed: true, Assertions: []assert.Outcome{{Passed: true}}}
 	fail := RequestResult{}
 	skip := RequestResult{Skipped: true}
 	for _, tc := range []struct {

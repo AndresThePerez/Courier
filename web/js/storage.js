@@ -141,7 +141,7 @@ const assertionOps = {
 // is refused by field. Ids and parameter names are the page's or the catalog's
 // and are short; one past these bounds was not made by the page.
 const MaxStoredAssertions = 20;
-const MaxParamValue = 500;
+const MaxParamValue = 256;
 export const MaxName = 120;
 const MaxId = 200;
 const MaxParams = 32;
