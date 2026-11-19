@@ -237,6 +237,20 @@ export function isQueueable(request) {
   return isPlain(request) && requestProblem(requestPayload(request)) === null;
 }
 
+// sameRequest answers whether two requests are one request as a visitor can
+// tell them apart: the same built form, which is the id, the name and every
+// field that is sent. Keys nothing reads or shows do not make them differ. Two
+// requests that cannot be built or encoded are never the same: answering
+// "different" costs at most a copy, answering "same" can cost a version.
+export function sameRequest(a, b) {
+  if (!isPlain(a) || !isPlain(b)) return false;
+  try {
+    return JSON.stringify(requestPayload(a)) === JSON.stringify(requestPayload(b));
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------- refusals
 
 // whereIn reads the part of a refused field below one request ("endpoint",

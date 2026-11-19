@@ -128,7 +128,10 @@ test('a queued row\'s Edit opens that queued request in the editor', () => {
   editOf(1).click();
   assert.deepEqual(opened, [key]);
   assert.equal(get().activeTab, 'editor');
-  assert.equal(get().draft.id, 'ws-b');
+  // The saved request differs from the queued copy, so the copy opens as a
+  // request of its own and the saved one is left as it is.
+  assert.ok(get().draft.id !== 'ws-b' && get().draft.id.startsWith('ws-'));
+  assert.deepEqual(workspace.find('ws-b'), good('ws-b'));
   assert.deepEqual(get().draft.assertions, bad('ws-b').assertions, 'the queued copy is what opens, not the saved one');
   assert.equal(editOf(1).getAttribute('aria-label'), 'Edit Bad');
 });
@@ -218,6 +221,63 @@ test('opening another request ends the link: its Save does not touch the queued 
   byId('save-request').click();
   assert.equal(byId('editor-note').textContent, 'Saved "Bad" to My Workspace.');
   assert.equal(get().sequence[0].request.assertions[1].path, '', 'the queued copy is unchanged');
+});
+
+const storedRequest = (id) => JSON.parse(localStorage.peek(WORKSPACE)).requests.find((r) => r.id === id) || null;
+const CopiedNote = /^Copied to My Workspace as "Good 1 \(copy\)" - the run now uses this copy\.$/;
+
+test('Edit on a queued row whose saved request differs only in what is never sent opens the saved request itself', () => {
+  boot({ saved: [{ ...good('ws-b'), note: 'kept by an older build' }], setup: setupOf([good('ws-b')]) });
+  editOf(0).click();
+  assert.equal(get().draft.id, 'ws-b', 'linked, not copied');
+  assert.equal(get().sequence[0].request.id, 'ws-b');
+  assert.equal(byId('editor-note').hidden, true);
+});
+
+test('a change saved in another tab while a queued row\'s request is open survives the next keystroke, which goes to a copy the run now uses', () => {
+  boot({ saved: [good('ws-b')], setup: setupOf([good('ws-0', 0), good('ws-b')]) });
+  const keys = get().sequence.map((e) => e.key);
+  editOf(1).click();
+  assert.equal(get().draft.id, 'ws-b', 'the unchanged saved request opens linked');
+  const elsewhere = { ...good('ws-b'), name: 'Changed elsewhere', assertions: [{ type: 'status', op: 'eq', value: 204 }] };
+  localStorage.writeFromAnotherTab(WORKSPACE, JSON.stringify({ version: 1, requests: [elsewhere] }));
+
+  typeInto(byId('editor-name'), 'Typed here');
+  assert.deepEqual(storedRequest('ws-b'), elsewhere, 'the other tab\'s version is untouched');
+  const draft = get().draft;
+  assert.ok(draft.id !== 'ws-b' && draft.id.startsWith('ws-'), 'the keystroke went to a copy');
+  assert.equal(draft.name, 'Typed here');
+  assert.equal(storedRequest(draft.id).name, 'Typed here');
+  assert.deepEqual(get().sequence.map((e) => e.key), keys, 'same keys, same positions');
+  assert.equal(get().sequence[1].request.id, draft.id, 'the entry points at the copy');
+  assert.equal(get().sequence[1].request.name, 'Good 1 (copy)', 'unsaved keystrokes are not in the run');
+  assert.match(byId('editor-note').textContent, CopiedNote);
+
+  byId('save-request').click();
+  assert.equal(get().sequence[1].request.name, 'Typed here');
+  assert.equal(byId('editor-note').textContent, 'Saved "Typed here" to My Workspace and to request 2 in the run.');
+  assert.deepEqual(storedRequest('ws-b'), elsewhere);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('a change saved in another tab while a queued row\'s request is open survives Save, which goes to a copy the run now uses', () => {
+  boot({ saved: [bad('ws-b')], setup: setupOf([bad('ws-b')]) });
+  editOf(0).click();
+  typeInto(assertionRow(1).querySelector('.assert-path'), '$.total');
+  assert.equal(get().draft.id, 'ws-b');
+  const elsewhere = { ...bad('ws-b'), name: 'Changed elsewhere' };
+  localStorage.writeFromAnotherTab(WORKSPACE, JSON.stringify({ version: 1, requests: [elsewhere] }));
+
+  byId('save-request').click();
+  assert.deepEqual(storedRequest('ws-b'), elsewhere, 'the other tab\'s version is untouched');
+  const draft = get().draft;
+  assert.ok(draft.id !== 'ws-b' && draft.id.startsWith('ws-'), 'saved as a copy');
+  assert.equal(storedRequest(draft.id).assertions[1].path, '$.total');
+  assert.equal(get().sequence[0].request.id, draft.id);
+  assert.equal(get().sequence[0].request.assertions[1].path, '$.total', 'the fix reached the run');
+  assert.equal(byId('editor-note').textContent, `Saved "${draft.name}" to My Workspace and to request 1 in the run.`);
+  assert.match(draft.name, /^Bad \(copy\)$/);
+  assert.deepEqual(listenerErrors, []);
 });
 
 // ------------------------------------------------------------------ requests stored by an older build

@@ -16,7 +16,7 @@ import * as workspace from './workspace.js';
 import * as runner from './render-runner.js';
 import {
   opsByType, valueKind, coerceValue, textOf, requestPayload, requestProblem, assertionProblem, whereIn, refusedText,
-  capitalized,
+  capitalized, sameRequest,
 } from './request-model.js';
 
 // MaxAssertions mirrors sandbox.MaxAssertions. The server enforces it either
@@ -79,10 +79,13 @@ export function onSelect() {
 
 // openQueued is a queued row's Edit: it opens the request that entry holds, as
 // it was queued, and links the two so Save can put the fix back into that
-// entry. A queued request with no saved original to write to (a built-in one,
-// or a saved one deleted since) is first copied into My Workspace, and the
-// entry is pointed at the copy, so the run and the editor hold the same
-// request from then on.
+// entry. Keystrokes are stored as they are typed, so the queued copy may be
+// opened under its saved original's id only while that original is the same
+// request; otherwise the first keystroke would write the queued copy over a
+// version saved after it was queued. A queued request with no saved original
+// to write to (a built-in one, one deleted since, or one changed since) is
+// first copied into My Workspace, and the entry is pointed at the copy, so the
+// run and the editor hold the same request from then on.
 export function openQueued(key) {
   const entry = runner.queuedEntry(key);
   if (!entry || !isPlainRequest(entry.request)) return;
@@ -94,8 +97,8 @@ export function openQueued(key) {
     console.warn('queued request not opened', error);
     return;
   }
-  const saved = get().workspace.some((r) => r.id === request.id);
-  if (!workspace.isWorkspaceId(request.id) || !saved) {
+  const saved = get().workspace.find((r) => r.id === request.id);
+  if (!workspace.isWorkspaceId(request.id) || !saved || !sameRequest(saved, request)) {
     const forked = workspace.fork(request);
     request = deepCopy(forked.request);
     runner.repoint(key, request, { fixed: false });
@@ -126,7 +129,7 @@ function linkedKey(draft) {
 function own() {
   const draft = get().draft;
   if (!draft) return null;
-  if (workspace.isWorkspaceId(draft.id)) return draft;
+  if (workspace.isWorkspaceId(draft.id)) return keepNewer(draft);
 
   const forked = deepCopy(workspace.fork(draft).request);
   forkNote = `Copied to My Workspace as "${forked.name}" - the built-in request is untouched.`;
@@ -135,6 +138,28 @@ function own() {
   // still belongs to what the visitor is looking at.
   if (outbound && outbound.id === draft.id) outbound.id = forked.id;
   return forked;
+}
+
+// keepNewer returns the draft a request opened from a queued row may write
+// to. Its saved original can change while it is open (in another tab), and
+// the next write would put this tab's copy over that change. So once the
+// saved request is no longer the one this tab last stored, the open request
+// is copied into My Workspace instead, the queued entry is pointed at the
+// copy (as it was queued: unsaved keystrokes reach the run only through
+// Save), and the change made elsewhere is left as it is.
+function keepNewer(draft) {
+  const key = linkedKey(draft);
+  const saved = key ? workspace.find(draft.id) : null;
+  if (!saved || sameRequest(saved, draft)) return draft;
+  const forked = workspace.fork(draft);
+  const copy = deepCopy(forked.request);
+  const entry = runner.queuedEntry(key);
+  runner.repoint(key, { ...entry.request, id: copy.id, name: copy.name }, { fixed: false });
+  linked = { key, id: copy.id };
+  forkNote = `Copied to My Workspace as "${copy.name}" - the run now uses this copy.`;
+  saveNote = forked.ok ? '' : workspace.WRITE_REFUSED;
+  if (outbound && outbound.id === draft.id) outbound.id = copy.id;
+  return copy;
 }
 
 // edit is the only way this module changes the draft: fork if needed, mutate,
