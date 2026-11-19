@@ -172,7 +172,7 @@ recalibrated every judgment surface against measured reality:
 - Verdict gate: **p95 ≤ 50ms** and error rate < 1%.
 - SLA ladder: **25 / 50 / 100 ms** (was 100/200/500 — all always-green).
 - Apdex **T = 25ms**.
-- Histogram buckets **0–25 / 25–50 / 50–100 / 100–200 / 200–400 / 400+ ms**, the bounds `internal/report/metrics.go` ships.
+- Histogram buckets **0–5 / 5–10 / 10–25 / 25–50 / 50–100 / 100+ ms**.
 
 The calibration then ran a second time, by design, at deploy (the spec's Deployment
 step 5): the deploy host is a 4-core Ryzen 3 2200G, then running Elasticsearch capped at 1 GB,
