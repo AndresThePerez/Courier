@@ -1702,9 +1702,14 @@ but the last byte of a 256 KiB body got the process killed.
   deadline per request, set on the connection with `http.NewResponseController` when the
   read of a body begins and cleared when it ends. The rule against a server-wide write or
   idle timeout still stands: either would cut a live stream, or a Send waiting up to 10s on
-  a slow target, at the deadline. This one ends a request whose declared body has not
-  arrived in full by the deadline, on any route, a stream's included: it is answered, or
-  its stream ended, at the deadline. A request that declares no body is never touched, and
+  a slow target, at the deadline. This one ends a request whose declared body a handler
+  reads and has not arrived in full by the deadline: it is answered `408` at the deadline.
+  A body no handler reads meets the deadline only while net/http drains it before the
+  answer, which it does unless 256 KiB or more is declared still to come: on any route, a
+  stream's included, one that never arrives and is chunked or declares less is answered,
+  or its stream ended, at the deadline; one that declares 256 KiB or more is never
+  drained, so the deadline never fires on it, and a stream so declared runs whole. A
+  request that declares no body is never touched, and
   one whose declared body has arrived in full is untouched from that moment, since net/http
   clears the read deadline when a body reaches its end; so the handler's own work, a stream
   and the next request on the connection are out of its reach once the body is in.
@@ -1714,7 +1719,9 @@ but the last byte of a 256 KiB body got the process killed.
   path does not take, any route that reads no body) leaves net/http to drain the declared
   body before the answer goes out; a client that declared a body and sent none used to hold
   that answer, and its connection, for as long as it liked. Now the drain ends at the
-  deadline, the answer goes out, and the connection is closed. A request that declares no
+  deadline, the answer goes out, and the connection is closed. net/http drains only a body
+  that is chunked or declares less than 256 KiB still to come; a larger one is never
+  drained, so the deadline leaves it alone. A request that declares no
   body, a stream's included, is untouched. A `415` for a request that declares a body now
   carries `Connection: close`; its status, body and other headers are unchanged.
 - What the bounds add up to: a body read to the cap holds about 380 KB while it is read,
@@ -1773,7 +1780,10 @@ deadline answers), `TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadli
 `internal/api/unread_body_test.go`: `TestAnAnswerThatReadsNoBodyIsNotHeldByOneThatNeverArrives`
 (every route that answers without reading, with a `Content-Length` and chunked),
 `TestA415WithItsWholeBodyIsAnsweredAsBefore`; `internal/api/declared_body_edge_test.go`:
-`TestAStreamWithADeclaredBodyIsCutOnlyWhenThatBodyNeverArrives`;
+`TestAStreamWithADeclaredBodyIsCutOnlyWhenADrainableBodyNeverArrives` (a stream whose
+declared body of 5 bytes or of 256 KiB less one never arrives is ended at the deadline
+with no result; one of 256 KiB or more runs whole),
+`TestEveryRouteGivenADeclaredBodyThatNeverArrivesIsAnsweredAndClosed`;
 `internal/api/body_reads_docs_test.go`: `TestTheBodyReadBoundsMatchTheDocuments`;
 `internal/api/compose_limits_test.go`: `TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit`.
 The existing tests of the gate and of bursts of 200 and 1,000 small posts pass unchanged,

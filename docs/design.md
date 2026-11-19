@@ -388,8 +388,13 @@ answered `503` at once, its body unread, and a body that does not arrive in time
 answered `408`. Here too the places are not shared between clients, so a client that
 keeps all 128 filled with stalled uploads turns every other POST away for as long as it
 keeps them, instead of getting the process killed. The deadline applies to a request that
-declares a body until that body has arrived in full: one that never finishes arriving is
-answered, or its stream ended, at the deadline, on any route. A request that declares no
+declares a body until that body has arrived in full. A body a handler reads that never
+finishes arriving is answered `408` at the deadline. A body no handler reads meets the
+deadline only while net/http drains it before the answer, which it does unless 256 KiB or
+more is declared still to come: on any route, a stream's included, one that never arrives
+and is chunked or declares less is answered, or its stream ended, at the deadline, and one
+that declares 256 KiB or more is never drained, so the deadline never fires on it and a
+stream so declared runs whole. A request that declares no
 body is never touched, and once a declared body is in, the deadline is cleared, so
 `ReadHeaderTimeout` is still the only server-wide timeout and the handler's own work, a
 stream or a long Send never meets it after the body. This

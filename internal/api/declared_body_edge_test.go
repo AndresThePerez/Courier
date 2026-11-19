@@ -67,19 +67,27 @@ func streamOn(addr, id, framing, first, later string, pause time.Duration) (resu
 }
 
 // A stream whose request declares a body is cut only when that body never
-// arrives. With no body, with its five declared bytes sent with the head or a
-// little later, chunked with an immediate end, or with Expect: 100-continue
-// (the body is then never asked for), the stream of a run that lasts several
-// body read deadlines is carried to run_finished. A declared body that never
-// arrives ends the stream at the deadline: the client has not sent what it
-// said it would.
-func TestAStreamWithADeclaredBodyIsCutOnlyWhenThatBodyNeverArrives(t *testing.T) {
+// arrives and is short enough for net/http to drain. With no body, with its
+// five declared bytes sent with the head or a little later, chunked with an
+// immediate end, or with Expect: 100-continue (the body is then never asked
+// for), the stream of a run that lasts several body read deadlines is carried
+// to run_finished. Before the first byte of an answer, net/http reads and
+// discards what is left of a body the handler did not read, but only while
+// less than 256 KiB of it is left: a declared body under that which never
+// arrives holds the answer until the deadline, which then ends the stream
+// before any result; one of 256 KiB or more is never drained, so the deadline
+// never fires on it and the stream runs whole.
+func TestAStreamWithADeclaredBodyIsCutOnlyWhenADrainableBodyNeverArrives(t *testing.T) {
 	const deadline = 200 * time.Millisecond
 	const n = 6
-	s, srv := newBodyServer(t, newTarget(t, 2*deadline), deadline)
+	// Each request takes three deadlines, so the first result comes well after
+	// a cut stream has ended, even on a starved machine.
+	s, srv := newBodyServer(t, newTarget(t, 3*deadline), deadline)
 	addr := srv.Listener.Addr().String()
 	id := startRun(t, s, payload(n, 0))
 
+	// drainLimit is net/http's maxPostHandlerReadBytes.
+	const drainLimit = 256 << 10
 	cases := []struct {
 		name, framing, first, later string
 		whole                       bool
@@ -90,6 +98,9 @@ func TestAStreamWithADeclaredBodyIsCutOnlyWhenThatBodyNeverArrives(t *testing.T)
 		{"chunked, ended at once", "Transfer-Encoding: chunked\r\n", "0\r\n\r\n", "", true},
 		{"expecting 100-continue", "Content-Length: 5\r\nExpect: 100-continue\r\n", "", "", true},
 		{"five bytes never sent", "Content-Length: 5\r\n", "", "", false},
+		{"just under the drain limit never sent", fmt.Sprintf("Content-Length: %d\r\n", drainLimit-1), "", "", false},
+		{"the drain limit never sent", fmt.Sprintf("Content-Length: %d\r\n", drainLimit), "", "", true},
+		{"over the drain limit never sent", fmt.Sprintf("Content-Length: %d\r\n", drainLimit+40000), "", "", true},
 	}
 	type outcome struct {
 		results  int
@@ -115,12 +126,16 @@ func TestAStreamWithADeclaredBodyIsCutOnlyWhenThatBodyNeverArrives(t *testing.T)
 			t.Errorf("%s: %v", c.name, o.err)
 			continue
 		}
+		if o.status != http.StatusOK {
+			t.Errorf("%s: status %d, want the stream's 200", c.name, o.status)
+		}
 		if c.whole && (!o.finished || o.results != n) {
-			t.Errorf("%s: the stream carried %d results, finished %v; want all %d and run_finished: it was cut although the client sent everything it declared",
+			t.Errorf("%s: the stream carried %d results, finished %v; want all %d and run_finished",
 				c.name, o.results, o.finished, n)
 		}
-		if !c.whole && o.finished && o.results == n {
-			t.Logf("%s: the stream ran whole although its body never arrived", c.name)
+		if !c.whole && (o.finished || o.results != 0) {
+			t.Errorf("%s: the stream carried %d results, finished %v; want it ended at the deadline, before any result",
+				c.name, o.results, o.finished)
 		}
 	}
 	waitIdle(t, s)

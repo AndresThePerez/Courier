@@ -36,9 +36,10 @@ import (
 const (
 	// MaxBodyReads is how many POST bodies may be read at once
 	// (TestAPostBeyondMaxBodyReadsIsAnswered503WithoutBeingRead,
-	// TestABodyWaitingInTheGatesLineHoldsNoPlace). An ordinary post is read
-	// in microseconds, so a burst of a thousand small ones never finds them
-	// all taken (TestLargeBurstsOfSmallPostsNeverSeeTheBodyGate).
+	// TestABodyWaitingInTheGatesLineHoldsNoPlace). A small post sent whole is
+	// read as soon as it arrives, so a burst of a thousand of them over
+	// loopback never finds them all taken
+	// (TestLargeBurstsOfSmallPostsNeverSeeTheBodyGate).
 	MaxBodyReads = 128
 
 	// BodyReadDeadline is how long a declared body may take to arrive, and is
@@ -46,10 +47,17 @@ const (
 	// connection when a request that declares a body arrives
 	// (boundDeclaredBodies), set again when decodeJSON's read begins, and
 	// cleared when that read ends; net/http also clears it when a body
-	// reaches its end and sets it afresh for each request. A request whose
-	// declared body has not arrived in full by the deadline is answered, or
-	// its stream ended, at the deadline, on any route, a stream's included
-	// (TestAStreamWithADeclaredBodyIsCutOnlyWhenThatBodyNeverArrives). A
+	// reaches its end and sets it afresh for each request. A body decodeJSON
+	// reads that has not arrived in full by the deadline is answered 408 at
+	// the deadline. A body no handler reads meets the deadline only while
+	// net/http drains it before the answer, which it does unless the request
+	// declares 256 KiB or more still to come: a request on any route, a
+	// stream's included, whose body never arrives and is chunked or declares
+	// less is answered, or its stream ended, at the deadline. One that
+	// declares 256 KiB or more and is not read is never drained, so the
+	// deadline never fires on it: a stream so declared runs whole
+	// (TestAStreamWithADeclaredBodyIsCutOnlyWhenADrainableBodyNeverArrives,
+	// TestEveryRouteGivenADeclaredBodyThatNeverArrivesIsAnsweredAndClosed). A
 	// request that declares no body is never touched, and one whose declared
 	// body has arrived in full is untouched from that moment, so the handler's
 	// own work, a stream and the connection's next request are out of its
@@ -58,7 +66,7 @@ const (
 	// (TestTheBodyReadDeadlineDoesNotReachTheHandlersOwnWork,
 	// TestAStreamOutlivesTheBodyReadDeadline,
 	// TestTheNextRequestOnAConnectionIsNotHeldToTheLastBodysDeadline). Ten
-	// seconds is generous for 256 KiB on the slowest link the page is used on.
+	// seconds lets 256 KiB arrive at about 26 KiB/s.
 	BodyReadDeadline = 10 * time.Second
 )
 
