@@ -59,7 +59,7 @@ func TestEachBodyRefusalIsCountedOnceUnderItsOwnName(t *testing.T) {
 				t.Fatalf("%s with every place taken = %d (%v), want 503", path, code, err)
 			}
 		}
-		wantRefusals(t, "two posts finding every place taken", s, [3]int{2, 0, 0})
+		wantRefusals(t, "two posts that met every place taken", s, [3]int{2, 0, 0})
 		for _, c := range stalls {
 			_ = c.Close()
 		}
@@ -77,7 +77,7 @@ func TestEachBodyRefusalIsCountedOnceUnderItsOwnName(t *testing.T) {
 				t.Fatalf("%s with the line full = %d (%v), want 503", path, code, err)
 			}
 		}
-		wantRefusals(t, "two posts finding the line full", s, [3]int{0, 2, 0})
+		wantRefusals(t, "two posts that met the line full", s, [3]int{0, 2, 0})
 		h.open()
 		for range MaxBodyChecks + MaxBodyWaiters {
 			awaitAnswer(t, "a queued body", queued)
