@@ -668,7 +668,7 @@ func (w *shapeWalk) object(t reflect.Type, typed int) *shapeError {
 	switch {
 	case t == nil:
 	case t.Kind() == reflect.Struct:
-		fields = jsonFields(t)
+		fields = structFields.of(t)
 	case t.Kind() == reflect.Map:
 	default:
 		return w.path.fail(typed, fmt.Sprintf("expected %s, got an object", jsonKind(t)))
@@ -798,6 +798,24 @@ func checkNumber(n json.Number, t reflect.Type, outOfRange func() *shapeError, m
 		return mismatch("a number")
 	}
 	return nil
+}
+
+// fieldCache holds each struct type's field map, built on its first use and
+// only read after that. A body at the size cap holds tens of thousands of JSON
+// objects; building a map for each one cost several allocations apiece
+// (BenchmarkCheckBodyManyObjects). Its keys are the struct types reachable
+// from the payload types, so it never grows past a handful of entries.
+type fieldCache struct{ m sync.Map } // reflect.Type -> map[string]reflect.Type
+
+// structFields is the one cache every request shares.
+var structFields fieldCache
+
+func (c *fieldCache) of(t reflect.Type) map[string]reflect.Type {
+	if f, ok := c.m.Load(t); ok {
+		return f.(map[string]reflect.Type)
+	}
+	f, _ := c.m.LoadOrStore(t, jsonFields(t))
+	return f.(map[string]reflect.Type)
 }
 
 // jsonFields maps each JSON key of a struct to its field type, by the exact

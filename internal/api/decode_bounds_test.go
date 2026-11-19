@@ -3,11 +3,14 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/AndresThePerez/courier/internal/assert"
 	"github.com/AndresThePerez/courier/internal/sandbox"
 )
 
@@ -151,5 +154,65 @@ func TestErrorBodiesBoundWhatTheyEcho(t *testing.T) {
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
 		checkBoundedEcho(t, tc.name, rec, tc.status)
+	}
+}
+
+// The shape check looks up a payload type's fields once per type, not once per
+// JSON object: a body of empty objects at the size cap is tens of thousands of
+// objects, and a field map built for each is several allocations apiece.
+func TestTheShapeCheckBuildsEachTypesFieldMapOnce(t *testing.T) {
+	body := []byte(manyObjects())
+	objects := strings.Count(manyObjects(), "{}")
+	typ := reflect.TypeOf(&sandbox.RunRequest{})
+	allocs := testing.AllocsPerRun(3, func() {
+		if _, _, ok := checkBody(body, typ); !ok {
+			t.Fatal("a well-formed body was refused")
+		}
+	})
+	t.Logf("%d objects: %.0f allocations", objects, allocs)
+	// The check's own allocations do not grow with the number of objects; a
+	// map per object is at least one allocation each.
+	if limit := float64(objects) / 100; allocs > limit {
+		t.Errorf("checking %d objects made %.0f allocations, want at most %.0f", objects, allocs, limit)
+	}
+}
+
+// Two requests that meet a payload type for the first time at the same moment
+// share one field map, and both read it whole.
+func TestFieldMapsAreSharedSafelyOnFirstUse(t *testing.T) {
+	types := []reflect.Type{
+		reflect.TypeOf(sandbox.RunRequest{}),
+		reflect.TypeOf(sandbox.Request{}),
+		reflect.TypeOf(sandbox.Options{}),
+		reflect.TypeOf(assert.Assertion{}),
+	}
+	var cache fieldCache
+	const readers = 16
+	got := make([][]map[string]reflect.Type, readers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for _, typ := range types {
+				got[i] = append(got[i], cache.of(typ))
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	for j, typ := range types {
+		want := jsonFields(typ)
+		first := reflect.ValueOf(got[0][j]).UnsafePointer()
+		for i := range readers {
+			if !reflect.DeepEqual(got[i][j], want) {
+				t.Errorf("%s: reader %d saw %v, want %v", typ, i, got[i][j], want)
+			}
+			if reflect.ValueOf(got[i][j]).UnsafePointer() != first {
+				t.Errorf("%s: reader %d was given a field map of its own, want the one shared map", typ, i)
+			}
+		}
 	}
 }
