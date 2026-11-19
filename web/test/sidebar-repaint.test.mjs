@@ -202,3 +202,37 @@ test('target: the catalog\'s target name repaints the topbar label and the note 
   assert.equal(byId('target-label').textContent, 'target: other.example');
   assert.equal(byId('target-note-name').textContent, 'other.example');
 });
+
+test('history notice: a failed history read puts the sentence and Retry above the list, and a good one takes them away', () => {
+  boot();
+  const notice = () => (byId('history-notice').hidden ? '' : byId('history-notice').textContent);
+  assert.equal(notice(), '');
+  set({ historyNotice: 'Could not load history from the server.' });
+  assert.equal(notice(), 'Could not load history from the server. Retry');
+  set({ historyNotice: '' });
+  assert.equal(notice(), '');
+});
+
+test('history loading: a history Retry going out and coming back flips its marking', () => {
+  boot({ historyNotice: 'Could not load history from the server.' });
+  const retry = () => byId('history-notice').querySelector('button');
+  assert.equal(retry().getAttribute('aria-disabled'), 'false');
+  set({ historyLoading: true });
+  assert.equal(retry().getAttribute('aria-disabled'), 'true');
+  set({ historyLoading: false });
+  assert.equal(retry().getAttribute('aria-disabled'), 'false');
+});
+
+test('history loaded: an empty list says Loading until a server has answered, then No runs yet.', () => {
+  boot({ history: [] });
+  assert.equal(byId('history-list').textContent, 'Loading history...');
+  set({ historyLoaded: true });
+  assert.equal(byId('history-list').textContent, 'No runs yet.');
+});
+
+test('history notice, in the list: an empty list stops saying Loading once a read has failed', () => {
+  boot({ history: [] });
+  assert.equal(byId('history-list').textContent, 'Loading history...');
+  set({ historyNotice: 'Could not load history from the server.' });
+  assert.equal(byId('history-list').textContent, '');
+});

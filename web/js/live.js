@@ -540,10 +540,23 @@ export function createLive({ api, get, set, showTab = () => {} }) {
     else console.warn('status poll failed', res.ok ? 'not a status' : res.error);
   });
 
+  // A history read that failed is a state of the page, as a failed catalog
+  // load is: the sidebar says so and offers Retry rather than "No runs yet."
+  // over runs that may exist. The list it already had stays, because those
+  // runs were on the server a moment ago and can still be opened.
   const history = oneAtATime(api.getHistory, (res) => {
-    if (res.ok && isHistory(res.body)) set({ history: res.body.runs });
-    else console.warn('history fetch failed', res.ok ? 'not a list of runs' : res.error);
+    if (res.ok && isHistory(res.body)) {
+      set({ history: res.body.runs, historyLoaded: true, historyNotice: '', historyLoading: false });
+      return;
+    }
+    console.warn('history fetch failed', res.ok ? 'not a list of runs' : res.error);
+    set({ historyNotice: 'Could not load history from the server.', historyLoading: false });
   });
+
+  function retryHistory() {
+    set({ historyLoading: true });
+    return history.refresh();
+  }
 
   // refresh is what a module calls after it changed the run state itself (a
   // start, a cancel) rather than waiting up to StatusPollMs for the poll to
@@ -729,6 +742,7 @@ export function createLive({ api, get, set, showTab = () => {} }) {
       sidebar: {
         openRun,
         retryCatalog: () => { void loadCatalog(); },
+        retryHistory: () => { void retryHistory(); },
       },
     },
   };

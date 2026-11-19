@@ -8,7 +8,7 @@ import { savedCollections, methodBadge } from './render-runner.js';
 
 // onSelect / onAdd are wired by main.js so this module stays a pure function
 // of state plus its two callbacks.
-let hooks = { select: () => {}, add: () => {}, addAll: () => {}, openRun: () => {}, retryCatalog: () => {} };
+let hooks = { select: () => {}, add: () => {}, addAll: () => {}, openRun: () => {}, retryCatalog: () => {}, retryHistory: () => {} };
 
 export function init(h) {
   hooks = { ...hooks, ...h };
@@ -364,7 +364,9 @@ function catalogPlaceholder(state) {
 //                      their in-run counts; the endpoint methods
 //   saved collections  savedCollections; the in-run counts of their requests;
 //                      the endpoint methods
-//   history            history; historyNote
+//   history notice     historyNotice; whether a Retry is out
+//   history            history; historyNote; and, while it is empty, whether
+//                      a list has ever arrived and whether the last read failed
 //   target line        target, compared as the text it paints
 //
 // Lists are keyed by their content, not their identity. The history arrives
@@ -436,6 +438,7 @@ function restoreFocus(key) {
   // Retry leaves with the notice once the catalog is in: the collections it
   // brought are where the visitor was headed.
   if (!node && key === 'catalog-retry') node = byId('collections-tree').querySelector('summary');
+  if (!node && key === 'history-retry') node = byId('history-list').querySelector('button');
   if (node) node.focus();
 }
 
@@ -491,12 +494,39 @@ function renderWorkspace(ws, state, counts) {
   }));
 }
 
+// historyEmpty is what the list says while it has no runs to show. "No runs
+// yet." is a server's answer, so it is said only after one; before any answer
+// the list is loading, and after a failed one the notice above it speaks.
+function historyEmpty(state) {
+  if (state.historyLoaded) return [el('div', { class: 'tree-empty', text: 'No runs yet.' })];
+  if (state.historyNotice) return [];
+  return [el('div', { class: 'tree-empty', text: 'Loading history...' })];
+}
+
+// renderHistoryNotice says a history read failed, with Retry, in the words and
+// the shape of the catalog's own (catalogPlaceholder). It sits outside the
+// list so the list the page already had stays as it was.
+function renderHistoryNotice(box, state) {
+  box.hidden = !state.historyNotice;
+  if (!state.historyNotice) {
+    replace(box, []);
+    return;
+  }
+  const loading = Boolean(state.historyLoading);
+  const retry = el('button', {
+    class: 'btn btn-mini',
+    type: 'button',
+    text: 'Retry',
+    attrs: { 'data-focus-key': 'history-retry', 'aria-disabled': loading ? 'true' : 'false' },
+    on: { click: () => { if (!get().historyLoading) hooks.retryHistory(); } },
+  });
+  replace(box, [el('div', { class: 'tree-empty' }, [el('span', { text: state.historyNotice }), ' ', retry])]);
+}
+
 function renderHistory(hist, state) {
   // Every run the server keeps (at most 20), newest first as it sends them,
   // list and click-to-reopen only; the sidebar is what scrolls.
-  const rows = state.history.length === 0
-    ? [el('div', { class: 'tree-empty', text: 'No runs yet.' })]
-    : state.history.map(historyRow);
+  const rows = state.history.length === 0 ? historyEmpty(state) : state.history.map(historyRow);
   // An entry that could not be opened says so here, beside the list it was
   // clicked in; nothing else on the page would explain the click.
   replace(hist, [state.historyNote ? el('div', { class: 'note', text: state.historyNote }) : null, ...rows]);
@@ -533,7 +563,12 @@ export function render(state) {
     methods,
   ], () => renderSaved(state.savedCollections, counts, state.endpoints));
 
-  draw('history-list', [state.history, state.historyNote], (hist) => renderHistory(hist, state));
+  draw('history-notice', [state.historyNotice || '', Boolean(state.historyLoading)], (box) => renderHistoryNotice(box, state));
+  draw('history-list', [
+    state.history,
+    state.historyNote,
+    state.history.length === 0 ? [Boolean(state.historyLoaded), Boolean(state.historyNotice)] : null,
+  ], (hist) => renderHistory(hist, state));
 
   const name = byId('target-note-name');
   if (state.target && name.textContent !== state.target) name.textContent = state.target;
