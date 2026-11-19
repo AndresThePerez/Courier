@@ -79,13 +79,15 @@ export function onSelect() {
 
 // openQueued is a queued row's Edit: it opens the request that entry holds, as
 // it was queued, and links the two so Save can put the fix back into that
-// entry. Keystrokes are stored as they are typed, so the queued copy may be
-// opened under its saved original's id only while that original is the same
-// request; otherwise the first keystroke would write the queued copy over a
-// version saved after it was queued. A queued request with no saved original
-// to write to (a built-in one, one deleted since, or one changed since) is
-// first copied into My Workspace, and the entry is pointed at the copy, so the
-// run and the editor hold the same request from then on.
+// entry. Keystrokes are stored as they are typed, so the first keystroke
+// writes whatever opens over the saved original. While that original is the
+// same request, it is the original itself that opens: the queued copy may
+// have been cut by the stored run setup (a long name or parameter value), and
+// writing it back would cut the saved request without a word. A queued
+// request with no saved original to write to (a built-in one, one deleted
+// since, or one changed since) is first copied into My Workspace, and the
+// entry is pointed at the copy, so the run and the editor hold the same
+// request from then on.
 //
 // The entry already open through Edit is left as it is: its saved request now
 // holds the visitor's unsaved keystrokes, so opening it again would copy it
@@ -109,6 +111,13 @@ export function openQueued(key) {
     runner.repoint(key, request, { fixed: false });
     forkNote = `Copied to My Workspace as "${request.name}" - the run now uses this copy.`;
     if (!forked.ok) saveNote = workspace.WRITE_REFUSED;
+  } else {
+    try {
+      request = deepCopy(saved);
+    } catch (error) {
+      console.warn('queued request not opened', error);
+      return;
+    }
   }
   linked = { key, id: request.id };
   set({ selectedId: request.id, draft: request, editorNotice: '' });
