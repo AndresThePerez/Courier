@@ -625,7 +625,7 @@ function assertionRow(a, index) {
     class: 'assert-op',
     attrs: { name: `assert-op-${index}`, 'data-focus-key': `assert-op:${index}`, 'aria-label': 'Operator' },
     on: { change: (e) => { const op = e.target.value; edit((d) => { d.assertions[index].op = op; }); } },
-  }, (opsByType[a.type] || []).map((op) => el('option', { text: op, attrs: { value: op, selected: op === a.op } })));
+  }, opsOf(a.type).map((op) => el('option', { text: op, attrs: { value: op, selected: op === a.op } })));
   opSelect.value = textOf(a.op);
 
   const children = [typeSelect];
@@ -686,6 +686,13 @@ function assertionRow(a, index) {
   return el('div', { class: 'row assert-row' }, children);
 }
 
+// opsOf is the operators offered for a type. A type read back from storage
+// may be any text, "constructor" included, so the matrix is read by its own
+// keys only; a type it does not hold offers none, and is refused by field.
+function opsOf(type) {
+  return typeof type === 'string' && Object.hasOwn(opsByType, type) ? opsByType[type] : [];
+}
+
 // changeAssertionType keeps the row valid across the switch: an op the new type
 // does not accept snaps to that type's first op, the path is added or dropped
 // to match, and the value is re-coerced into the new slot's kind.
@@ -693,7 +700,7 @@ function changeAssertionType(index, type) {
   edit((d) => {
     const a = d.assertions[index];
     a.type = type;
-    if (!(opsByType[type] || []).includes(a.op)) a.op = opsByType[type][0];
+    if (!opsOf(type).includes(a.op)) a.op = opsOf(type)[0];
     if (type === 'json') {
       if (!a.path) a.path = '$';
     } else {

@@ -35,8 +35,29 @@ function decode(raw) {
   if (!saved || saved.version !== VERSION || !Array.isArray(saved.requests)) {
     return { counter: 0, requests: [] };
   }
-  const requests = saved.requests.filter((r) => r && typeof r.id === 'string' && typeof r.endpoint === 'string');
+  const requests = saved.requests.filter(isCopyable).map(withTextName);
   return { counter: legacyCounter(saved.counter, requests), requests };
+}
+
+// Saved requests are kept as they were written rather than rebuilt through
+// storage.requestOf, so what the editor wrote reads back exactly. Two things
+// it cannot have written are guarded here, because the panes read saved
+// requests straight from this list. A request JSON cannot encode (nested
+// deeper than this browser's stack allows) cannot be copied, opened or saved
+// either, and is left out. A name that is not text would be printed as its
+// structure, and is read as no name, so the request shows under its id.
+function isCopyable(r) {
+  if (!r || typeof r.id !== 'string' || typeof r.endpoint !== 'string') return false;
+  try {
+    JSON.stringify(r);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function withTextName(r) {
+  return r.name === undefined || typeof r.name === 'string' ? r : { ...r, name: '' };
 }
 
 // legacyCounter keeps the counter older builds numbered their ws-N ids from.

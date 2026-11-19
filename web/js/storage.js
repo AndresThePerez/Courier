@@ -147,8 +147,12 @@ const MaxParamKey = 64;
 const isId = (v, max) => typeof v === 'string' && v !== '' && v.length <= max;
 
 // requestOf rebuilds a request read back from this browser, or answers null
-// when it cannot be one. Every stored request goes through it before the page
-// shows, queues or sends it: saved requests, the run setup, saved collections.
+// when it cannot be one. The requests of the run setup and of saved
+// collections go through it as they are read back. Saved requests do not:
+// they are kept as the editor wrote them, which this rebuild would change
+// (it cuts, and drops what it cannot rebuild), and workspace.js leaves out
+// only what the editor cannot have written. What reaches the wire from either
+// is requestPayload's, which takes only the fields the server reads.
 //
 // A stored value is whatever the browser hands back, and another script on
 // the origin, an older build or a damaged profile may have written it. So the
