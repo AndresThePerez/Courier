@@ -53,8 +53,10 @@ export const savedCollections = createSavedCollections({
   maxRequests: MaxSequence,
 });
 
-// MaxSavedCollections bounds what the sidebar lists and rebuilds; the server
-// never sees any of them.
+// MaxSavedCollections is where Save sequence stops saving more: it bounds
+// what this tab adds, not what is stored or listed. Another tab saving at the
+// same moment can take the list past it, and the sidebar lists every saved
+// collection that is stored. The server never sees any of them.
 const MaxSavedCollections = 50;
 
 const optionOf = {
@@ -788,7 +790,7 @@ export function runnerTabLabel(sequence) {
 
 // renderTabLabel puts that count on the tab, which is the one part of the
 // runner a visitor can see from the Request and Results tabs.
-export function renderTabLabel(state) {
+function renderTabLabel(state) {
   setText(byId('tab-runner'), runnerTabLabel(state.sequence));
 }
 

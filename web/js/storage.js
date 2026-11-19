@@ -64,7 +64,7 @@ export function parseJSON(raw) {
 // not see would overwrite whatever another tab stored. fn returning undefined
 // writes nothing. The result says which step failed:
 // { ok, read: { ok, value }, value?, error? }.
-export function update(storage, key, fn) {
+function update(storage, key, fn) {
   const current = read(storage, key);
   if (!current.ok) return { ok: false, read: current, error: current.error };
   const next = fn(current.value);
@@ -84,7 +84,7 @@ export function update(storage, key, fn) {
 // browser refuses that read, fn is not called: a value of unknown age must
 // never stand in for what is stored, and the next read that succeeds catches
 // up anyway.
-export function subscribe(target, storage, key, fn) {
+function subscribe(target, storage, key, fn) {
   const onStorage = (event) => {
     if (event.key !== key && event.key !== null) return;
     if (event.storageArea) {
@@ -140,7 +140,7 @@ const assertionOps = {
 // something the visitor did not write, so an over-long one goes out whole and
 // is refused by field. Ids and parameter names are the page's or the catalog's
 // and are short; one past these bounds was not made by the page.
-export const MaxStoredAssertions = 20;
+const MaxStoredAssertions = 20;
 const MaxParamValue = 500;
 export const MaxName = 120;
 const MaxId = 200;

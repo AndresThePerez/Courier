@@ -26,7 +26,7 @@ function parse(text) {
 // proxy's holding page, a body cut short that the browser reports as complete,
 // a JSON null) was not written by Courier, and is the network outcome rather
 // than an answer a reader would have to second-guess.
-export function isRecord(value) {
+function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -49,7 +49,7 @@ const nullableListOf = (check) => (v) => v === undefined || v === null || listOf
 
 // RunStatuses are the states a report can be in; EndedStatuses the ones a
 // finished report can be in (internal/report).
-export const RunStatuses = ['running', 'completed', 'cancelled', 'expired'];
+const RunStatuses = ['running', 'completed', 'cancelled', 'expired'];
 export const EndedStatuses = ['completed', 'cancelled', 'expired'];
 
 export function isStatus(s) {

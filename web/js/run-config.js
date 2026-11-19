@@ -33,7 +33,7 @@ const MaxCollectionId = 200;
 // pulled down to the cap. Only a number or the text of an input is read: a
 // stored array or object would be turned into text first, and a deep one
 // cannot be.
-export function clampOption(limits, key, raw) {
+function clampOption(limits, key, raw) {
   const { lo, hi, fallback } = limits[key];
   if (typeof raw !== 'number' && typeof raw !== 'string') return fallback;
   const n = Number.parseInt(raw, 10);
@@ -111,7 +111,7 @@ export function createRunConfig({ storage: area, limits, maxSequence }) {
 }
 
 // MaxCollectionName matches the editor's name field.
-export const MaxCollectionName = 120;
+const MaxCollectionName = 120;
 
 // createSavedCollections keeps the visitor's saved sequences, a list shared by
 // every tab and merged by id under the same rules as saved requests

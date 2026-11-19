@@ -45,7 +45,7 @@ import { isStatus, isHistory, isCatalog, isReport, EndedStatuses } from './api.j
 // StatusPollMs is stated once, here, so N idle tabs share one cadence instead
 // of each inventing their own. 3s is the documented figure; a competing 5s
 // figure was not adopted, because the documented one is authoritative (see docs/deviations.md N26).
-export const StatusPollMs = 3000;
+const StatusPollMs = 3000;
 
 // MaxEnded bounds the memory of runs this tab watched end or lose. The server
 // keeps 20 runs; an id older than that can no longer be reported as live.
@@ -55,7 +55,7 @@ const MaxEnded = 32;
 
 // VIEW_KEYS is the half of the live state a visitor sees. It is kept in the
 // store under these names, where the render modules read it.
-export const VIEW_KEYS = ['run', 'results', 'progress', 'report', 'spectator', 'outcome'];
+const VIEW_KEYS = ['run', 'results', 'progress', 'report', 'spectator', 'outcome'];
 
 // TRACK_KEYS is the other half: what the tab is following.
 const TRACK_KEYS = ['attached', 'ended', 'gone', 'opening', 'checked'];
@@ -201,7 +201,7 @@ function onWatch(live, e) {
 // reportOf answers whether rep is run id's report. An answer that arrived but
 // is not one settles what was waiting for it all the same: nothing may go on
 // waiting for an answer that is already here.
-export function reportOf(rep, id) {
+function reportOf(rep, id) {
   return rep !== null && typeof rep === 'object' && !Array.isArray(rep) && Boolean(id) && rep.id === id;
 }
 

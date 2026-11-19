@@ -6,12 +6,12 @@
 import { set } from './store.js';
 import { byId } from './dom.js';
 
-export const TABS = ['runner', 'editor', 'results'];
+const TABS = ['runner', 'editor', 'results'];
 
 // currentTab is the tab the address names, or null when it names none: the
 // skip link's #panel-main is an address too, and reading it as "no tab, so
 // the runner" would switch the panel under a visitor who only skipped ahead.
-export function currentTab() {
+function currentTab() {
   const hash = (location.hash || '').replace('#', '');
   return TABS.includes(hash) ? hash : null;
 }
@@ -45,7 +45,7 @@ export function showTab(name) {
 // previous tab and wrap, Home and End go to the ends, and a tab reached this
 // way is selected as well as focused. preventDefault keeps an arrow from also
 // scrolling the page.
-export function onTabKeydown(event) {
+function onTabKeydown(event) {
   const at = TABS.findIndex((name) => byId(`tab-${name}`) === event.target);
   if (at < 0) return;
   const last = TABS.length - 1;
@@ -64,7 +64,7 @@ export function onTabKeydown(event) {
 // onSkipLink takes focus to the working column without following the link:
 // the link's address names no tab, and the column it skips to is whichever
 // panel is showing.
-export function onSkipLink(event) {
+function onSkipLink(event) {
   event.preventDefault();
   byId('panel-main').focus();
 }
