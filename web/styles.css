@@ -639,4 +639,16 @@ code, .mono { font-family: var(--mono); }
      shrinks, but does not close, the gap to the worker table's fold at
      390x844 - the main/rail grid-row split is the rest of that gap. */
   #knee-panel .block-heading { font-size: 18px; }
+  /* The target name is the one topbar item that can outgrow a phone's width;
+     it gives way rather than push the page sideways. */
+  #target-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Nothing a finger presses is under 24 by 24px (WCAG 2.5.8). */
+  .btn-mini, .link-btn, #sidebar-toggle { min-height: 24px; min-width: 24px; }
+  .req-open, .collection > summary, .res-head { min-height: 24px; }
+  input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; flex: 0 0 auto; }
+  /* The panel is the main pane's one scroll box: a table or a response body
+     that would scroll inside it wraps instead. */
+  .table-wrap { overflow-x: visible; }
+  .data-table th, .data-table td { white-space: normal; overflow-wrap: anywhere; }
+  .body-pre { max-height: none; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
 }

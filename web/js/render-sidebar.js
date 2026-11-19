@@ -46,6 +46,15 @@ function setDrawer(open) {
   byId('sidebar-toggle').setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
+// closeDrawer puts the drawer away once a request is picked in it: below
+// 900px it covers the page, and the request just opened is what the visitor
+// came for. Above 900px the sidebar is a pane and stays.
+function closeDrawer() {
+  if (!window.matchMedia('(max-width: 900px)').matches) return;
+  byId('app').classList.remove('sidebar-open');
+  setDrawer(false);
+}
+
 // showResetConfirm renders an inline two-step confirm. Deliberately not
 // window.confirm(): a modal dialog blocks the page, and in a browser-automation
 // session it wedges the whole tab.
@@ -183,7 +192,12 @@ function requestRow(request, selectedId, listId, counts, endpoints) {
       type: 'button',
       title: name,
       attrs: { 'data-focus-key': `open:${listId}:${request.id}` },
-      on: { click: () => hooks.select(request) },
+      on: {
+        click: () => {
+          hooks.select(request);
+          closeDrawer();
+        },
+      },
     }, [
       methodBadge(endpoints, request.endpoint),
       ' ',
