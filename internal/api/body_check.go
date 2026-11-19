@@ -52,12 +52,9 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool 
 	}
 	rc := http.NewResponseController(w)
 	if !s.reads.take() {
-		// The answer does not wait for the body. The server still drains what
-		// it can of the body after answering; the deadline keeps a client that
-		// sends nothing from holding the connection open for that.
-		if r.Body != http.NoBody {
-			_ = rc.SetReadDeadline(time.Now().Add(s.readDeadline))
-		}
+		// The answer does not wait for the body. net/http still drains what it
+		// can of the body after answering, within the deadline
+		// boundDeclaredBodies set when the request arrived.
 		w.Header().Set("Connection", "close")
 		answerBusy(w)
 		return false

@@ -3,12 +3,30 @@ package api
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 )
+
+// wantClosed fails unless the server closes conn after its answer within a
+// generous wait. A read that times out is a connection still open, not one
+// closed.
+func wantClosed(t *testing.T, what string, conn net.Conn, br *bufio.Reader) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+	n, err := br.Read(make([]byte, 1))
+	var ne net.Error
+	switch {
+	case err == nil:
+		t.Errorf("%s: %d more bytes after the answer, want the connection closed", what, n)
+	case errors.As(err, &ne) && ne.Timeout():
+		t.Errorf("%s: the connection was still open 20s after the answer", what)
+	}
+}
 
 // A request that declares a body and then sends none of it, on a path that
 // answers without reading it, is still answered, and its connection closed,
@@ -43,10 +61,7 @@ func TestAnAnswerThatReadsNoBodyIsNotHeldByOneThatNeverArrives(t *testing.T) {
 			if resp.StatusCode != c.want {
 				t.Errorf("%s with %s and no body = %d %.200s, want %d", c.name, how, resp.StatusCode, body, c.want)
 			}
-			_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
-			if n, err := br.Read(make([]byte, 1)); err == nil {
-				t.Errorf("%s with %s: %d more bytes after the answer, want the connection closed", c.name, how, n)
-			}
+			wantClosed(t, c.name+" with "+how, conn, br)
 		}
 	}
 }
@@ -79,5 +94,23 @@ func TestA415WithItsWholeBodyIsAnsweredAsBefore(t *testing.T) {
 	wantSecurityHeaders(t, "the 415", resp.Header)
 	if !resp.Close {
 		t.Error("the 415 of a declared body kept its connection open")
+	}
+}
+
+// With every place taken, a POST that declares a body and sends none is
+// answered 503 at once, and its connection is closed within the body read
+// deadline rather than held open while net/http waits to drain the body.
+func TestAnUnread503IsClosedWithinTheBodyReadDeadline(t *testing.T) {
+	s, srv := newBodyServer(t, newTarget(t, 0), 300*time.Millisecond)
+	fillPlaces(t, s)
+	for how, header := range map[string]string{"a Content-Length": "Content-Length: 1000\r\n", "chunked": "Transfer-Encoding: chunked\r\n"} {
+		conn := rawPost(t, srv.Listener.Addr().String(), "POST /api/send HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n"+header+"\r\n", "")
+		t.Cleanup(func() { _ = conn.Close() })
+		br := bufio.NewReader(conn)
+		resp, body := readAnswer(t, "a POST beyond the places with "+how, conn, br)
+		if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, bodyGateBusy) {
+			t.Errorf("a POST beyond the places with %s = %d %s, want 503", how, resp.StatusCode, body)
+		}
+		wantClosed(t, "the unread 503 with "+how, conn, br)
 	}
 }

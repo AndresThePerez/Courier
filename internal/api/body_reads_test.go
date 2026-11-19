@@ -199,10 +199,7 @@ func TestAStalledUploadIsEndedByTheBodyReadDeadline(t *testing.T) {
 			t.Errorf("%s: the connection was kept open after a body that never arrived", path)
 		}
 		wantSecurityHeaders(t, path+" 408", resp.Header)
-		_ = c.SetReadDeadline(time.Now().Add(20 * time.Second))
-		if n, err := br.Read(make([]byte, 1)); err == nil {
-			t.Errorf("%s: %d more bytes on the connection after the 408, want it closed", path, n)
-		}
+		wantClosed(t, path+" 408", c, br)
 		_ = c.Close()
 		waitFor(t, "the place to be given back", func() bool { return readsHeld(s) == 0 && gateIdle(s) })
 	}
