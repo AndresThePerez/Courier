@@ -48,7 +48,7 @@ var requiredIDs = []string{
 	"functional-options", "performance-options",
 	"stop-on-failure", "delay-ms", "concurrency", "duration-secs",
 	"delay-ms-note", "concurrency-note", "duration-secs-note",
-	"start-run", "cancel-run", "watch-run", "start-note",
+	"start-run", "cancel-run", "watch-run", "start-note", "start-cut",
 	"run-status-banner", "cooldown-countdown",
 
 	// load budget ledger in the run rail

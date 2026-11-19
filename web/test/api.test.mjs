@@ -11,7 +11,7 @@ const payload = { mode: 'functional', sequence: [], options: {} };
 
 test('startRun: 202 is a started run', async () => {
   fetchStub.respond('/api/runs', { status: 202, body: { run_id: 'r1' } }, { method: 'POST' });
-  assert.deepEqual(await api.startRun(payload), { ok: true, runId: 'r1' });
+  assert.deepEqual(await api.startRun(payload), { ok: true, runId: 'r1', truncated: [] });
 
   const [call] = fetchStub.calls;
   assert.equal(call.method, 'POST');

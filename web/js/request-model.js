@@ -327,12 +327,20 @@ export function refusedText(where, message) {
 
 // cutField reads one field the server lists in `truncated` ("params.q",
 // "name", "id") as what a visitor calls it, with the limit it was cut to; a
-// field this does not know is shown as it came.
+// field this does not know is shown as it came, as text. Server text is
+// clipped to MaxCutText characters, whole characters only, so one odd field
+// cannot fill the panel.
+const MaxCutText = 80;
+const clipped = (text) => {
+  const chars = Array.from(text);
+  return chars.length > MaxCutText ? `${chars.slice(0, MaxCutText).join('')}...` : text;
+};
+
 function cutField(rest) {
   const param = /^params\.(.+)$/s.exec(rest);
-  if (param) return `parameter ${param[1]} (${MaxParamValue} characters, ${MaxParamWords} words at most)`;
+  if (param) return `parameter ${clipped(param[1])} (${MaxParamValue} characters, ${MaxParamWords} words at most)`;
   if (rest === 'name' || rest === 'id') return `${rest} (${MaxName} characters at most)`;
-  return rest;
+  return clipped(rest);
 }
 
 // cutText is the one sentence the server's `truncated` list reads as, or ''

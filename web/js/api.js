@@ -281,7 +281,7 @@ export async function startRun(payload) {
     // answer is lost altogether.
     if (!isRecord(res.body) || typeof body.run_id !== 'string' || !body.run_id) return unreachable();
     startedHook(body.run_id, payload && payload.mode);
-    return { ok: true, runId: body.run_id };
+    return { ok: true, runId: body.run_id, truncated: Array.isArray(body.truncated) ? body.truncated : [] };
   }
   if (res.status === 409) {
     // Exactly one of the two fields is set; branching on which is present is

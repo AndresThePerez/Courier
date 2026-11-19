@@ -248,9 +248,9 @@ test('a history entry whose report has no status does not show a status it does 
 
 // ------------------------------------------------------------------ real answers stay answers
 
-test('the answers Courier really sends are still taken: a 202 with truncated, a 409 busy and cooling, a 400 with a field, an empty history', async () => {
+test('the answers Courier really sends are still taken: a 202 with truncated read with what it cut, a 409 busy and cooling, a 400 with a field, an empty history', async () => {
   fetchStub.respond('/api/runs', { status: 202, body: { run_id: 'run-9', truncated: ['params.q'] } }, { method: 'POST' });
-  assert.deepEqual(await api.startRun({ mode: 'functional', sequence: [], options: {} }), { ok: true, runId: 'run-9' });
+  assert.deepEqual(await api.startRun({ mode: 'functional', sequence: [], options: {} }), { ok: true, runId: 'run-9', truncated: ['params.q'] });
 
   fetchStub.respond('/api/runs', { status: 409, body: { error: 'busy', run_id: 'run-8' } }, { method: 'POST' });
   const busy = await api.startRun({ mode: 'functional', sequence: [], options: {} });

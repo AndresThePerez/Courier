@@ -17,7 +17,7 @@ import * as api from './api.js';
 import { createRunConfig, createSavedCollections, SETUP_REFUSED } from './run-config.js';
 import { WRITE_REFUSED } from './workspace.js';
 import {
-  requestPayload, runPayload, runProblem, runField, refusedText, capitalized, clampSetting, isQueueable,
+  requestPayload, runPayload, runProblem, runField, refusedText, capitalized, clampSetting, isQueueable, cutText,
 } from './request-model.js';
 
 // MaxSequence and Limits mirror internal/sandbox's caps and clamps. The server
@@ -127,6 +127,11 @@ let addNoteCount = -1;
 // present only when a parameter was refused. The note's row
 // number is read from where the entry is now, never from where it was.
 let refusal = null;
+// cut is what the server cut from the run this tab last started: the fields
+// of its 202's `truncated`, with the queued entries the run was sent from, so
+// the sentence names each request by the row it is in now. The next Start
+// takes it away.
+let cut = null; // { list, keys }
 // settingNotes says, per run setting, what the run will use when that is not
 // what was typed. Each is written when the visitor types, never by a render,
 // so a poll cannot announce it again.
@@ -512,6 +517,7 @@ async function start() {
   starting = true;
   startNote = '';
   cancelNote = '';
+  cut = null;
   render(get());
 
   // Deliberately not gated on the phase this module last rendered: the button
@@ -561,6 +567,7 @@ function applyStartOutcome(outcome, mode, entries) {
   if (outcome.ok) {
     startNote = '';
     refusal = null;
+    cut = { list: outcome.truncated, keys: entries.map((e) => e.key) };
     startedRunId = outcome.runId;
     // A 202 read after this tab saw its run end says nothing about now.
     if (hooks.over(outcome.runId)) return;
@@ -1072,6 +1079,15 @@ function renderControls(state) {
     if (live && live !== lastLive) startNote = '';
     lastLive = live;
   }
+  const cutNote = byId('start-cut');
+  const cutSaid = cut ? cutText(cut.list, (i) => {
+    if (i >= cut.keys.length) return '';
+    const at = state.sequence.findIndex((e) => e.key === cut.keys[i]);
+    return at >= 0 ? `Request ${at + 1}` : 'a request since removed from the run';
+  }) : '';
+  cutNote.hidden = !cutSaid;
+  setText(cutNote, cutSaid);
+
   const note = byId('start-note');
   const said = [
     starting ? 'Starting...' : startNote || refusalText(state),
