@@ -32,6 +32,7 @@ let lastRowSignature = null;
 let lastRowEndpoints = null;
 let lastRows = [];
 let lastReport = null;
+let rowNodes = new Map(); // result row object -> { node, finished, endpoints } as last drawn
 
 // Throttle state for the summary, which is the page's one live region. A
 // performance run emits a progress event every 250ms (internal/runner/perf.go),
@@ -63,6 +64,7 @@ export function render(state) {
     sortDesc = true;
     lastRowSignature = null;
     lastReport = null;
+    rowNodes = new Map();
   }
 
   byId('results-empty').hidden = Boolean(mode);
@@ -295,14 +297,65 @@ function renderFunctional(state, rep) {
   const rows = state.results.filter(matchesFilter);
   const box = byId('results-rows');
   if (state.results.length === 0) {
+    rowNodes = new Map();
     replace(box, [el('div', { class: 'rows-empty', text: 'Waiting for the first result...' })]);
     return;
   }
   if (rows.length === 0) {
+    rowNodes = new Map();
     replace(box, [el('div', { class: 'rows-empty', text: `No ${filter} requests in this run.` })]);
     return;
   }
-  replace(box, rows.map((r) => resultRow(r, Boolean(rep), state.endpoints)));
+  // A row already drawn from the same delivery is kept, node and all, so a
+  // keyboard visitor reading one while the run goes on keeps their focus (and
+  // the row its open state) as the rows after it arrive. A row delivered again
+  // is a new object and is drawn anew; its summary takes back the focus the
+  // old one had.
+  const focusKey = focusedRowKey(box);
+  const finished = Boolean(rep);
+  const next = new Map();
+  const nodes = rows.map((r) => {
+    const held = rowNodes.get(r);
+    const node = held && held.finished === finished && held.endpoints === state.endpoints
+      ? held.node
+      : resultRow(r, finished, state.endpoints);
+    next.set(r, { node, finished, endpoints: state.endpoints });
+    return node;
+  });
+  rowNodes = next;
+  place(box, nodes);
+  restoreRowFocus(box, focusKey);
+}
+
+// place puts nodes into box in order without taking out a node that stays:
+// a node removed from the page, even to be put straight back, loses focus.
+function place(box, nodes) {
+  const keep = new Set(nodes);
+  for (const child of [...box.childNodes]) {
+    if (!keep.has(child)) box.removeChild(child);
+  }
+  nodes.forEach((node, i) => {
+    const at = box.childNodes[i] || null;
+    if (at !== node) box.insertBefore(node, at);
+  });
+}
+
+function focusedRowKey(box) {
+  const active = document.activeElement;
+  if (!active || !box.contains(active)) return '';
+  const row = active.closest('.res-row');
+  const summary = row && row.querySelector('summary');
+  return summary ? summary.dataset.focusKey || '' : '';
+}
+
+// Keys are compared as strings rather than put into a selector: a key holds a
+// row index from the server.
+function restoreRowFocus(box, key) {
+  if (!key) return;
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  const summary = [...box.querySelectorAll('summary')].find((s) => s.dataset.focusKey === key);
+  if (summary) summary.focus();
 }
 
 function filterButton(name, c, state) {
@@ -334,7 +387,7 @@ function resultRow(r, finished, endpoints) {
   const outcomes = r.assertions || [];
   const passed = outcomes.filter((o) => o.passed).length;
 
-  const head = el('summary', { class: 'res-head' }, [
+  const head = el('summary', { class: 'res-head', attrs: { 'data-focus-key': `res:${r.index}` } }, [
     el('span', { class: 'res-index mono', text: String((r.index || 0) + 1) }),
     rowMark(r, outcomes),
     el('span', { class: `pill${r.skipped ? ' is-muted' : ''}`, text: pillText(r) }),

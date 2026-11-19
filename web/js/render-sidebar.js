@@ -58,9 +58,18 @@ function closeDrawer() {
 // showResetConfirm renders an inline two-step confirm. Deliberately not
 // window.confirm(): a modal dialog blocks the page, and in a browser-automation
 // session it wedges the whole tab.
+//
+// Either answer hides the confirm, and the button pressed goes with it, so
+// focus goes back to Reset: left where it was it would drop to the page. A
+// refused reset is said in the workspace note, a status region, which is
+// announced without taking focus.
 function showResetConfirm() {
   const box = byId('reset-confirm');
   box.hidden = false;
+  const close = () => {
+    box.hidden = true;
+    byId('reset-workspace').focus();
+  };
   replace(box, [
     el('div', { text: 'Clear every saved request in My Workspace? This cannot be undone.' }),
     el('div', { class: 'confirm-actions' }, [
@@ -71,14 +80,14 @@ function showResetConfirm() {
         on: {
           click: () => {
             const { ok } = workspace.reset();
-            box.hidden = true;
             const note = byId('workspace-note');
             if (ok) {
               note.hidden = true;
-              return;
+            } else {
+              replace(note, [el('span', { text: workspace.RESET_REFUSED })]);
+              note.hidden = false;
             }
-            replace(note, [el('span', { text: workspace.RESET_REFUSED })]);
-            note.hidden = false;
+            close();
           },
         },
       }),
@@ -86,7 +95,7 @@ function showResetConfirm() {
         class: 'btn btn-mini',
         type: 'button',
         text: 'Cancel',
-        on: { click: () => { box.hidden = true; } },
+        on: { click: close },
       }),
     ]),
   ]);
