@@ -21,21 +21,151 @@ const verdictText = () => {
   return node ? node.textContent : null;
 };
 
-const ok = { assertion: { type: 'status', op: 'eq', value: 200 }, passed: true, expected: '200', actual: '200' };
-const bad = { ...ok, passed: false, expected: '201' };
-const lost = { ...ok, passed: false, actual: 'no response' };
+// The rows and the cases shared with the server: web/verdict_table_test.go
+// reads this block and runs every case through report.FunctionalVerdict, so
+// the server's rule and the page's are held to the same table. Each row is
+// written as the server writes such a row; each case is a run's status, its
+// rows, and the verdict the server stores for it.
+// table:begin
+const TABLE = {
+  "rows": {
+    "answeredUnasserted": {"status":200,"passed":true,"assertions":[]},
+    "answeredPassed": {"status":200,"passed":true,"assertions":[{"assertion":{"type":"status","op":"eq","value":200},"passed":true,"expected":"200","actual":"200"}]},
+    "answeredFailed": {"status":200,"passed":false,"assertions":[{"assertion":{"type":"status","op":"eq","value":200},"passed":true,"expected":"200","actual":"200"},{"assertion":{"type":"status","op":"eq","value":200},"passed":false,"expected":"201","actual":"200"}]},
+    "noConnection": {"status":0,"passed":false,"error":"connection refused","error_kind":"transport","assertions":[]},
+    "noConnectionAsserted": {"status":0,"passed":false,"error":"connection refused","error_kind":"transport","assertions":[{"assertion":{"type":"status","op":"eq","value":200},"passed":false,"expected":"200","actual":"no response"}]},
+    "cutOff": {"status":200,"passed":false,"error":"response body cut off","error_kind":"truncated","assertions":[]},
+    "cutOffAsserted": {"status":200,"passed":false,"error":"response body cut off","error_kind":"truncated","assertions":[{"assertion":{"type":"status","op":"eq","value":200},"passed":false,"expected":"200","actual":"no response"}]},
+    "skipped": {"status":0,"passed":false,"skipped":true,"assertions":[]},
+    "skippedAsserted": {"status":0,"passed":false,"skipped":true,"assertions":null}
+  },
+  "cases": [
+    ["completed",[],"N/A"],
+    ["completed",["answeredUnasserted"],"N/A"],
+    ["completed",["answeredPassed"],"PASS"],
+    ["completed",["answeredFailed"],"FAIL"],
+    ["completed",["noConnection"],"FAIL"],
+    ["completed",["noConnectionAsserted"],"FAIL"],
+    ["completed",["cutOff"],"FAIL"],
+    ["completed",["cutOffAsserted"],"FAIL"],
+    ["completed",["skipped"],"N/A"],
+    ["completed",["skippedAsserted"],"N/A"],
+    ["completed",["answeredUnasserted","answeredUnasserted"],"N/A"],
+    ["completed",["answeredUnasserted","answeredPassed"],"PASS"],
+    ["completed",["answeredUnasserted","answeredFailed"],"FAIL"],
+    ["completed",["answeredUnasserted","noConnection"],"FAIL"],
+    ["completed",["answeredUnasserted","noConnectionAsserted"],"FAIL"],
+    ["completed",["answeredUnasserted","cutOff"],"FAIL"],
+    ["completed",["answeredUnasserted","cutOffAsserted"],"FAIL"],
+    ["completed",["answeredUnasserted","skipped"],"N/A"],
+    ["completed",["answeredUnasserted","skippedAsserted"],"N/A"],
+    ["completed",["answeredPassed","answeredUnasserted"],"PASS"],
+    ["completed",["answeredPassed","answeredPassed"],"PASS"],
+    ["completed",["answeredPassed","answeredFailed"],"FAIL"],
+    ["completed",["answeredPassed","noConnection"],"FAIL"],
+    ["completed",["answeredPassed","noConnectionAsserted"],"FAIL"],
+    ["completed",["answeredPassed","cutOff"],"FAIL"],
+    ["completed",["answeredPassed","cutOffAsserted"],"FAIL"],
+    ["completed",["answeredPassed","skipped"],"PASS"],
+    ["completed",["answeredPassed","skippedAsserted"],"PASS"],
+    ["completed",["answeredFailed","answeredUnasserted"],"FAIL"],
+    ["completed",["answeredFailed","answeredPassed"],"FAIL"],
+    ["completed",["answeredFailed","answeredFailed"],"FAIL"],
+    ["completed",["answeredFailed","noConnection"],"FAIL"],
+    ["completed",["answeredFailed","noConnectionAsserted"],"FAIL"],
+    ["completed",["answeredFailed","cutOff"],"FAIL"],
+    ["completed",["answeredFailed","cutOffAsserted"],"FAIL"],
+    ["completed",["answeredFailed","skipped"],"FAIL"],
+    ["completed",["answeredFailed","skippedAsserted"],"FAIL"],
+    ["completed",["noConnection","answeredUnasserted"],"FAIL"],
+    ["completed",["noConnection","answeredPassed"],"FAIL"],
+    ["completed",["noConnection","answeredFailed"],"FAIL"],
+    ["completed",["noConnection","noConnection"],"FAIL"],
+    ["completed",["noConnection","noConnectionAsserted"],"FAIL"],
+    ["completed",["noConnection","cutOff"],"FAIL"],
+    ["completed",["noConnection","cutOffAsserted"],"FAIL"],
+    ["completed",["noConnection","skipped"],"FAIL"],
+    ["completed",["noConnection","skippedAsserted"],"FAIL"],
+    ["completed",["noConnectionAsserted","answeredUnasserted"],"FAIL"],
+    ["completed",["noConnectionAsserted","answeredPassed"],"FAIL"],
+    ["completed",["noConnectionAsserted","answeredFailed"],"FAIL"],
+    ["completed",["noConnectionAsserted","noConnection"],"FAIL"],
+    ["completed",["noConnectionAsserted","noConnectionAsserted"],"FAIL"],
+    ["completed",["noConnectionAsserted","cutOff"],"FAIL"],
+    ["completed",["noConnectionAsserted","cutOffAsserted"],"FAIL"],
+    ["completed",["noConnectionAsserted","skipped"],"FAIL"],
+    ["completed",["noConnectionAsserted","skippedAsserted"],"FAIL"],
+    ["completed",["cutOff","answeredUnasserted"],"FAIL"],
+    ["completed",["cutOff","answeredPassed"],"FAIL"],
+    ["completed",["cutOff","answeredFailed"],"FAIL"],
+    ["completed",["cutOff","noConnection"],"FAIL"],
+    ["completed",["cutOff","noConnectionAsserted"],"FAIL"],
+    ["completed",["cutOff","cutOff"],"FAIL"],
+    ["completed",["cutOff","cutOffAsserted"],"FAIL"],
+    ["completed",["cutOff","skipped"],"FAIL"],
+    ["completed",["cutOff","skippedAsserted"],"FAIL"],
+    ["completed",["cutOffAsserted","answeredUnasserted"],"FAIL"],
+    ["completed",["cutOffAsserted","answeredPassed"],"FAIL"],
+    ["completed",["cutOffAsserted","answeredFailed"],"FAIL"],
+    ["completed",["cutOffAsserted","noConnection"],"FAIL"],
+    ["completed",["cutOffAsserted","noConnectionAsserted"],"FAIL"],
+    ["completed",["cutOffAsserted","cutOff"],"FAIL"],
+    ["completed",["cutOffAsserted","cutOffAsserted"],"FAIL"],
+    ["completed",["cutOffAsserted","skipped"],"FAIL"],
+    ["completed",["cutOffAsserted","skippedAsserted"],"FAIL"],
+    ["completed",["skipped","answeredUnasserted"],"N/A"],
+    ["completed",["skipped","answeredPassed"],"PASS"],
+    ["completed",["skipped","answeredFailed"],"FAIL"],
+    ["completed",["skipped","noConnection"],"FAIL"],
+    ["completed",["skipped","noConnectionAsserted"],"FAIL"],
+    ["completed",["skipped","cutOff"],"FAIL"],
+    ["completed",["skipped","cutOffAsserted"],"FAIL"],
+    ["completed",["skipped","skipped"],"N/A"],
+    ["completed",["skipped","skippedAsserted"],"N/A"],
+    ["completed",["skippedAsserted","answeredUnasserted"],"N/A"],
+    ["completed",["skippedAsserted","answeredPassed"],"PASS"],
+    ["completed",["skippedAsserted","answeredFailed"],"FAIL"],
+    ["completed",["skippedAsserted","noConnection"],"FAIL"],
+    ["completed",["skippedAsserted","noConnectionAsserted"],"FAIL"],
+    ["completed",["skippedAsserted","cutOff"],"FAIL"],
+    ["completed",["skippedAsserted","cutOffAsserted"],"FAIL"],
+    ["completed",["skippedAsserted","skipped"],"N/A"],
+    ["completed",["skippedAsserted","skippedAsserted"],"N/A"],
+    ["cancelled",[],"N/A"],
+    ["cancelled",["answeredUnasserted"],"N/A"],
+    ["cancelled",["answeredPassed"],"N/A"],
+    ["cancelled",["answeredFailed"],"N/A"],
+    ["cancelled",["noConnection"],"N/A"],
+    ["cancelled",["noConnectionAsserted"],"N/A"],
+    ["cancelled",["cutOff"],"N/A"],
+    ["cancelled",["cutOffAsserted"],"N/A"],
+    ["cancelled",["skipped"],"N/A"],
+    ["cancelled",["skippedAsserted"],"N/A"],
+    ["expired",[],"N/A"],
+    ["expired",["answeredUnasserted"],"N/A"],
+    ["expired",["answeredPassed"],"N/A"],
+    ["expired",["answeredFailed"],"N/A"],
+    ["expired",["noConnection"],"N/A"],
+    ["expired",["noConnectionAsserted"],"N/A"],
+    ["expired",["cutOff"],"N/A"],
+    ["expired",["cutOffAsserted"],"N/A"],
+    ["expired",["skipped"],"N/A"],
+    ["expired",["skippedAsserted"],"N/A"]
+  ]
+};
+// table:end
 
-// Each kind: how the server writes such a row, and what the table reads it as.
+// Each kind: its row, and what the table reads it as.
 const Kinds = {
-  answeredUnasserted: { row: { status: 200, passed: true, assertions: [] }, dispatched: true, passed: true, asserted: false },
-  answeredPassed: { row: { status: 200, passed: true, assertions: [ok] }, dispatched: true, passed: true, asserted: true },
-  answeredFailed: { row: { status: 200, passed: false, assertions: [ok, bad] }, dispatched: true, passed: false, asserted: true },
-  noConnection: { row: { status: 0, passed: false, error: 'connection refused', error_kind: 'transport', assertions: [] }, dispatched: true, passed: false, asserted: false },
-  noConnectionAsserted: { row: { status: 0, passed: false, error: 'connection refused', error_kind: 'transport', assertions: [lost] }, dispatched: true, passed: false, asserted: true },
-  cutOff: { row: { status: 200, passed: false, error: 'response body cut off', error_kind: 'truncated', assertions: [] }, dispatched: true, passed: false, asserted: false },
-  cutOffAsserted: { row: { status: 200, passed: false, error: 'response body cut off', error_kind: 'truncated', assertions: [lost] }, dispatched: true, passed: false, asserted: true },
-  skipped: { row: { status: 0, passed: false, skipped: true, assertions: [] }, dispatched: false },
-  skippedAsserted: { row: { status: 0, passed: false, skipped: true, assertions: null }, dispatched: false },
+  answeredUnasserted: { row: TABLE.rows.answeredUnasserted, dispatched: true, passed: true, asserted: false },
+  answeredPassed: { row: TABLE.rows.answeredPassed, dispatched: true, passed: true, asserted: true },
+  answeredFailed: { row: TABLE.rows.answeredFailed, dispatched: true, passed: false, asserted: true },
+  noConnection: { row: TABLE.rows.noConnection, dispatched: true, passed: false, asserted: false },
+  noConnectionAsserted: { row: TABLE.rows.noConnectionAsserted, dispatched: true, passed: false, asserted: true },
+  cutOff: { row: TABLE.rows.cutOff, dispatched: true, passed: false, asserted: false },
+  cutOffAsserted: { row: TABLE.rows.cutOffAsserted, dispatched: true, passed: false, asserted: true },
+  skipped: { row: TABLE.rows.skipped, dispatched: false },
+  skippedAsserted: { row: TABLE.rows.skippedAsserted, dispatched: false },
 };
 const names = Object.keys(Kinds);
 
@@ -150,4 +280,31 @@ test('a completed report that carries a verdict is shown with that verdict, what
   // A cancelled or expired run reads as partial data even under a carried PASS.
   assert.equal(fromReport('cancelled', rowsOf(['answeredPassed']), 'PASS'), 'N/A - partial data');
   assert.equal(fromReport('expired', rowsOf(['answeredPassed']), 'N/A'), 'N/A - partial data');
+});
+
+// shown is how the page words the verdict the server stores for a run.
+const shown = (status, verdict) => {
+  if (verdict !== 'N/A') return verdict;
+  return status === 'completed' ? 'N/A - nothing was asserted' : 'N/A - partial data';
+};
+
+test('every case shared with the server gets the server\'s verdict on the page, from a report and from a last event', () => {
+  assert.ok(TABLE.cases.length >= 100, `${TABLE.cases.length} cases`);
+  assert.deepEqual(Object.keys(TABLE.rows), names, 'the shared rows are not the grid\'s kinds');
+  const wrong = [];
+  for (const [status, kinds, verdict] of TABLE.cases) {
+    const want = shown(status, verdict);
+    const page = fromReport(status, rowsOf(kinds));
+    const last = fromLastEvent(status, rowsOf(kinds));
+    if (page !== want || last !== want) wrong.push(`${status} [${kinds.join(', ')}]: report ${page}, last event ${last}, server ${want}`);
+  }
+  assert.deepEqual(wrong.slice(0, 8), [], `${wrong.length} disagreements`);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test('the grid\'s own reading of the rule agrees with every case shared with the server', () => {
+  const wrong = TABLE.cases
+    .filter(([status, kinds, verdict]) => tableVerdict(status, kinds) !== shown(status, verdict))
+    .map(([status, kinds, verdict]) => `${status} [${kinds.join(', ')}]: grid ${tableVerdict(status, kinds)}, server ${verdict}`);
+  assert.deepEqual(wrong, []);
 });
