@@ -17,11 +17,13 @@ import (
 // the gate's: the line holds at most MaxBodyWaiters x MaxBodyBytes, 4 MiB,
 // and the checks in flight allocate at most 192 x 2 x 256 KiB, 96 MiB
 // (body_gate.go). The three add up to about 150 MB, within the Go memory
-// limit of 192 MiB that docker-compose.yml gives the container's 256 MB. A
-// body waiting in the line holds no place: the line is already bounded by
-// its bytes, and a place held there as well would shrink the line's room for
-// small bodies to the places left over, so an ordinary burst of small posts
-// would meet a 503 whenever the check was full for a moment.
+// limit of 192 MiB that docker-compose.yml gives the container's 256 MB
+// (TestTheBodyBoundsAddUpWithinTheGoMemoryLimit; the 380 KB is measured by
+// TestAStalledReadHoldsWhatTheBoundAssumes). A body waiting in the line
+// holds no place: the line is already bounded by its bytes, and a place held
+// there as well would shrink the line's room for small bodies to the places
+// left over, so an ordinary burst of small posts would meet a 503 whenever
+// the check was full for a moment.
 //
 // What they do not bound. A POST that finds every place taken is answered 503
 // at once, its body unread, and its connection closed. Places are not shared

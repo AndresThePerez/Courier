@@ -1785,7 +1785,10 @@ declared body of 5 bytes or of 256 KiB less one never arrives is ended at the de
 with no result; one of 256 KiB or more runs whole),
 `TestEveryRouteGivenADeclaredBodyThatNeverArrivesIsAnsweredAndClosed`;
 `internal/api/body_reads_docs_test.go`: `TestTheBodyReadBoundsMatchTheDocuments`;
-`internal/api/compose_limits_test.go`: `TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit`.
+`internal/api/compose_limits_test.go`: `TestTheContainersGoMemoryLimitSitsBelowItsMemoryLimit`,
+`TestTheBodyBoundsAddUpWithinTheGoMemoryLimit` (the sum above, from the constants, within
+`GOMEMLIMIT`), `TestAStalledReadHoldsWhatTheBoundAssumes` (a read stalled one byte before
+the cap holds no more than 380 KB with a quarter to spare).
 The existing tests of the gate and of bursts of 200 and 1,000 small posts pass unchanged,
 run 30 times each with the race detector at `GOMAXPROCS` 1, 4 and 16.
 
