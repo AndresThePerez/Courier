@@ -43,6 +43,8 @@ const SummaryThrottleMs = 5000;
 let lastSummaryRunId = null;
 let lastSummaryStatus = null;
 let lastSummaryAt = 0;
+let lastSummaryDrawn = null;
+let lastSummaryNode = null;
 
 export function render(state) {
   const rep = state.report;
@@ -104,6 +106,7 @@ function renderSummary(state, rep, run, mode) {
     replace(node, []);
     lastSummaryRunId = null;
     lastSummaryStatus = null;
+    lastSummaryDrawn = null;
     pdf.hidden = true;
     return;
   }
@@ -140,25 +143,36 @@ function renderSummary(state, rep, run, mode) {
   // arrives, so the first paint has no start time and no config, and the one
   // that fills them in must not wait out the interval. These change once per
   // run; the counters, which the interval exists for, are not part of it.
+  const judged = mode === 'functional' ? functionalVerdict(state, rep, outcome, status) : null;
+
   const shown = [
     status,
     outcome && outcome.report === 'failed' ? 'no report' : '',
     startedAt,
     configText(mode, config),
+    judged ? judged.text : '',
   ].join('|');
   const stateChanged = id !== lastSummaryRunId || shown !== lastSummaryStatus;
   const now = Date.now();
   const throttled =
     mode === 'performance' && status === 'running' && !stateChanged && now - lastSummaryAt < SummaryThrottleMs;
+  // The summary is the page's live region, so a render that would draw it
+  // exactly as it stands (a status poll, a keystroke elsewhere) leaves it be:
+  // replacing it would announce it again.
+  const drawn = [shown, bits.filter(Boolean).join('  ·  '), state.spectator ? 'spectating' : ''].join('|');
+  const unchanged = node === lastSummaryNode && id === lastSummaryRunId && drawn === lastSummaryDrawn;
 
-  if (!throttled) {
+  if (!throttled && !unchanged) {
     lastSummaryRunId = id;
     lastSummaryStatus = shown;
+    lastSummaryDrawn = drawn;
+    lastSummaryNode = node;
     lastSummaryAt = now;
     replace(node, [
       el('div', { class: 'results-title' }, [
         el('span', { text: `${mode} run` }),
-        el('span', { class: `pill ${statusClass(status)}`, text: status }),
+        el('span', { class: `pill${statusClass(status)}`, text: status }),
+        judged && el('span', { class: `pill run-verdict${judged.tone}`, title: 'Verdict', text: judged.text }),
         state.spectator && el('span', { class: 'badge', text: 'spectating' }),
       ]),
       el('div', { class: 'results-meta mono', text: bits.filter(Boolean).join('  ·  ') }),
@@ -204,10 +218,40 @@ function configText(mode, config) {
   return parts.join(', ');
 }
 
+// A completed run is only a run that finished: whether it passed is the
+// verdict's to say, and a green "completed" beside a red FAIL would say both.
 function statusClass(status) {
-  if (status === 'completed') return 'is-pass';
-  if (status === 'running') return 'is-live';
-  return 'is-warn';
+  if (status === 'completed') return '';
+  if (status === 'running') return ' is-live';
+  return ' is-warn';
+}
+
+const Verdicts = ['PASS', 'FAIL', 'N/A'];
+
+// functionalVerdict is a functional run's PASS, FAIL or N/A, by the rule the
+// PDF of the same run applies (internal/pdf/report.go, verdictOf), so the
+// page and the report a visitor downloads never disagree. A run still going
+// has earned no judgement, and neither has one the server lost. A verdict the
+// run carries is taken; one it does not carry in a form the server sends is
+// worked out from the rows as internal/report.FunctionalVerdict does.
+function functionalVerdict(state, rep, outcome, status) {
+  if (status === 'running' || status === 'unavailable') return null;
+  if (status === 'cancelled' || status === 'expired') return { text: 'N/A - partial data', tone: '' };
+  const carried = rep ? rep.functional && rep.functional.verdict : outcome && outcome.verdict;
+  const verdict = Verdicts.includes(carried) ? carried : verdictOfRows(state.results);
+  if (verdict === 'FAIL') return { text: 'FAIL', tone: ' is-fail' };
+  if (verdict === 'PASS') return { text: 'PASS', tone: ' is-pass' };
+  return { text: 'N/A - nothing was asserted', tone: '' };
+}
+
+function verdictOfRows(rows) {
+  let passed = false;
+  for (const r of rows) {
+    if (r.skipped) continue;
+    if (!r.passed) return 'FAIL';
+    passed = true;
+  }
+  return passed ? 'PASS' : 'N/A';
 }
 
 function counts(results) {
@@ -282,7 +326,8 @@ function resultRow(r, finished, endpoints) {
 
   const head = el('summary', { class: 'res-head' }, [
     el('span', { class: 'res-index mono', text: String((r.index || 0) + 1) }),
-    el('span', { class: `pill ${pillClass(r)}`, text: pillText(r) }),
+    rowMark(r, outcomes),
+    el('span', { class: `pill${r.skipped ? ' is-muted' : ''}`, text: pillText(r) }),
     methodBadge(endpoints, r.endpoint),
     el('span', { class: 'res-body' }, [
       el('span', { class: 'res-name', text: r.name || r.endpoint }),
@@ -331,9 +376,17 @@ function pillText(r) {
   return 'no response';
 }
 
-function pillClass(r) {
-  if (r.skipped) return 'is-muted';
-  return r.passed ? 'is-pass' : 'is-fail';
+// rowMark says whether a row's assertions held, apart from its status code:
+// a 400 a request expected is a pass, and a 200 it did not expect a failure,
+// so the code itself is never coloured. A skipped row was not checked and has
+// no mark; one that passed with nothing to check says so rather than wearing
+// a green PASS nobody earned. A failure without a response is still a FAIL:
+// the server failed every check it could not make.
+function rowMark(r, outcomes) {
+  if (r.skipped) return null;
+  if (!r.passed) return el('span', { class: 'res-mark mono fail', text: 'FAIL' });
+  if (outcomes.length === 0) return el('span', { class: 'res-mark mono', text: 'no checks' });
+  return el('span', { class: 'res-mark mono pass', text: 'PASS' });
 }
 
 function outcomeRow(o) {
