@@ -66,12 +66,12 @@ go build ./...
 node --test "web/test/*.test.mjs"
 ```
 
-484 Go test functions (`TestMain` not counted) and 17 benchmarks, per-package coverage
+490 Go test functions (`TestMain` not counted) and 17 benchmarks, per-package coverage
 of **88.0% to 100% on every package that carries logic**, and the **race detector** on
 every push. The two packages
 where a defect would cost the most are the two highest after `internal/template`'s 100%:
 `internal/report`, the accounting maths, at 98.5%, and `internal/sandbox`, the security
-boundary, at 98.9%. The page carries 928 tests of its own in 123 files, run by Node's
+boundary, at 98.9%. The page carries 944 tests of its own in 126 files, run by Node's
 built-in test runner with nothing to install (the last command above). The range is stated
 rather than badged on purpose: `cmd/server` carries no test file of its own and the
 end-to-end acceptance matrix runs under a build tag, in CI as a job of its own against a
