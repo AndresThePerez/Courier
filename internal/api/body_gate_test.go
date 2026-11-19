@@ -75,7 +75,7 @@ func serveAsync(ctx context.Context, s *Server, path, contentType string, body i
 // gateIdle reports whether no body is in the check or in line for it.
 func gateIdle(s *Server) bool {
 	inside, queued := s.bodies.load()
-	return inside == 0 && queued == 0 && s.bodies.waiting.Load() == 0
+	return inside == 0 && queued == 0 && s.bodies.waiting() == 0
 }
 
 // checkedBytes is the weight of the bodies in the check.
@@ -119,13 +119,13 @@ func TestNoMoreThanMaxBodyChecksBodiesAreCheckedAtOnce(t *testing.T) {
 				continue
 			default:
 			}
-			return h.inside.Load()+s.bodies.waiting.Load()+int64(len(early)) == posts
+			return h.inside.Load()+s.bodies.waiting()+int64(len(early)) == posts
 		}
 	})
 	if most := h.most.Load(); most != MaxBodyChecks {
 		t.Errorf("%d bodies were checked at once, want at most and exactly %d", most, MaxBodyChecks)
 	}
-	if w := s.bodies.waiting.Load(); w != MaxBodyWaiters {
+	if w := s.bodies.waiting(); w != MaxBodyWaiters {
 		t.Errorf("%d bodies wait for a check, want %d", w, MaxBodyWaiters)
 	}
 	if want := posts - MaxBodyChecks - MaxBodyWaiters; len(early) != want {
@@ -165,7 +165,7 @@ func fillGate(t *testing.T, s *Server, h *heldChecks) <-chan *httptest.ResponseR
 		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(heavyBody), out)
 	}
 	waitFor(t, "the checks and the queue to fill", func() bool {
-		return h.inside.Load() == MaxBodyChecks && s.bodies.waiting.Load() == MaxBodyWaiters
+		return h.inside.Load() == MaxBodyChecks && s.bodies.waiting() == MaxBodyWaiters
 	})
 	return out
 }
@@ -283,7 +283,7 @@ func TestAWaiterWhoseClientLeavesStopsWaiting(t *testing.T) {
 	defer cancel()
 	left := make(chan *httptest.ResponseRecorder, 1)
 	serveAsync(ctx, s, "/api/runs", "application/json", strings.NewReader(`{"mode":"functional"}`), left)
-	waitFor(t, "the third body to wait", func() bool { return s.bodies.waiting.Load() == 1 })
+	waitFor(t, "the third body to wait", func() bool { return s.bodies.waiting() == 1 })
 
 	cancel()
 	select {
@@ -291,7 +291,7 @@ func TestAWaiterWhoseClientLeavesStopsWaiting(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("a waiter whose client left was still waiting")
 	}
-	if w := s.bodies.waiting.Load(); w != 0 {
+	if w := s.bodies.waiting(); w != 0 {
 		t.Errorf("%d waiters after the client left, want 0", w)
 	}
 	if n := h.inside.Load(); n != MaxBodyChecks {

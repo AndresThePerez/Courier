@@ -140,11 +140,9 @@ func TestEveryCuratedRequestPassesTheBodyCheck(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(string(raw)))
-			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 			var got sandbox.Request
-			if !decodeJSON(rec, req, &got) {
+			if !decodeBody(rec, raw, &got) {
 				t.Errorf("%s/%s: refused: %s", c.ID, r.ID, rec.Body.String())
 			}
 		}

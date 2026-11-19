@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"sync"
-	"sync/atomic"
 )
 
 // Bounds on the body check, which runs before the one-run lock and the
@@ -70,10 +69,10 @@ const bodyGateRetryAfter = "1"
 // behind it, however small, so a body at the cap is never held out by a
 // stream of small ones (TestABodyAtTheCapIsAdmittedBeforeSmallerOnesBehindIt).
 //
-// Invariant, under mu: inside <= maxInside, queued <= maxQueued, queued and
-// waiting are the sum and the count of the bodies in line, and the head of
-// line does not fit (inside + line[0].n > maxInside) whenever line is not
-// empty. A body weighs at most MaxBodyBytes, so one alone always fits.
+// Invariant, under mu: inside <= maxInside, queued <= maxQueued, queued is
+// the sum of the bodies in line, and the head of line does not fit
+// (inside + line[0].n > maxInside) whenever line is not empty. A body weighs
+// at most MaxBodyBytes, so one alone always fits.
 type bodyGate struct {
 	mu        sync.Mutex
 	inside    int64
@@ -81,9 +80,6 @@ type bodyGate struct {
 	line      []*bodyWaiter
 	maxInside int64
 	maxQueued int64
-
-	// waiting is len(line), kept where a test can read it without the lock.
-	waiting atomic.Int64
 
 	// checking, when set, runs while a body is in the check, after its
 	// release is deferred. Tests park bodies in it to count how many are
@@ -118,7 +114,6 @@ func (g *bodyGate) enter(ctx context.Context, n int64) bool {
 	bw := &bodyWaiter{n: n, admit: make(chan struct{})}
 	g.line = append(g.line, bw)
 	g.queued += n
-	g.waiting.Store(int64(len(g.line)))
 	g.mu.Unlock()
 
 	select {
@@ -136,7 +131,6 @@ func (g *bodyGate) enter(ctx context.Context, n int64) bool {
 		i := slices.Index(g.line, bw)
 		g.line = slices.Delete(g.line, i, i+1)
 		g.queued -= n
-		g.waiting.Store(int64(len(g.line)))
 	}
 	g.admitLocked()
 	return false
@@ -159,12 +153,4 @@ func (g *bodyGate) admitLocked() {
 		g.inside += bw.n
 		close(bw.admit)
 	}
-	g.waiting.Store(int64(len(g.line)))
-}
-
-// load reports the weight in the check and the weight in line.
-func (g *bodyGate) load() (inside, queued int64) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.inside, g.queued
 }

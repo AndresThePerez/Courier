@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -24,22 +23,20 @@ type verdict struct {
 }
 
 // checkedVerdict runs body through the body check and then the validator,
-// exactly as the two POST handlers do.
+// as the two POST handlers do once the body is read.
 func checkedVerdict(t *testing.T, path, body string) verdict {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	var err error
 	if path == "/api/runs" {
 		var rr sandbox.RunRequest
-		if !decodeJSON(rec, r, &rr) {
+		if !decodeBody(rec, []byte(body), &rr) {
 			return verdict{false, decode[errorBody](t, rec).Field}
 		}
 		_, err = sandbox.Validate(rr)
 	} else {
 		var req sandbox.Request
-		if !decodeJSON(rec, r, &req) {
+		if !decodeBody(rec, []byte(body), &req) {
 			return verdict{false, decode[errorBody](t, rec).Field}
 		}
 		_, err = sandbox.ValidateRequest(req)
@@ -149,10 +146,8 @@ func TestStructuredAssertionValuesAreRefusedWhereverTheyNest(t *testing.T) {
 		if c.path == "/api/runs" {
 			into = new(sandbox.RunRequest)
 		}
-		r := httptest.NewRequest(http.MethodPost, c.path, strings.NewReader(c.body))
-		r.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
-		decodeJSON(rec, r, into)
+		decodeBody(rec, []byte(c.body), into)
 		if eb := checkSmallCleanError(t, c.name, rec); !strings.Contains(eb.Error, c.contains) {
 			t.Errorf("%s: error %q, want it to say %q", c.name, eb.Error, c.contains)
 		}

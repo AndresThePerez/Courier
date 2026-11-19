@@ -65,6 +65,7 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 	// Linear with room to spare under -race and across toolchains; a cost that
 	// grows with the square of the depth allocates about a gigabyte here.
 	const bound = 64 * MaxBodyBytes
+	s := newServer(t, newTarget(t, 0), nil)
 	for _, tc := range cases {
 		if len(tc.body) > MaxBodyBytes {
 			t.Fatalf("%s: body is %d bytes, over the cap", tc.name, len(tc.body))
@@ -76,7 +77,7 @@ func TestDecodingADeeplyNestedBodyStaysLinearInItsSize(t *testing.T) {
 			r.Header.Set("Content-Type", "application/json")
 			rec = httptest.NewRecorder()
 			var req sandbox.Request
-			ok = decodeJSON(rec, r, &req)
+			ok = s.decodeJSON(rec, r, &req)
 		})
 		if ok {
 			t.Errorf("%s: a %d-byte structure was accepted as an assertion value", tc.name, len(tc.body))
@@ -140,12 +141,13 @@ func TestDecodingAWideBodyStaysLinearInItsSize(t *testing.T) {
 		{"parameters", "/api/send", distinctKeys(`{"endpoint":"search","params":{`, `}}`), func() any { return new(sandbox.Request) }},
 	}
 	const bound = wideDecodeBound
+	s := newServer(t, newTarget(t, 0), nil)
 	for _, tc := range cases {
 		var ok bool
 		alloc := minAlloc(t, func() {
 			r := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
 			r.Header.Set("Content-Type", "application/json")
-			ok = decodeJSON(httptest.NewRecorder(), r, tc.into())
+			ok = s.decodeJSON(httptest.NewRecorder(), r, tc.into())
 		})
 		t.Logf("%s: %d-byte body allocated %d bytes (decoded: %v)", tc.name, len(tc.body), alloc, ok)
 		if alloc > bound {
@@ -309,6 +311,7 @@ func TestARefusedAssertionValueCostsAboutItsSize(t *testing.T) {
 	// size, whatever it holds: the numbers case is the baseline. Decoding the
 	// objects instead allocates over fifty times it.
 	const bound = 16 * MaxBodyBytes
+	s := newServer(t, newTarget(t, 0), nil)
 	for _, tc := range cases {
 		var rec *httptest.ResponseRecorder
 		alloc := minAlloc(t, func() {
@@ -316,7 +319,7 @@ func TestARefusedAssertionValueCostsAboutItsSize(t *testing.T) {
 			r.Header.Set("Content-Type", "application/json")
 			rec = httptest.NewRecorder()
 			var req sandbox.Request
-			decodeJSON(rec, r, &req)
+			s.decodeJSON(rec, r, &req)
 		})
 		t.Logf("%s: %d-byte body allocated %d bytes", tc.name, len(tc.body), alloc)
 		if eb := checkBoundedEcho(t, tc.name, rec, http.StatusBadRequest); eb.Field != "assertions[0].value" {

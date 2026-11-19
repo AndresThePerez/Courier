@@ -126,7 +126,7 @@ func TestAFullBodyGateLeavesEveryOtherRouteAnswered(t *testing.T) {
 	if n := h.inside.Load(); n != MaxBodyChecks {
 		t.Errorf("%d bodies in the check, want the %d still held", n, MaxBodyChecks)
 	}
-	if w := s.bodies.waiting.Load(); w != MaxBodyWaiters {
+	if w := s.bodies.waiting(); w != MaxBodyWaiters {
 		t.Errorf("%d bodies waiting, want the %d still queued", w, MaxBodyWaiters)
 	}
 
@@ -201,7 +201,7 @@ func TestUploadsStalledAnywhereHoldNoSlotOrPlace(t *testing.T) {
 	}
 	post("a small post while uploads stall")
 	if !gateIdle(s) {
-		t.Errorf("stalled uploads hold %d bytes of the check and %d places, want none", checkedBytes(s), s.bodies.waiting.Load())
+		t.Errorf("stalled uploads hold %d bytes of the check and %d places, want none", checkedBytes(s), s.bodies.waiting())
 	}
 
 	for _, c := range conns {
@@ -264,11 +264,11 @@ func TestAWaiterOnAClosedConnectionStopsWaiting(t *testing.T) {
 	for i := range waiters {
 		waiters[i] = rawPost(t, addr, req, body)
 	}
-	waitFor(t, "the queue to fill", func() bool { return s.bodies.waiting.Load() == MaxBodyWaiters })
+	waitFor(t, "the queue to fill", func() bool { return s.bodies.waiting() == MaxBodyWaiters })
 	for _, c := range waiters {
 		_ = c.Close()
 	}
-	waitFor(t, "the closed waiters to give back their places", func() bool { return s.bodies.waiting.Load() == 0 })
+	waitFor(t, "the closed waiters to give back their places", func() bool { return s.bodies.waiting() == 0 })
 	if n := h.calls.Load(); n != MaxBodyChecks {
 		t.Errorf("%d bodies reached the check, want %d: a closed waiter must not", n, MaxBodyChecks)
 	}
@@ -307,12 +307,12 @@ func TestWaitersCancelledAllAtOnceGiveBackEveryPlace(t *testing.T) {
 		for range MaxBodyWaiters {
 			serveAsync(ctx, s, "/api/runs", "application/json", strings.NewReader(`{"mode":"functional"}`), left)
 		}
-		waitFor(t, "the queue to fill", func() bool { return s.bodies.waiting.Load() == MaxBodyWaiters })
+		waitFor(t, "the queue to fill", func() bool { return s.bodies.waiting() == MaxBodyWaiters })
 		cancel()
 		for range MaxBodyWaiters {
 			awaitAnswer(t, fmt.Sprintf("round %d: a cancelled waiter", round), left)
 		}
-		if w := s.bodies.waiting.Load(); w != 0 {
+		if w := s.bodies.waiting(); w != 0 {
 			t.Fatalf("round %d: %d places still taken after every waiter left, want 0", round, w)
 		}
 	}
@@ -346,7 +346,7 @@ func TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete(t *testing.T) {
 				return
 			default:
 			}
-			switch w := g.waiting.Load(); {
+			switch w := g.waiting(); {
 			case w < 0:
 				underWait.Store(true)
 			case w > MaxBodyWaiters: // every entry weighs MaxBodyBytes, and one that does not fit is refused before it joins the line
@@ -408,7 +408,7 @@ func TestTheBodyGateKeepsItsCountsThroughMixedCancelAndComplete(t *testing.T) {
 	if overWait.Load() {
 		t.Errorf("more than %d bodies at the cap waited at once", MaxBodyWaiters)
 	}
-	if n, w := g.inside, g.waiting.Load(); n != 0 || w != 0 || g.queued != 0 {
+	if n, w := g.inside, g.waiting(); n != 0 || w != 0 || g.queued != 0 {
 		t.Errorf("after every entry ended: %d bytes inside, %d bytes and %d bodies waiting, want 0", n, g.queued, w)
 	}
 	if refused.Load() == workers*rounds {
@@ -442,7 +442,7 @@ func TestAPanicInsideTheDecodeGivesBackItsSlot(t *testing.T) {
 		}()
 	}
 	if !gateIdle(s) {
-		t.Fatalf("after panicking decodes: %d bytes of the check held and %d waiting, want none", checkedBytes(s), s.bodies.waiting.Load())
+		t.Fatalf("after panicking decodes: %d bytes of the check held and %d waiting, want none", checkedBytes(s), s.bodies.waiting())
 	}
 	wantError(t, do(t, s, http.MethodPost, "/api/send", undispatchable), http.StatusBadRequest, "endpoint")
 }
@@ -467,7 +467,7 @@ func TestA503ThatCannotBeWrittenTakesNoSlotOrPlace(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		s.ServeHTTP(&refusingWriter{hdr: http.Header{}}, r)
 	}
-	if n, w := h.inside.Load(), s.bodies.waiting.Load(); n != MaxBodyChecks || w != MaxBodyWaiters {
+	if n, w := h.inside.Load(), s.bodies.waiting(); n != MaxBodyChecks || w != MaxBodyWaiters {
 		t.Errorf("after unwritable 503s: %d in the check and %d waiting, want %d and %d", n, w, MaxBodyChecks, MaxBodyWaiters)
 	}
 

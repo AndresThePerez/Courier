@@ -33,18 +33,11 @@ import (
 // that quietly wins over the first, and for a key that only matches a field
 // because encoding/json folds case.
 //
-// This is the check alone. Handlers go through Server.decodeJSON, which also
-// bounds the bytes of the bodies checked at once.
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	body, ok := readJSONBody(w, r)
-	return ok && decodeBody(w, body, v)
-}
-
-// decodeJSON is the package's decodeJSON with the body's read bounded by a
-// place and a deadline (body_reads.go) and its check by the bytes of the
-// bodies in it (bodyGate). The body is read in full before it enters the
-// gate, so an upload in progress holds a place but no room in the check, and
-// the place is given back as the read ends, before the body waits for room.
+// The body's read is bounded by a place and a deadline (body_reads.go) and
+// its check by the bytes of the bodies in it (bodyGate). The body is read in
+// full before it enters the gate, so an upload in progress holds a place but
+// no room in the check, and the place is given back as the read ends, before
+// the body waits for room.
 func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if !isJSONContentType(r.Header.Values("Content-Type")) {
 		refuseContentType(w, r)
@@ -137,22 +130,6 @@ func answerReadError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, "body", "the body could not be read")
-}
-
-// readJSONBody answers 415 for a body that is not JSON and 413 for one over
-// the cap, and otherwise returns the body whole.
-func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	if !isJSONContentType(r.Header.Values("Content-Type")) {
-		refuseContentType(w, r)
-		return nil, false
-	}
-
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
-	if err != nil {
-		answerReadError(w, err)
-		return nil, false
-	}
-	return body, true
 }
 
 // decodeBody holds body to v's shape and decodes it into v, answering 400

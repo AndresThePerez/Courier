@@ -58,12 +58,12 @@ func TestABodyAtTheCapIsAdmittedBeforeSmallerOnesBehindIt(t *testing.T) {
 	post(small)
 	waitFor(t, "the small body to be checked", func() bool { return len(entered()) == 2 })
 	post(heavyBody)
-	waitFor(t, "the second body at the cap to wait", func() bool { return s.bodies.waiting.Load() == 1 })
+	waitFor(t, "the second body at the cap to wait", func() bool { return s.bodies.waiting() == 1 })
 	for range behind {
 		post(small)
 	}
 	waitFor(t, "every small body to wait or be let in", func() bool {
-		return s.bodies.waiting.Load()+int64(len(entered())-2) == 1+behind
+		return s.bodies.waiting()+int64(len(entered())-2) == 1+behind
 	})
 	if got := entered(); len(got) != 2 {
 		t.Fatalf("bodies checked so far weigh %v: a small body went ahead of the body at the cap waiting before it", got)
@@ -76,7 +76,7 @@ func TestABodyAtTheCapIsAdmittedBeforeSmallerOnesBehindIt(t *testing.T) {
 	if got := entered(); got[2] != MaxBodyBytes {
 		t.Errorf("third body let in weighs %d, want the body at the cap (%d) that arrived first", got[2], MaxBodyBytes)
 	}
-	if w := s.bodies.waiting.Load(); w != behind {
+	if w := s.bodies.waiting(); w != behind {
 		t.Errorf("%d bodies waiting, want the %d small ones behind it", w, behind)
 	}
 
@@ -103,18 +103,18 @@ func TestAShortBodyWeighsTheFloor(t *testing.T) {
 	}
 
 	ratio := uint64(wideDecodeBound / MaxBodyBytes)
+	s := newServer(t, newTarget(t, 0), nil)
 	for _, body := range []string{"", "{", `{}`, `{"endpoint":"nowhere"}`, `{"mode":"functional","sequence":[{"endpoint":"healthz"}]}`} {
 		alloc := minAlloc(t, func() {
 			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
 			r.Header.Set("Content-Type", "application/json")
-			decodeJSON(httptest.NewRecorder(), r, new(sandbox.RunRequest))
+			s.decodeJSON(httptest.NewRecorder(), r, new(sandbox.RunRequest))
 		})
 		if limit := ratio * minBodyWeight; alloc > limit {
 			t.Errorf("checking %q allocated %d bytes, more than %d x the floor (%d)", body, alloc, ratio, limit)
 		}
 	}
 
-	s := newServer(t, newTarget(t, 0), nil)
 	for _, body := range []string{"", "{"} {
 		for _, path := range []string{"/api/send", "/api/runs"} {
 			wantError(t, postRaw(t, s, path, strings.NewReader(body), "application/json"), http.StatusBadRequest, "body")
@@ -187,8 +187,8 @@ func TestTheBodyGateWeighsMixedSizesThroughCancelAndComplete(t *testing.T) {
 	if m := most.Load(); m > maxInside {
 		t.Errorf("%d bytes were checked at once, want at most %d", m, maxInside)
 	}
-	if in, q := g.load(); in != 0 || q != 0 || g.waiting.Load() != 0 || len(g.line) != 0 {
-		t.Errorf("after every body ended: %d bytes inside, %d bytes and %d bodies in line, want none", in, q, g.waiting.Load())
+	if in, q := g.load(); in != 0 || q != 0 || g.waiting() != 0 || len(g.line) != 0 {
+		t.Errorf("after every body ended: %d bytes inside, %d bytes and %d bodies in line, want none", in, q, g.waiting())
 	}
 }
 

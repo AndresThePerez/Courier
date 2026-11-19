@@ -78,10 +78,10 @@ func TestASmallPostBehindBodiesAtTheCapWaitsOnlyForThoseAheadOfIt(t *testing.T) 
 	waitFor(t, "the check to fill", func() bool { return wc.inside.Load() == MaxBodyChecks })
 	for i := range ahead {
 		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(heavyBody), out)
-		waitFor(t, "a body at the cap to wait", func() bool { return s.bodies.waiting.Load() == int64(i+1) })
+		waitFor(t, "a body at the cap to wait", func() bool { return s.bodies.waiting() == int64(i+1) })
 	}
 	serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(undispatchable), out)
-	waitFor(t, "the small post to wait", func() bool { return s.bodies.waiting.Load() == ahead+1 })
+	waitFor(t, "the small post to wait", func() bool { return s.bodies.waiting() == ahead+1 })
 
 	for done := 1; done <= ahead+1; done++ {
 		wc.next <- struct{}{}
@@ -132,7 +132,7 @@ func fillGateWith(t *testing.T, s *Server, inside func() int64) <-chan *httptest
 		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(heavyBody), out)
 	}
 	waitFor(t, "the check and the line to fill", func() bool {
-		return inside() == MaxBodyChecks && s.bodies.waiting.Load() == MaxBodyWaiters
+		return inside() == MaxBodyChecks && s.bodies.waiting() == MaxBodyWaiters
 	})
 	return out
 }
@@ -151,14 +151,14 @@ func TestTheHeadOfTheLineLeavingLetsInTheOneBehindIt(t *testing.T) {
 	defer cancel()
 	head := make(chan *httptest.ResponseRecorder, 1)
 	serveAsync(ctx, s, "/api/send", "application/json", strings.NewReader(heavyBody), head)
-	waitFor(t, "the body at the cap to wait", func() bool { return s.bodies.waiting.Load() == 1 })
+	waitFor(t, "the body at the cap to wait", func() bool { return s.bodies.waiting() == 1 })
 	serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(undispatchable), out)
-	waitFor(t, "the small body to wait behind it", func() bool { return s.bodies.waiting.Load() == 2 })
+	waitFor(t, "the small body to wait behind it", func() bool { return s.bodies.waiting() == 2 })
 
 	cancel()
 	awaitAnswer(t, "the head that left", head)
 	waitFor(t, "the small body behind the head to be let in", func() bool { return wc.inside.Load() == 3 })
-	if w := s.bodies.waiting.Load(); w != 0 {
+	if w := s.bodies.waiting(); w != 0 {
 		t.Errorf("%d bodies still waiting, want 0", w)
 	}
 
@@ -182,7 +182,7 @@ func TestTwoChecksEndingTogetherLetInTwoWaiters(t *testing.T) {
 	for range 2 {
 		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(heavyBody), out)
 	}
-	waitFor(t, "two bodies to wait", func() bool { return s.bodies.waiting.Load() == 2 })
+	waitFor(t, "two bodies to wait", func() bool { return s.bodies.waiting() == 2 })
 
 	var wg sync.WaitGroup
 	for range 2 {
@@ -228,15 +228,15 @@ func TestRoomThatFitsOnlyASmallWaiterBehindTheHeadLetsNobodyIn(t *testing.T) {
 				admitted <- -1
 			}
 		}()
-		waitFor(t, "a body to wait", func() bool { return g.waiting.Load() == int64(i+1) })
+		waitFor(t, "a body to wait", func() bool { return g.waiting() == int64(i+1) })
 	}
 
 	// One small body leaves: the head still does not fit; the small one
 	// behind it would.
 	g.leave(minBodyWeight)
-	if in, q := g.load(); in != MaxBodyBytes+minBodyWeight || q != MaxBodyBytes+minBodyWeight || g.waiting.Load() != 2 {
+	if in, q := g.load(); in != MaxBodyBytes+minBodyWeight || q != MaxBodyBytes+minBodyWeight || g.waiting() != 2 {
 		t.Fatalf("after a small body left: %d bytes inside, %d in line, %d waiting; want %d inside and both waiters still in line",
-			in, q, g.waiting.Load(), MaxBodyBytes+minBodyWeight)
+			in, q, g.waiting(), MaxBodyBytes+minBodyWeight)
 	}
 
 	// The other small body leaves: the head goes in, and the small one
@@ -254,8 +254,8 @@ func TestRoomThatFitsOnlyASmallWaiterBehindTheHeadLetsNobodyIn(t *testing.T) {
 	}
 	g.leave(MaxBodyBytes)
 	g.leave(minBodyWeight)
-	if in, q := g.load(); in != 0 || q != 0 || g.waiting.Load() != 0 {
-		t.Errorf("at the end: %d bytes inside, %d in line, %d waiting, want none", in, q, g.waiting.Load())
+	if in, q := g.load(); in != 0 || q != 0 || g.waiting() != 0 {
+		t.Errorf("at the end: %d bytes inside, %d in line, %d waiting, want none", in, q, g.waiting())
 	}
 }
 
@@ -271,7 +271,7 @@ func TestAWaiterCancelledAsItIsLetInLeavesNoWeight(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		got := make(chan bool, 1)
 		go func() { got <- g.enter(ctx, MaxBodyBytes) }()
-		for g.waiting.Load() != 1 {
+		for g.waiting() != 1 {
 			runtime.Gosched()
 		}
 		go cancel()
@@ -280,8 +280,8 @@ func TestAWaiterCancelledAsItIsLetInLeavesNoWeight(t *testing.T) {
 			g.leave(MaxBodyBytes)
 		}
 		cancel()
-		if in, q := g.load(); in != 0 || q != 0 || g.waiting.Load() != 0 {
-			t.Fatalf("round %d: %d bytes inside, %d in line, %d waiting, want none", i, in, q, g.waiting.Load())
+		if in, q := g.load(); in != 0 || q != 0 || g.waiting() != 0 {
+			t.Fatalf("round %d: %d bytes inside, %d in line, %d waiting, want none", i, in, q, g.waiting())
 		}
 	}
 	if !straightIn(g, MaxBodyBytes) {
@@ -326,8 +326,8 @@ func TestEveryQuietMomentFindsTheGateEmpty(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		if in, q := g.load(); in != 0 || q != 0 || g.waiting.Load() != 0 {
-			t.Fatalf("round %d: %d bytes inside, %d in line, %d waiting, want none", round, in, q, g.waiting.Load())
+		if in, q := g.load(); in != 0 || q != 0 || g.waiting() != 0 {
+			t.Fatalf("round %d: %d bytes inside, %d in line, %d waiting, want none", round, in, q, g.waiting())
 		}
 		if !straightIn(g, MaxBodyBytes) {
 			t.Fatalf("round %d: a body at the cap did not go straight into a quiet gate", round)
@@ -364,7 +364,7 @@ func TestTheGatesRoomIsExact(t *testing.T) {
 				results <- -1
 			}
 		}()
-		waitFor(t, "a body to wait", func() bool { return g.waiting.Load() == int64(i+1) })
+		waitFor(t, "a body to wait", func() bool { return g.waiting() == int64(i+1) })
 	}
 	if _, q := g.load(); q != line {
 		t.Fatalf("%d bytes in line, want exactly %d", q, line)
@@ -493,7 +493,7 @@ func TestTheCheckHoldsExactlyAsManyBodiesAtTheFloorAsItsRoom(t *testing.T) {
 		serveAsync(context.Background(), s, "/api/send", "application/json", strings.NewReader(undispatchable), out)
 	}
 	waitFor(t, "the check to fill with small bodies", func() bool {
-		return wc.inside.Load() == fit && s.bodies.waiting.Load() == 1
+		return wc.inside.Load() == fit && s.bodies.waiting() == 1
 	})
 	wc.open()
 	for range fit + 1 {
