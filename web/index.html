@@ -40,11 +40,16 @@
       </section>
 
       <section class="rail-section">
-        <h2 class="rail-heading">
-          My Workspace
-          <span class="badge">Saved in this browser only</span>
+        <!-- Reset sits beside the heading, not in it: a control inside an h2
+             becomes part of the heading's name. The badge stays in the
+             heading, which is named by its first line alone. -->
+        <div class="rail-heading-row">
+          <h2 class="rail-heading" aria-labelledby="workspace-heading-name">
+            <span id="workspace-heading-name">My Workspace</span>
+            <span class="badge">Saved in this browser only</span>
+          </h2>
           <button id="reset-workspace" type="button" class="link-btn">Reset</button>
-        </h2>
+        </div>
         <div id="reset-confirm" class="confirm" hidden></div>
         <div id="workspace-note" class="note" role="status" hidden></div>
         <div id="workspace-tree" class="tree"></div>
