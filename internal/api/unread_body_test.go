@@ -99,7 +99,9 @@ func TestA415WithItsWholeBodyIsAnsweredAsBefore(t *testing.T) {
 
 // With every place taken, a POST that declares a body and sends none is
 // answered 503 at once, and its connection is closed within the body read
-// deadline rather than held open while net/http waits to drain the body.
+// deadline rather than held open while net/http waits to drain the body. An
+// answer that closes its connection (this 503, a 415) is not held for the
+// body, but the connection lasts to the deadline while net/http reads on.
 func TestAnUnread503IsClosedWithinTheBodyReadDeadline(t *testing.T) {
 	s, srv := newBodyServer(t, newTarget(t, 0), 300*time.Millisecond)
 	fillPlaces(t, s)
@@ -112,5 +114,23 @@ func TestAnUnread503IsClosedWithinTheBodyReadDeadline(t *testing.T) {
 			t.Errorf("a POST beyond the places with %s = %d %s, want 503", how, resp.StatusCode, body)
 		}
 		wantClosed(t, "the unread 503 with "+how, conn, br)
+	}
+
+	const deadline = 3 * time.Second
+	long, longSrv := newBodyServer(t, newTarget(t, 0), deadline)
+	fillPlaces(t, long)
+	for what, contentType := range map[string]string{"the 503": "application/json", "a 415": "text/plain"} {
+		begun := time.Now()
+		conn := rawPost(t, longSrv.Listener.Addr().String(), "POST /api/send HTTP/1.1\r\nHost: example.com\r\nContent-Type: "+contentType+"\r\nContent-Length: 1000\r\n\r\n", "")
+		t.Cleanup(func() { _ = conn.Close() })
+		br := bufio.NewReader(conn)
+		readAnswer(t, what, conn, br)
+		if took := time.Since(begun); took >= deadline {
+			t.Errorf("%s with its body never sent: answered after %v, at or past the %v deadline", what, took, deadline)
+		}
+		wantClosed(t, what, conn, br)
+		if ended := time.Since(begun); ended < deadline {
+			t.Errorf("%s with its body never sent: the connection ended after %v, before the %v deadline", what, ended, deadline)
+		}
 	}
 }

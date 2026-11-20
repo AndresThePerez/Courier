@@ -13,22 +13,27 @@ import (
 
 // neverSent are declared bodies of which no byte is ever sent, at and around
 // net/http's drain limit (maxPostHandlerReadBytes, 256 KiB): by length, and
-// chunked with a chunk of that size announced and none of it sent. drained
-// says whether net/http drains the body before the answer: it does for a
-// length under the limit and for any chunked body, whose size it cannot know.
+// chunked with a chunk of that size announced and none of it sent, and a
+// short one that waits for 100-continue. drained says whether net/http drains
+// the body before the answer: it does for a length under the limit and for any
+// chunked body, whose size it cannot know, unless the request waits for
+// 100-continue. lingers says whether the connection lasts to the deadline:
+// net/http reads on after the answer while no more than the limit is declared
+// still to come.
 var neverSent = []struct {
 	name, framing, first string
-	drained              bool
+	drained, lingers     bool
 }{
-	{"1 byte", "Content-Length: 1\r\n", "", true},
-	{"262143 bytes", "Content-Length: 262143\r\n", "", true},
-	{"262144 bytes", "Content-Length: 262144\r\n", "", false},
-	{"262145 bytes", "Content-Length: 262145\r\n", "", false},
-	{"1000000 bytes", "Content-Length: 1000000\r\n", "", false},
-	{"chunked, a 1-byte chunk", "Transfer-Encoding: chunked\r\n", "1\r\n", true},
-	{"chunked, a 262144-byte chunk", "Transfer-Encoding: chunked\r\n", "40000\r\n", true},
-	{"chunked, a 1000000-byte chunk", "Transfer-Encoding: chunked\r\n", "f4240\r\n", true},
-	{"chunked, nothing", "Transfer-Encoding: chunked\r\n", "", true},
+	{"1 byte", "Content-Length: 1\r\n", "", true, true},
+	{"262143 bytes", "Content-Length: 262143\r\n", "", true, true},
+	{"262144 bytes", "Content-Length: 262144\r\n", "", false, true},
+	{"262145 bytes", "Content-Length: 262145\r\n", "", false, false},
+	{"1000000 bytes", "Content-Length: 1000000\r\n", "", false, false},
+	{"chunked, a 1-byte chunk", "Transfer-Encoding: chunked\r\n", "1\r\n", true, true},
+	{"chunked, a 262144-byte chunk", "Transfer-Encoding: chunked\r\n", "40000\r\n", true, true},
+	{"chunked, a 1000000-byte chunk", "Transfer-Encoding: chunked\r\n", "f4240\r\n", true, true},
+	{"chunked, nothing", "Transfer-Encoding: chunked\r\n", "", true, true},
+	{"5 bytes waiting for 100-continue", "Content-Length: 5\r\nExpect: 100-continue\r\n", "", false, true},
 }
 
 // A stream whose declared body never arrives is ended at the deadline with no
@@ -81,7 +86,9 @@ func TestAStreamWithANeverSentBodyIsEndedExactlyWhenNetHTTPDrainsIt(t *testing.T
 // A GET that reads no body, given one that never arrives, is answered with
 // its usual status and its connection closed in every case: no sooner than
 // the deadline when net/http drains the body, and without waiting for it when
-// net/http does not. No body refusal is counted for any of them.
+// net/http does not. The connection then lasts to the deadline when no more
+// than 256 KiB was declared, and ends with the answer when more was. No body
+// refusal is counted for any of them.
 func TestAGetWithANeverSentBodyIsAnsweredAtTheDeadlineOnlyWhenDrained(t *testing.T) {
 	const deadline = 3 * time.Second
 	s, srv := newBodyServer(t, newTarget(t, 0), deadline)
@@ -92,7 +99,7 @@ func TestAGetWithANeverSentBodyIsAnsweredAtTheDeadlineOnlyWhenDrained(t *testing
 	paths := []string{"/api/status", "/api/runs/" + id, "/api/runs", "/healthz", "/metrics", "/"}
 	type outcome struct {
 		status, path, name string
-		took               time.Duration
+		took, ended        time.Duration
 		closed             bool
 	}
 	var mu sync.Mutex
@@ -111,17 +118,22 @@ func TestAGetWithANeverSentBodyIsAnsweredAtTheDeadlineOnlyWhenDrained(t *testing
 					_, err = io.WriteString(conn, "GET "+path+" HTTP/1.1\r\nHost: example.com\r\n"+c.framing+"\r\n"+c.first)
 				}
 				var resp *http.Response
+				var br *bufio.Reader
 				if err == nil {
 					_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-					resp, err = http.ReadResponse(bufio.NewReader(conn), nil)
+					br = bufio.NewReader(conn)
+					resp, err = http.ReadResponse(br, nil)
 				}
 				o.took = time.Since(begun)
 				if err != nil {
 					o.status = err.Error()
 				} else {
+					_, _ = io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
 					o.status = fmt.Sprint(resp.StatusCode)
 					o.closed = resp.Close
+					_, _ = io.Copy(io.Discard, br)
+					o.ended = time.Since(begun)
 				}
 				mu.Lock()
 				outs = append(outs, o)
@@ -130,9 +142,10 @@ func TestAGetWithANeverSentBodyIsAnsweredAtTheDeadlineOnlyWhenDrained(t *testing
 		}
 	}
 	wg.Wait()
-	drained := map[string]bool{}
+	drained, lingers := map[string]bool{}, map[string]bool{}
 	for _, c := range neverSent {
 		drained[c.name] = c.drained
+		lingers[c.name] = c.lingers
 	}
 	for _, o := range outs {
 		what := "GET " + o.path + " with " + o.name + " never sent"
@@ -148,6 +161,12 @@ func TestAGetWithANeverSentBodyIsAnsweredAtTheDeadlineOnlyWhenDrained(t *testing
 		}
 		if !drained[o.name] && o.took >= deadline {
 			t.Errorf("%s: answered after %v, at or past the %v deadline; net/http does not drain it, so nothing waits", what, o.took, deadline)
+		}
+		if lingers[o.name] && o.ended < deadline {
+			t.Errorf("%s: the connection ended after %v, before the %v deadline; net/http reads on after the answer", what, o.ended, deadline)
+		}
+		if !lingers[o.name] && o.ended >= deadline {
+			t.Errorf("%s: the connection ended after %v, at or past the %v deadline; with more than 256 KiB declared it ends with the answer", what, o.ended, deadline)
 		}
 	}
 	waitFor(t, "every place to be given back", func() bool { return readsHeld(s) == 0 && gateIdle(s) })

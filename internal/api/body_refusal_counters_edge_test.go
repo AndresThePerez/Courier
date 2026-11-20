@@ -331,7 +331,9 @@ func get(addr, req string) (int, []byte, error) {
 
 // A client that hangs up before its body, during it, or once it has sent it
 // whole while its body waits in the gate's line, is answered by no one and
-// counted nowhere; nor is a body that waited in line and was then let in.
+// counted nowhere; one that half-closes while its body waits is answered 503
+// and counted nowhere either; nor is a body that waited in line and was then
+// let in.
 func TestAClientThatHangsUpAnywhereIsNotCounted(t *testing.T) {
 	s, srv := newBodyServer(t, newTarget(t, 0), time.Minute)
 	addr := srv.Listener.Addr().String()
@@ -359,8 +361,20 @@ func TestAClientThatHangsUpAnywhereIsNotCounted(t *testing.T) {
 		waitFor(t, "the body to wait in line", func() bool { return s.bodies.waiting() == 1 })
 		_ = c.Close()
 		waitFor(t, "the body to leave the line", func() bool { return s.bodies.waiting() == 0 })
+		// after the body, half-closed while it waits in line: net/http takes
+		// the client for gone, yet the 503 still reaches it, uncounted
+		c = rawPost(t, addr, postHead(path, fmt.Sprintf("Content-Length: %d\r\n", len(undispatchable))), undispatchable)
+		waitFor(t, "the body to wait in line", func() bool { return s.bodies.waiting() == 1 })
+		if err := c.(*net.TCPConn).CloseWrite(); err != nil {
+			t.Fatal(err)
+		}
+		if resp, body := readAnswer(t, "a half-closed client", c, bufio.NewReader(c)); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("a client half-closed while its body waited = %d %s, want the 503", resp.StatusCode, body)
+		}
+		_ = c.Close()
+		waitFor(t, "the body to leave the line", func() bool { return s.bodies.waiting() == 0 })
 	}
-	wantRefusals(t, "clients that hung up", s, [3]int{0, 0, 0})
+	wantRefusals(t, "clients that hung up or half-closed", s, [3]int{0, 0, 0})
 
 	// A body that waits in line and is let in is not a refusal either.
 	c := rawPost(t, addr, postHead("/api/runs", fmt.Sprintf("Content-Length: %d\r\n", len(undispatchable))), undispatchable)
