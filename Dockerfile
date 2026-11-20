@@ -1,7 +1,7 @@
 # The build stage names a patch release: the standard library is compiled into
 # the binary, so a cached copy of a floating tag would ship whatever fixes it
 # happened to hold.
-FROM golang:1.26.11 AS build
+FROM golang:1.27.4 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
