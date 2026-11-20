@@ -108,7 +108,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       # No package.json and nothing to install: the modules run as shipped,
       # against the fake browser in web/test/shim.mjs.
