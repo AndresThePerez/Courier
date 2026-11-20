@@ -1704,12 +1704,15 @@ but the last byte of a 256 KiB body got the process killed.
   idle timeout still stands: either would cut a live stream, or a Send waiting up to 10s on
   a slow target, at the deadline. This one ends a request whose declared body a handler
   reads and has not arrived in full by the deadline: it is answered `408` at the deadline.
-  A body no handler reads meets the deadline only while net/http drains it before the
-  answer, which it does unless 256 KiB or more is declared still to come: on any route, a
-  stream's included, one that never arrives and is chunked or declares less is answered,
-  or its stream ended, at the deadline; one that declares 256 KiB or more is never
-  drained, so the deadline never fires on it, and a stream so declared runs whole. A
-  request that declares no body is never touched, and
+  A body no handler reads meets the deadline only while net/http reads it. net/http drains
+  it before the answer when it is chunked or declares less than 256 KiB still to come,
+  unless the request waits for 100-continue or the answer closes the connection (a `415`,
+  the `503` for want of a place): such a request on any route, a stream's included, whose
+  body never arrives is answered, or its stream ended, at the deadline. Any other is
+  answered at once, and a stream so declared runs whole; after the answer net/http reads
+  on until the deadline when no more than 256 KiB was declared still to come, and closes
+  the connection with the answer when more was. A request that declares no body is never
+  touched, and
   one whose declared body has arrived in full is untouched from that moment, since net/http
   clears the read deadline when a body reaches its end; so the handler's own work, a stream
   and the next request on the connection are out of its reach once the body is in.
@@ -1717,11 +1720,9 @@ but the last byte of a 256 KiB body got the process killed.
   arrives, whether or not its handler reads the body. A handler that answers without
   reading it (the `415`, a `404` or `405` under `/api`, the mux's `405` for a verb a page
   path does not take, any route that reads no body) leaves net/http to drain the declared
-  body before the answer goes out; a client that declared a body and sent none used to hold
-  that answer, and its connection, for as long as it liked. Now the drain ends at the
-  deadline, the answer goes out, and the connection is closed. net/http drains only a body
-  that is chunked or declares less than 256 KiB still to come; a larger one is never
-  drained, so the deadline leaves it alone. A request that declares no
+  body, before the answer or after it as the bullet above says; a client that declared a
+  body and sent none used to hold that answer, or its connection, for as long as it liked.
+  Now the read ends at the deadline and the connection is closed. A request that declares no
   body, a stream's included, is untouched. A `415` for a request that declares a body now
   carries `Connection: close`; its status, body and other headers are unchanged.
 - What the bounds add up to: a body read to the cap holds about 380 KB while it is read,
@@ -1746,8 +1747,10 @@ after this change as before it.
 so a flood cannot become a log flood: `body_reads_refused` (the `503`s for want of a read
 place), `body_line_refused` (N43's `503`s for want of room in the line) and
 `body_reads_timed_out` (the `408`s), each once per answer on both routes and for nothing
-else (`internal/api/body_refusal_metrics_test.go`). A declared body that never arrives on a
-route that reads none is answered at the deadline but not counted.
+else (`internal/api/body_refusal_metrics_test.go`). Not every `503` a client receives is
+counted: a body whose client has gone, or half-closed its side, while it waited in the line
+is not. A declared body that never arrives on a route that reads none is never counted,
+whenever it is answered.
 
 **Narrows N43**, which says its bound leaves out bodies still arriving: they are now bounded
 here.

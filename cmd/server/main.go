@@ -68,11 +68,13 @@ func main() {
 		// timeout would cut live streams at the deadline, which is the one
 		// thing this design cannot tolerate. Slow-header attacks are bounded
 		// here; a declared body that is slow to arrive is bounded per request
-		// by api.BodyReadDeadline when the handler reads it, or when net/http
-		// drains it before an answer that did not (which it does unless 256 KiB
-		// or more is declared still to come). The deadline never applies to a
-		// request that declares no body and stops applying once a declared
-		// body has arrived in full.
+		// by api.BodyReadDeadline when the handler reads it, and while net/http
+		// reads it for a handler that did not: before the answer when it is
+		// chunked or declares less than 256 KiB still to come (unless the
+		// request waits for 100-continue or the answer closes the connection),
+		// and after the answer while no more than 256 KiB was declared still to
+		// come. The deadline never applies to a request that declares no body
+		// and stops applying once a declared body has arrived in full.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

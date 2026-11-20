@@ -52,13 +52,18 @@ const (
 	// reaches its end and sets it afresh for each request. A body decodeJSON
 	// reads that has not arrived in full by the deadline is answered 408 at
 	// the deadline. A body no handler reads meets the deadline only while
-	// net/http drains it before the answer, which it does unless the request
-	// declares 256 KiB or more still to come: a request on any route, a
-	// stream's included, whose body never arrives and is chunked or declares
-	// less is answered, or its stream ended, at the deadline. One that
-	// declares 256 KiB or more and is not read is never drained, so the
-	// deadline never fires on it: a stream so declared runs whole
-	// (TestAStreamWithADeclaredBodyIsCutOnlyWhenADrainableBodyNeverArrives,
+	// net/http reads it. net/http drains it before the answer when it is
+	// chunked or declares less than 256 KiB still to come, unless the request
+	// waits for 100-continue or the answer closes the connection (a 415, the
+	// 503 for want of a place): such a request on any route, a stream's
+	// included, whose body never arrives is answered, or its stream ended, at
+	// the deadline. Any other is answered at once, and a stream so declared
+	// runs whole; after the answer net/http reads on until the deadline when
+	// no more than 256 KiB was declared still to come, and closes the
+	// connection with the answer when more was
+	// (TestAStreamWithANeverSentBodyIsEndedExactlyWhenNetHTTPDrainsIt,
+	// TestAGetWithANeverSentBodyIsAnsweredAtTheDeadlineOnlyWhenDrained,
+	// TestAnUnread503IsClosedWithinTheBodyReadDeadline,
 	// TestEveryRouteGivenADeclaredBodyThatNeverArrivesIsAnsweredAndClosed). A
 	// request that declares no body is never touched, and one whose declared
 	// body has arrived in full is untouched from that moment, so the handler's

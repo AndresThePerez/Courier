@@ -68,8 +68,10 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool 
 	}
 	n := bodyWeight(len(body))
 	if !s.bodies.enter(r.Context(), n) {
-		// enter also gives up when the client has gone while its body waited;
-		// that answer reaches no one and is not a refusal.
+		// enter also gives up when net/http takes the client for gone while
+		// its body waited: one that hung up gets no answer, and one that only
+		// half-closed its side still gets this 503. Neither is a refusal of
+		// the line, and neither is counted.
 		if r.Context().Err() == nil {
 			s.metrics.lineRefused()
 		}

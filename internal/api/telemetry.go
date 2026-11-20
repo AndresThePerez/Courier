@@ -13,7 +13,7 @@ import (
 	"github.com/AndresThePerez/courier/internal/sse"
 )
 
-// metrics is Courier watching itself: thirteen numbers, JSON, no dependency.
+// metrics is Courier watching itself: fourteen entries, JSON, no dependency.
 //
 // It is an expvar.Map that is deliberately NOT published to expvar's package
 // global. Two reasons, and the second is the important one: a process can build
@@ -43,9 +43,10 @@ type metrics struct {
 	// body_reads_refused counts the 503s given because every read place was
 	// taken, body_line_refused the 503s given because the gate's line had no
 	// room, and body_reads_timed_out the 408s given because a body the
-	// handler read did not arrive by the deadline. A request whose unread
-	// body net/http drains past the deadline on a route that reads none is
-	// not among them: no handler answers it as a refusal.
+	// handler read did not arrive by the deadline. Not every 503 a client
+	// receives is counted: a body whose client has gone, or half-closed its
+	// side, while it waited in the line is not. Nor is a request whose body
+	// no handler reads, whenever it is answered: no handler refuses it.
 	bodyReadsRefused  *expvar.Int
 	bodyLineRefused   *expvar.Int
 	bodyReadsTimedOut *expvar.Int

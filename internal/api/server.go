@@ -227,10 +227,12 @@ func (s *Server) apiMisses(next http.Handler) http.Handler {
 // boundDeclaredBodies puts the body read deadline on every request that
 // declares a body, from the moment it arrives. A handler that answers without
 // reading the body (a 415, a 404 or 405 under /api, any route that reads
-// none) leaves net/http to drain it before the answer goes out, unless it
-// declares 256 KiB or more still to come, which net/http never drains; a
-// client that declares a body under that and sends none would otherwise hold
-// that answer and its connection for as long as it liked. decodeJSON sets the
+// none) leaves net/http to read it: before the answer when it is chunked or
+// declares less than 256 KiB still to come, unless the request waits for
+// 100-continue or the answer closes the connection, and after the answer, up
+// to the connection's close, while no more than 256 KiB was declared still to
+// come. A client that declares a body and sends none would otherwise hold
+// that answer, or its connection, for as long as it liked. decodeJSON sets the
 // deadline again when its read begins and clears it when the read ends; a
 // request with no body, a stream included, is not touched.
 func (s *Server) boundDeclaredBodies(next http.Handler) http.Handler {
