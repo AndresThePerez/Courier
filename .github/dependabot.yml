@@ -1,7 +1,8 @@
-# Two ecosystems, because the drift this file exists to stop happened in both:
+# Three ecosystems. The drift this file exists to stop happened in two of them:
 # the workflow's actions went three majors stale while the module's single
-# direct dependency sat unchecked. Grouped so a week of bumps is one pull
-# request rather than four.
+# direct dependency sat unchecked. The third is the Dockerfile, whose two base
+# images are pinned and so move only when something proposes it. The actions
+# are grouped so a week of bumps is one pull request rather than four.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -12,6 +13,10 @@ updates:
       actions:
         patterns: ["*"]
   - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
